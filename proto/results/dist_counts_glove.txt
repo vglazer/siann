@@ -1,0 +1,38 @@
+glove, l2: 1,183,514 vectors, 100 dimensions (float32, 400 bytes each), 1,000 queries
+
+  method                                               recall@10 distances/query list KB/query
+  IVF 4000 lists, nprobe 8, exact coarse                   0.636           6,757         1,077
+  IVF 4000 lists, nprobe 16, exact coarse                  0.716           9,274         2,060
+  IVF 4000 lists, nprobe 32, exact coarse                  0.784          14,093         3,943
+  IVF 4000 lists, nprobe 64, exact coarse                  0.843          23,267         7,526
+  IVF 4000 lists, nprobe 128, exact coarse                 0.894          40,855        14,396
+  IVF 4000 lists, nprobe 256, exact coarse                 0.934          74,812        27,661
+  IVF 8000 lists, nprobe 8, exact coarse                   0.592           9,426           557
+  IVF 8000 lists, nprobe 8, two-level, 31/125 groups       0.590           4,158           557
+  IVF 8000 lists, nprobe 16, exact coarse                  0.680          10,742         1,071
+  IVF 8000 lists, nprobe 16, two-level, 31/125 groups      0.676           5,475         1,071
+  IVF 8000 lists, nprobe 32, exact coarse                  0.748          13,241         2,047
+  IVF 8000 lists, nprobe 32, two-level, 31/125 groups      0.743           7,973         2,047
+  IVF 8000 lists, nprobe 64, exact coarse                  0.813          17,990         3,902
+  IVF 8000 lists, nprobe 64, two-level, 31/125 groups      0.805          12,723         3,902
+  IVF 8000 lists, nprobe 128, exact coarse                 0.864          27,071         7,450
+  IVF 8000 lists, nprobe 128, two-level, 31/125 groups     0.856          21,804         7,450
+  IVF 8000 lists, nprobe 256, exact coarse                 0.910          44,490        14,254
+  IVF 8000 lists, nprobe 256, two-level, 31/125 groups     0.898          39,222        14,254
+  IVF 16000 lists, nprobe 8, exact coarse                  0.556          16,751           294
+  IVF 16000 lists, nprobe 8, two-level, 62/250 groups      0.555           6,542           294
+  IVF 16000 lists, nprobe 16, exact coarse                 0.643          17,445           565
+  IVF 16000 lists, nprobe 16, two-level, 62/250 groups     0.643           7,236           565
+  IVF 16000 lists, nprobe 32, exact coarse                 0.721          18,777         1,085
+  IVF 16000 lists, nprobe 32, two-level, 62/250 groups     0.719           8,567         1,085
+  IVF 16000 lists, nprobe 64, exact coarse                 0.782          21,312         2,075
+  IVF 16000 lists, nprobe 64, two-level, 62/250 groups     0.780          11,103         2,075
+  IVF 16000 lists, nprobe 128, exact coarse                0.836          26,158         3,968
+  IVF 16000 lists, nprobe 128, two-level, 62/250 groups     0.832          15,948         3,968
+  IVF 16000 lists, nprobe 256, exact coarse                0.886          35,448         7,597
+  IVF 16000 lists, nprobe 256, two-level, 62/250 groups     0.882          25,238         7,597
+  FAISS HNSW (M 32), efSearch 16                           0.603           1,018           398
+  FAISS HNSW (M 32), efSearch 32                           0.711           1,568           613
+  FAISS HNSW (M 32), efSearch 64                           0.795           2,556           998
+  FAISS HNSW (M 32), efSearch 128                          0.856           4,317         1,686
+  FAISS HNSW (M 32), efSearch 256                          0.899           7,483         2,923

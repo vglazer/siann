@@ -1,0 +1,37 @@
+173,145 samples over 48 threads
+
+self time (innermost frame):
+   49.6%  <siann_cpu::IvfIndex>::scan_one::<siann_cpu::L2, u8>
+   12.2%  siann_cpu::block_dists::<siann_cpu::L2>
+    9.7%  __psynch_cvwait
+    6.4%  fun_4e66a8
+    4.9%  __workq_kernreturn
+    4.4%  siann_cpu::block_dists_one::<siann_cpu::L2>
+    3.5%  <siann_cpu::TopK>::push
+    2.4%  swtch_pri
+    2.0%  fun_2aad90
+    0.9%  rayon::iter::plumbing::bridge_producer_consumer::helper::<rayon::iter::zip::ZipProducer<rayon::slice::chunks::ChunksMutProducer<u32>, rayon::slice::ch
+    0.5%  __psynch_mutexwait
+    0.3%  core::slice::sort::unstable::quicksort::partition::<(f32, u32), <[(f32, u32)]>::select_nth_unstable_by<<siann_cpu::IvfIndex>::search_one<siann_cpu::Ip
+    0.3%  <siann_cpu::IvfIndex>::coarse::<siann_cpu::L2>
+    0.2%  _platform_memmove
+    0.2%  __psynch_cvsignal
+    0.2%  fun_25c89c
+    0.2%  iokit_user_client_trap
+    0.1%  <rayon_core::registry::WorkerThread>::find_work
+    0.1%  <crossbeam_deque::deque::Stealer<rayon_core::job::JobRef>>::steal
+    0.1%  __psynch_mutexdrop
+    0.1%  fun_4dce84
+    0.1%  <siann_cpu::IvfIndex>::search_one::<siann_cpu::L2, u8>
+    0.1%  crossbeam_epoch::default::with_handle::<crossbeam_epoch::default::pin::{closure#0}, crossbeam_epoch::guard::Guard>
+    0.1%  <core::iter::adapters::flatten::FlatMap<core::iter::adapters::enumerate::Enumerate<core::slice::iter::ChunksExact<[f32; 8]>>, core::iter::adapters::ma
+    0.1%  tiny_free_no_lock
+
+inclusive (any frame of the stack):
+   58.8%  *search_one*
+    5.1%  *coarse*
+   53.2%  *scan_one*
+    0.3%  *select_nth*
+    3.5%  *TopK*
+    0.0%  *int_dist*
+    0.0%  *par_chunks*

@@ -1,0 +1,46 @@
+sift, l2: 1,000,000 vectors, 4000 lists (uint8); queries per second
+
+  nprobe, selection                        recall@10    single       100    10,000
+  8, select_k, 64 threads (earlier)            0.716     2,247   167,870   938,134
+  8, select_k, 128 threads                     0.716     2,426   179,555   960,665
+  8, argpartition, 128 threads                 0.716     2,757   181,806   581,377
+                                           identical neighbors, the two selections at 128 threads: 1.0000 (query-major), 1.0000 (list-major)
+  16, select_k, 64 threads (earlier)           0.840     1,746   128,734   495,998
+  16, select_k, 128 threads                    0.840     1,985   149,773   496,892
+  16, argpartition, 128 threads                0.840     2,479   155,231   451,438
+                                           identical neighbors, the two selections at 128 threads: 1.0000 (query-major), 1.0000 (list-major)
+  32, select_k, 64 threads (earlier)           0.925       576    51,080   199,579
+  32, select_k, 128 threads                    0.925       621    55,620   199,095
+  32, argpartition, 128 threads                0.925     2,095   123,339   317,163
+                                           identical neighbors, the two selections at 128 threads: 1.0000 (query-major), 1.0000 (list-major)
+  64, select_k, 64 threads (earlier)           0.973       636    51,559   145,150
+  64, select_k, 128 threads                    0.973       746    59,996   144,432
+  64, argpartition, 128 threads                0.973     1,520    91,965   198,161
+                                           identical neighbors, the two selections at 128 threads: 1.0000 (query-major), 1.0000 (list-major)
+  128, select_k, 64 threads (earlier)          0.993       309    25,941    45,116
+  128, select_k, 128 threads                   0.993       360    29,240    45,620
+  128, argpartition, 128 threads               0.993     1,035    62,412   116,547
+                                           identical neighbors, the two selections at 128 threads: 1.0000 (query-major), 1.0000 (list-major)
+glove, l2: 1,183,514 vectors, 4000 lists (float16); queries per second
+
+  nprobe, selection                        recall@10    single       100    10,000
+  8, select_k, 64 threads (earlier)            0.631     1,979   139,506   926,999
+  8, select_k, 128 threads                     0.631     2,264   158,536   939,647
+  8, argpartition, 128 threads                 0.631     2,566   154,380   570,774
+                                           identical neighbors, the two selections at 128 threads: 1.0000 (query-major), 1.0000 (list-major)
+  16, select_k, 64 threads (earlier)           0.711     1,393    97,653   480,905
+  16, select_k, 128 threads                    0.711     1,747   117,952   474,950
+  16, argpartition, 128 threads                0.711     2,147   121,547   442,942
+                                           identical neighbors, the two selections at 128 threads: 1.0000 (query-major), 1.0000 (list-major)
+  32, select_k, 64 threads (earlier)           0.780       514    42,056   201,129
+  32, select_k, 128 threads                    0.780       580    47,669   201,921
+  32, argpartition, 128 threads                0.780     1,611    90,284   310,589
+                                           identical neighbors, the two selections at 128 threads: 1.0000 (query-major), 1.0000 (list-major)
+  64, select_k, 64 threads (earlier)           0.839       506    37,008   145,565
+  64, select_k, 128 threads                    0.839       635    44,607   145,387
+  64, argpartition, 128 threads                0.839     1,092    60,817   200,267
+                                           identical neighbors, the two selections at 128 threads: 1.0000 (query-major), 1.0000 (list-major)
+  128, select_k, 64 threads (earlier)          0.890       247    18,577    45,296
+  128, select_k, 128 threads                   0.890       308    22,127    45,577
+  128, argpartition, 128 threads               0.890       695    36,747   117,806
+                                           identical neighbors, the two selections at 128 threads: 1.0000 (query-major), 1.0000 (list-major)

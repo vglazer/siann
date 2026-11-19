@@ -43,10 +43,42 @@ SCAN = """
         out_idx[(i * T + t) * K + a] = where[a];
     }
 """
+# The query-major scan with the merge inside the kernel: each query's T threads form one threadgroup
+# (T a power of two up to 256); after scanning, each thread's sorted best K goes to threadgroup memory,
+# and the lists are merged pairwise in log2(T) steps (two sorted lists of K into one, the left first
+# on ties), so the kernel writes only K results per query, sorted.
+SCAN_MERGED = SCAN.split("    for (int a = 0; a < K; ++a) {\n        out_val")[0].replace(
+    "    if (t >= T || i >= Q) return;\n", "") + """
+    threadgroup float tv[T * K];
+    threadgroup int ti[T * K];
+    for (int a = 0; a < K; ++a) { tv[t * K + a] = best[a]; ti[t * K + a] = where[a]; }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = T / 2; stride > 0; stride /= 2) {
+        if (t < stride) {
+            float mv[K];
+            int mi[K];
+            uint a0 = t * K, b0 = (t + stride) * K;
+            int ia = 0, ib = 0;
+            for (int c = 0; c < K; ++c) {
+                float va = tv[a0 + ia], vb = tv[b0 + ib];
+                if (va <= vb) { mv[c] = va; mi[c] = ti[a0 + ia]; ++ia; }
+                else { mv[c] = vb; mi[c] = ti[b0 + ib]; ++ib; }
+            }
+            for (int c = 0; c < K; ++c) { tv[a0 + c] = mv[c]; ti[a0 + c] = mi[c]; }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (t == 0) {
+        for (int a = 0; a < K; ++a) { out_val[i * K + a] = tv[a]; out_idx[i * K + a] = ti[a]; }
+    }
+"""
 METRICS = ("l1", "l2", "linf", "ip")
 SCANS = {m: mx.fast.metal_kernel(name=f"ivf_scan_{m}", input_names=["q", "x", "offsets", "probes"],
                                  output_names=["out_val", "out_idx"], source=SCAN, header=COMBINE[m])
          for m in METRICS}
+SCANS_MERGED = {m: mx.fast.metal_kernel(name=f"ivf_scan_merged_{m}", input_names=["q", "x", "offsets", "probes"],
+                                        output_names=["out_val", "out_idx"], source=SCAN_MERGED, header=COMBINE[m])
+                for m in METRICS}
 
 
 # List-major scan: one threadgroup per work item, a list and up to QB of the queries probing it.
@@ -132,6 +164,17 @@ def coarse_dist(q, centroids, cnorms, metric):
     return dist(q, centroids, metric)
 
 
+def probe_lists(dist: mx.array, nprobe: int, select: str = "argpartition") -> mx.array:
+    """Each query's nprobe nearest lists (int32), from its distances to the centroids. "argpartition"
+    returns them in no order, which the scans do not need; "select_k", siann's two-stage kernel with
+    32 threads per query, returns them in order."""
+    if select == "argpartition":
+        if nprobe >= dist.shape[1]:
+            return mx.broadcast_to(mx.arange(dist.shape[1], dtype=mx.int32), dist.shape)
+        return mx.argpartition(dist, kth=nprobe - 1, axis=1)[:, :nprobe].astype(mx.int32)
+    return select_k(dist, nprobe, threads=32).astype(mx.int32)
+
+
 class GpuIVF:
     def __init__(self, xb: np.ndarray, nlist: int, metric: str, lists: str = "float32"):
         """``lists`` is the storage of the inverted lists: "float32"; "float16", half the memory
@@ -154,30 +197,47 @@ class GpuIVF:
         self.offsets = mx.array(np.concatenate([[0], np.cumsum(counts)]).astype(np.int32))
         mx.eval(self.x, self.ids, self.offsets)
 
-    def search(self, xq: np.ndarray, k: int, nprobe: int, threads: int = 64) -> np.ndarray:
+    def search(self, xq: np.ndarray, k: int, nprobe: int, threads: int = 128,
+               select: str = "auto", merge: str = "kernel") -> np.ndarray:
+        """The query-major scan: `threads` threads per query walk its lists (128 is fastest at every
+        measured nprobe). `select` chooses each query's probes (probe_lists); "auto" is argpartition,
+        fastest for this scan at every nprobe (RESULTS.md, "IVF: scans and FAISS")."""
+        select = "argpartition" if select == "auto" else select
         q = mx.array(xq)
-        # few threads per row: with k = nprobe, each thread's k survivors add up quickly
         dist = coarse_dist(q, self.centroids, self.cnorms, self.metric)
-        probes = select_k(dist, nprobe, threads=32).astype(mx.int32)
+        probes = probe_lists(dist, nprobe, select)
         nq, d = q.shape
-        vals, idx = SCANS[self.metric](
-            inputs=[q, self.x, self.offsets, probes],
-            template=[("Q", nq), ("D", d), ("P", nprobe), ("T", threads), ("K", k)],
-            grid=(threads, nq, 1), threadgroup=(min(threads, 256), 1, 1),
-            output_shapes=[(nq * threads * k,), (nq * threads * k,)], output_dtypes=[mx.float32, mx.int32])
-        local = _finish(vals, idx, nq, k)
+        if merge == "kernel" and threads <= 256 and threads & (threads - 1) == 0:
+            # the merge inside the scan kernel: K sorted results per query
+            _, idx = SCANS_MERGED[self.metric](
+                inputs=[q, self.x, self.offsets, probes],
+                template=[("Q", nq), ("D", d), ("P", nprobe), ("T", threads), ("K", k)],
+                grid=(threads, nq, 1), threadgroup=(threads, 1, 1),
+                output_shapes=[(nq * k,), (nq * k,)], output_dtypes=[mx.float32, mx.int32])
+            local = idx.reshape(nq, k)
+        else:
+            vals, idx = SCANS[self.metric](
+                inputs=[q, self.x, self.offsets, probes],
+                template=[("Q", nq), ("D", d), ("P", nprobe), ("T", threads), ("K", k)],
+                grid=(threads, nq, 1), threadgroup=(min(threads, 256), 1, 1),
+                output_shapes=[(nq * threads * k,), (nq * threads * k,)], output_dtypes=[mx.float32, mx.int32])
+            local = _finish(vals, idx, nq, k)
         result = mx.take(self.ids, mx.maximum(local, 0))
         mx.eval(result)
         return np.array(result)
 
 
-def search_list_major(self, xq: np.ndarray, k: int, nprobe: int) -> np.ndarray:
-    """The same search with the list-major scan, grouped by list on the GPU."""
+def search_list_major(self, xq: np.ndarray, k: int, nprobe: int, select: str = "auto") -> np.ndarray:
+    """The same search with the list-major scan, grouped by list on the GPU. `select` "auto" uses
+    select_k up to nprobe 16 and argpartition above: for batches of thousands select_k is faster at
+    small nprobe (938,000 against 581,000 queries per second at nprobe 8 on SIFT), argpartition from 32."""
+    if select == "auto":
+        select = "select_k" if nprobe <= 16 else "argpartition"
     q = mx.array(xq)
     nq, d = q.shape
     nlist = self.offsets.shape[0] - 1
     dist = coarse_dist(q, self.centroids, self.cnorms, self.metric)
-    probes = select_k(dist, nprobe, threads=32).reshape(-1)   # pair id = query * nprobe + slot
+    probes = probe_lists(dist, nprobe, select).reshape(-1)   # pair id = query * nprobe + slot
     pair_ids = mx.argsort(probes).astype(mx.int32)
     counts = mx.zeros((nlist,), dtype=mx.int32).at[probes].add(1)
     first = (mx.cumsum(counts) - counts).astype(mx.int32)

@@ -1,0 +1,29 @@
+sift, l2: 1,000,000 vectors, 128 dimensions, uint8 lists; batches of 100 over 1,000 queries; queries per second
+
+  4000 lists, nprobe 64, two-level coarse step (15 of 62 groups)
+    single queries, one thread: 8,824
+    batches of 100,  1 threads:     8,871  ( 1.0 times one thread's single queries)
+    batches of 100,  2 threads:    17,223  ( 2.0 times one thread's single queries)
+    batches of 100,  4 threads:    30,725  ( 3.5 times one thread's single queries)
+    batches of 100,  8 threads:    40,373  ( 4.6 times one thread's single queries)
+    batches of 100, 12 threads:    40,626  ( 4.6 times one thread's single queries)
+    batches of 100, 16 threads:    38,974  ( 4.4 times one thread's single queries)
+    batches of 100, global pool:     38,788
+    nprobe 1 (the coarse step and one list):   289,401
+    k =   1:    38,970
+    k = 100:    37,334
+    exact coarse step:    37,818
+
+  16000 lists, nprobe 128, two-level coarse step (62 of 250 groups)
+    single queries, one thread: 7,652
+    batches of 100,  1 threads:     7,615  ( 1.0 times one thread's single queries)
+    batches of 100,  2 threads:    14,453  ( 1.9 times one thread's single queries)
+    batches of 100,  4 threads:    25,882  ( 3.4 times one thread's single queries)
+    batches of 100,  8 threads:    38,475  ( 5.0 times one thread's single queries)
+    batches of 100, 12 threads:    40,683  ( 5.3 times one thread's single queries)
+    batches of 100, 16 threads:    37,789  ( 4.9 times one thread's single queries)
+    batches of 100, global pool:     37,705
+    nprobe 1 (the coarse step and one list):   149,314
+    k =   1:    37,701
+    k = 100:    36,114
+    exact coarse step:    27,315

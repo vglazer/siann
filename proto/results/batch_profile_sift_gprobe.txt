@@ -1,0 +1,15 @@
+sift, l2: 1,000,000 vectors, 128 dimensions, uint8 lists; batches of 100 over 1,000 queries; queries per second
+
+  16000 lists, nprobe 128, two-level coarse step (62 of 250 groups)
+    single queries, one thread: 7,450
+    batches of 100, 12 threads:    41,105  ( 5.5 times one thread's single queries)
+    batches of 100, global pool:     38,928
+    nprobe 1 (the coarse step and one list):   146,606
+    k =   1:    38,841
+    k = 100:    36,922
+    exact coarse step:    29,474
+      8 of 250 groups probed (about   381 KB of centroids per query):    49,159, recall 0.868
+     16 of 250 groups probed (about   637 KB of centroids per query):    45,522, recall 0.939
+     31 of 250 groups probed (about 1,117 KB of centroids per query):    41,664, recall 0.963
+     62 of 250 groups probed (about 2,109 KB of centroids per query):    38,735, recall 0.967
+    125 of 250 groups probed (about 4,125 KB of centroids per query):    34,966, recall 0.967

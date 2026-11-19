@@ -970,7 +970,10 @@ impl IvfIndex {
     /// single queries, the same results.
     /// With `gprobe` above zero (after `set_coarse_groups`), the coarse step is two-level: the
     /// query's `gprobe` nearest groups of centroids, then the nearest `nprobe` of their centroids.
-    #[pyo3(signature = (xq, k, nprobe, split = 1, gprobe = 0))]
+    /// With `threads` above zero, a batch (one query per thread) runs on a pool of that many threads
+    /// of its own instead of rayon's global pool (all cores).
+    #[pyo3(signature = (xq, k, nprobe, split = 1, gprobe = 0, threads = 0))]
+    #[allow(clippy::too_many_arguments)]
     fn search(
         &self,
         py: Python<'_>,
@@ -979,6 +982,7 @@ impl IvfIndex {
         nprobe: usize,
         split: usize,
         gprobe: usize,
+        threads: usize,
     ) -> PyResult<Vec<u32>> {
         if gprobe > 0 && self.groups.is_none() {
             return Err(PyValueError::new_err(
@@ -995,6 +999,11 @@ impl IvfIndex {
         } else {
             None
         };
+        let batch_pool = if split <= 1 && threads > 0 {
+            Some(split_pool(threads)?)
+        } else {
+            None
+        };
         Ok(py.detach(|| {
             let mut out = vec![u32::MAX; (v.len() / d) * k];
             with_lists!(&self.lists, lists => with_metric!(self.metric, M => if let Some(pool) = &pool {
@@ -1004,9 +1013,15 @@ impl IvfIndex {
                     }
                 });
             } else {
-                out.par_chunks_mut(k)
-                    .zip(v.par_chunks(d))
-                    .for_each(|(o, q)| self.search_one::<M, _>(lists, q, k, Probe { nprobe, tasks: 1, gprobe }, o));
+                let batch = |out: &mut [u32]| {
+                    out.par_chunks_mut(k)
+                        .zip(v.par_chunks(d))
+                        .for_each(|(o, q)| self.search_one::<M, _>(lists, q, k, Probe { nprobe, tasks: 1, gprobe }, o))
+                };
+                match &batch_pool {
+                    Some(bp) => bp.install(|| batch(&mut out)),
+                    None => batch(&mut out),
+                }
             }));
             out
         }))

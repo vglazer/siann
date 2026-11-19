@@ -1,0 +1,52 @@
+sift, l2: 1,000,000 vectors, 4000 lists (uint8); queries per second
+
+  nprobe, selection                        recall@10    single       100    10,000
+  8, select_k, 64 threads (earlier)            0.716     2,308   183,695   961,982
+  8, default (auto selection, 128 threads)     0.716     2,886   192,274   967,036
+  16, select_k, 64 threads (earlier)           0.840     1,781   140,643   567,282
+  16, default (auto selection, 128 threads)     0.840     2,605   162,860   564,289
+  32, select_k, 64 threads (earlier)           0.925       584    51,299   213,156
+  32, default (auto selection, 128 threads)     0.925     2,114   123,811   318,776
+  64, select_k, 64 threads (earlier)           0.973       645    52,084   144,734
+  64, default (auto selection, 128 threads)     0.973     1,554    93,835   198,197
+  128, select_k, 64 threads (earlier)          0.993       309    25,849    45,115
+  128, default (auto selection, 128 threads)     0.993     1,016    62,621   114,499
+sift, l2: 1,000,000 vectors, 4000 lists (float32); queries per second
+
+  nprobe, selection                        recall@10    single       100    10,000
+  8, select_k, 64 threads (earlier)            0.716     1,916   108,991   864,799
+  8, default (auto selection, 128 threads)     0.716     2,517   121,117   873,823
+  16, select_k, 64 threads (earlier)           0.840     1,308    75,091   522,053
+  16, default (auto selection, 128 threads)     0.840     2,058    87,202   519,482
+  32, select_k, 64 threads (earlier)           0.925       493    33,264   200,026
+  32, default (auto selection, 128 threads)     0.925     1,488    57,396   289,462
+  64, select_k, 64 threads (earlier)           0.973       459    25,193   135,082
+  64, default (auto selection, 128 threads)     0.973       987    34,101   183,693
+  128, select_k, 64 threads (earlier)          0.993       224    12,921    43,580
+  128, default (auto selection, 128 threads)     0.993       592    19,246   106,062
+glove, l2: 1,183,514 vectors, 4000 lists (float16); queries per second
+
+  nprobe, selection                        recall@10    single       100    10,000
+  8, select_k, 64 threads (earlier)            0.631     1,971   141,677   936,319
+  8, default (auto selection, 128 threads)     0.631     2,564   152,955   928,717
+  16, select_k, 64 threads (earlier)           0.711     1,395    98,137   556,905
+  16, default (auto selection, 128 threads)     0.711     2,145   118,775   551,505
+  32, select_k, 64 threads (earlier)           0.780       516    42,025   212,172
+  32, default (auto selection, 128 threads)     0.780     1,609    90,725   308,515
+  64, select_k, 64 threads (earlier)           0.839       505    36,772   145,638
+  64, default (auto selection, 128 threads)     0.839     1,087    61,015   195,999
+  128, select_k, 64 threads (earlier)          0.890       247    18,491    45,783
+  128, default (auto selection, 128 threads)     0.890       689    37,364   118,525
+glove, l2: 1,183,514 vectors, 4000 lists (float32); queries per second
+
+  nprobe, selection                        recall@10    single       100    10,000
+  8, select_k, 64 threads (earlier)            0.631     1,881   111,286   900,975
+  8, default (auto selection, 128 threads)     0.631     2,466   121,272   888,362
+  16, select_k, 64 threads (earlier)           0.712     1,275    76,944   533,228
+  16, default (auto selection, 128 threads)     0.712     2,007    91,689   531,686
+  32, select_k, 64 threads (earlier)           0.780       485    34,764   206,371
+  32, default (auto selection, 128 threads)     0.780     1,437    62,223   300,523
+  64, select_k, 64 threads (earlier)           0.839       459    27,267   143,021
+  64, default (auto selection, 128 threads)     0.839       974    38,014   194,236
+  128, select_k, 64 threads (earlier)          0.890       226    13,791    45,017
+  128, default (auto selection, 128 threads)     0.890       596    22,450   114,414

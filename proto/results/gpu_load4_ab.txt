@@ -1,0 +1,60 @@
+sift, l2: 1,000,000 vectors, 4000 lists (uint8); queries per second
+
+  nprobe, selection                        recall@10    single       100    10,000
+  16, one coordinate per load (merged)         0.840     2,594   170,741   566,476
+  16, four coordinates per load (merged)       0.840     2,617   165,287   571,253
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+  32, one coordinate per load (merged)         0.925     2,134   128,565   315,943
+  32, four coordinates per load (merged)       0.925     2,175   127,634   315,657
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+  64, one coordinate per load (merged)         0.973     1,525    92,691   198,727
+  64, four coordinates per load (merged)       0.973     1,594    95,969   196,868
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+  128, one coordinate per load (merged)        0.993     1,030    63,278   115,095
+  128, four coordinates per load (merged)      0.993     1,068    66,975   116,459
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+sift, l2: 1,000,000 vectors, 4000 lists (float32); queries per second
+
+  nprobe, selection                        recall@10    single       100    10,000
+  16, one coordinate per load (merged)         0.840     2,035    82,121   511,445
+  16, four coordinates per load (merged)       0.840     2,034    88,271   513,990
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+  32, one coordinate per load (merged)         0.925     1,457    58,007   289,989
+  32, four coordinates per load (merged)       0.925     1,462    57,729   289,985
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+  64, one coordinate per load (merged)         0.973       969    34,744   181,820
+  64, four coordinates per load (merged)       0.973       979    34,751   183,347
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+  128, one coordinate per load (merged)        0.993       607    19,352   105,795
+  128, four coordinates per load (merged)      0.993       607    19,520   105,125
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+glove, l2: 1,183,514 vectors, 4000 lists (float16); queries per second
+
+  nprobe, selection                        recall@10    single       100    10,000
+  16, one coordinate per load (merged)         0.711     2,114   121,761   551,362
+  16, four coordinates per load (merged)       0.711     1,499    95,361   556,710
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+  32, one coordinate per load (merged)         0.780     1,578    92,712   311,259
+  32, four coordinates per load (merged)       0.780     1,024    66,321   312,274
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+  64, one coordinate per load (merged)         0.839     1,075    60,705   197,644
+  64, four coordinates per load (merged)       0.839       649    42,388   200,372
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+  128, one coordinate per load (merged)        0.890       689    37,802   117,529
+  128, four coordinates per load (merged)      0.890       380    25,152   118,269
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+glove, l2: 1,183,514 vectors, 4000 lists (float32); queries per second
+
+  nprobe, selection                        recall@10    single       100    10,000
+  16, one coordinate per load (merged)         0.712     2,016    94,691   531,330
+  16, four coordinates per load (merged)       0.712     1,373    75,734   532,757
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+  32, one coordinate per load (merged)         0.780     1,437    62,635   299,826
+  32, four coordinates per load (merged)       0.780       931    49,979   302,203
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+  64, one coordinate per load (merged)         0.839       965    38,791   193,594
+  64, four coordinates per load (merged)       0.839       572    30,049   193,878
+                                           identical neighbors, the two loads (batches of 100): 1.0000
+  128, one coordinate per load (merged)        0.890       605    22,419   113,725
+  128, four coordinates per load (merged)      0.890       330    17,216   113,977
+                                           identical neighbors, the two loads (batches of 100): 1.0000

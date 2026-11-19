@@ -1,0 +1,28 @@
+sift: 1,000,000 vectors, 128 dimensions, 4000 lists (uint8), nprobe 64; batches of 100; a query reads 2.30 MB of lists
+
+  fixed cost: an empty GPU round trip 0.175 ms; a one-query, nprobe-1 search 0.332 ms
+
+  scan                                        q/s    GB/s
+  query-major, 32 threads per query        38,393      88
+  query-major, 64 threads per query        52,251     120
+  query-major, 128 threads per query       59,747     137
+  query-major, 256 threads per query       60,144     138
+  query-major, 512 threads per query       57,070     131
+  list-major                               30,263      69
+
+  per call of 100 queries (query-major, 64 threads): coarse step and selection 1.042 ms, scan 1.139 ms (202 GB/s), merge 0.272 ms
+
+  coarse distances alone (one fused multiply): 0.224 ms per call
+  selection, siann's two-stage select_k,   8 threads per query: 2.660 ms per call
+  selection, siann's two-stage select_k,  16 threads per query: 1.591 ms per call
+  selection, siann's two-stage select_k,  32 threads per query: 1.015 ms per call
+  selection, siann's two-stage select_k,  64 threads per query: 0.776 ms per call
+  selection, siann's two-stage select_k, 128 threads per query: 0.740 ms per call
+  selection, MLX argpartition (unordered nprobe): 0.301 ms per call
+  scan alone, 128 threads per query: 0.880 ms per call (261 GB/s)
+  scan alone, 256 threads per query: 0.810 ms per call (284 GB/s)
+
+  argpartition probes, 64 threads per query:     73,913 q/s (170 GB/s), recall 0.972
+  argpartition probes, 128 threads per query:     91,774 q/s (211 GB/s), recall 0.972
+  argpartition probes, 256 threads per query:     88,992 q/s (204 GB/s), recall 0.972
+  (current search, recall 0.972)
