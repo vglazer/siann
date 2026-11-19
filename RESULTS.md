@@ -209,64 +209,175 @@ Probing 16 of 64 groups makes single queries 1.1-2.1x faster, most at low nprobe
 with k = nprobe = 64, 512 threads leave 32,768 survivors per query, and 32 threads cut the selection
 from 14 ms to about 1 ms.
 
-## IVF: scans and FAISS (`ivf_cpu.py`, `fp16_lists.py --faiss`)
+## IVF: scans and FAISS (`ivf_cpu.py`, `fp16_lists.py --faiss`, `fine_lists.py`)
 
 siann's IVFs and FAISS's IVF share the same 4,000 lists, so their recall at each nprobe is identical;
-they differ in how they scan. **Query-major:** each query walks its own lists (on the GPU, 64 threads
-per query; in Rust, one thread per query). **List-major:** queries grouped by list, each list read once
-for all of its queries (on the GPU, one threadgroup per list, 16 queries at a time; in Rust, 4 queries
-at a time with the exact kernel). Pass sizes such as the batch size at run time, not as compile-time
-constants, or every new batch size recompiles the kernels.
+they differ in how they scan. **Query-major:** each query walks its own lists (on the GPU, 128 threads
+per query, which merge their candidates in threadgroup memory; in Rust, one thread per query).
+**List-major:** queries grouped by list, each list read once for all of its queries (on the GPU, one
+threadgroup per list, 16 queries at a time; in Rust, 4 queries at a time with the exact kernel). The
+GPU IVF uses the query-major scan below 1,000 queries and the list-major scan above. Pass sizes such as
+the batch size at run time, not as compile-time constants, or every new batch size recompiles the
+kernels.
 
 **float32 lists, against FAISS's HNSW with float32 vectors** (M = 32), at the nearest recall; queries
 per second (`ivf_sift_l2.txt`, `ivf_sift_l1.txt`, `ivf_glove_l2.txt`):
 
-| Dataset | Recall: IVF / HNSW | Single queries: Rust IVF / HNSW | Batches of 100: best IVF / HNSW | 10,000: GPU IVF / Rust list-major / HNSW |
+| Dataset | Recall: IVF / HNSW | Single queries: Rust IVF / HNSW | Batches of 100: GPU IVF / HNSW | 10,000: GPU IVF / Rust list-major / HNSW |
 | --- | --- | ---: | ---: | ---: |
-| SIFT L2 | 0.925 / 0.937 | 7,862 / 11,330 | 33,313 (GPU) / 95,579 | 199,112 / 71,867 / 119,917 |
-| SIFT L2 | 0.973 / 0.978 | 4,682 / 6,389 | 25,193 (GPU) / 58,470 | 141,078 / 40,433 / 69,749 |
-| SIFT L2 | 0.993 / 0.993 | 2,614 / 3,287 | 12,783 (GPU) / 32,131 | 44,501 / 22,089 / 38,921 |
-| SIFT L1 | 0.904 / 0.898 | 7,528 / 8,383 | 26,722 (GPU) / 80,580 | 150,092 / 73,073 / 101,050 |
-| SIFT L1 | 0.960 / 0.957 | 4,418 / 4,806 | 19,609 (GPU) / 48,898 | 102,057 / 41,344 / 58,297 |
-| SIFT L1 | 0.988 / 0.985 | 2,369 / 2,647 | 12,497 (Rust list-major) / 28,248 | 38,694 / 22,536 / 32,515 |
-| GloVe | 0.780 / 0.781 | 8,959 / 5,402 | 34,337 (GPU) / 47,519 | 206,607 / 76,521 / 56,891 |
-| GloVe | 0.839 / 0.845 | 5,314 / 3,005 | 27,062 (GPU) / 27,960 | 146,998 / 42,512 / 32,304 |
-| GloVe | 0.890 / 0.892 | 3,074 / 1,623 | 13,800 (GPU) / 16,004 | 46,409 / 23,159 / 17,721 |
+| SIFT L2 | 0.925 / 0.937 | 7,228 / 9,565 | 57,943 / 93,668 | 291,416 / 70,969 / 120,988 |
+| SIFT L2 | 0.973 / 0.978 | 4,453 / 6,464 | 34,630 / 53,646 | 181,901 / 38,391 / 68,227 |
+| SIFT L2 | 0.993 / 0.993 | 2,547 / 3,279 | 18,996 / 28,686 | 104,438 / 21,839 / 38,725 |
+| SIFT L1 | 0.904 / 0.898 | 6,757 / 8,336 | 45,784 / 80,028 | 200,500 / 72,870 / 101,592 |
+| SIFT L1 | 0.960 / 0.957 | 4,084 / 4,457 | 27,081 / 48,911 | 123,855 / 40,794 / 58,059 |
+| SIFT L1 | 0.988 / 0.985 | 2,410 / 2,620 | 15,753 / 28,104 | 75,288 / 21,922 / 32,206 |
+| GloVe | 0.780 / 0.781 | 8,186 / 5,370 | 61,870 / 47,436 | 303,593 / 77,181 / 56,904 |
+| GloVe | 0.839 / 0.845 | 5,057 / 2,989 | 38,744 / 28,088 | 191,532 / 41,521 / 32,114 |
+| GloVe | 0.890 / 0.892 | 2,934 / 1,614 | 22,197 / 15,853 | 113,440 / 22,981 / 17,637 |
 
 **Compressed lists, against FAISS's compressed HNSW** (`IndexHNSWSQ`; see "List storage"), the
-strongest alternative, at the nearest recall (`faiss_sq_*_l2.txt`):
+strongest alternative, at the nearest recall (`faiss_sq_sift_l2.txt`, `faiss_sq_glove_l2.txt`):
 
 | Dataset, recall | Batch | siann | FAISS HNSW, best storage |
 | --- | --- | ---: | ---: |
-| SIFT, 0.973 / 0.978 | 100 | GPU uint8 51,380; Rust uint8 34,223 | **uint8 109,965** |
-| SIFT, 0.973 / 0.978 | 10,000 | GPU uint8 145,814 | uint8 152,655 |
-| SIFT, 0.840 / 0.862 | 10,000 | **GPU uint8 571,146** | uint8 457,279 |
-| GloVe, 0.839 / 0.843 | 100 | GPU float16 36,832; Rust float16 24,632 | float16 34,332 |
-| GloVe, 0.711 / 0.704 | 100 | GPU float16 96,566 | float16 95,080 |
-| GloVe, 0.839 / 0.843 | 10,000 | **GPU float16 151,665** | float16 40,015 |
-| GloVe, 0.839 / 0.845 | 1 (one thread each) | **Rust float32 4,975** | float32 2,770; float16 3,555 |
+| SIFT, 0.973 / 0.978 | 100 | GPU uint8 93,502; Rust uint8 37,879 | **uint8 114,125** |
+| SIFT, 0.973 / 0.978 | 10,000 | **GPU uint8 199,347** | uint8 153,710 |
+| SIFT, 0.840 / 0.862 | 10,000 | **GPU uint8 566,410** | uint8 479,703 |
+| GloVe, 0.839 / 0.843 | 100 | **GPU float16 60,559**; Rust float16 24,357 | float16 34,348 |
+| GloVe, 0.711 / 0.704 | 100 | **GPU float16 118,622** | float16 95,705 |
+| GloVe, 0.839 / 0.843 | 10,000 | **GPU float16 199,030** | float16 40,092 |
+| GloVe, 0.839 / 0.843 | 1 (one thread each) | **Rust float32 4,971** | float32 3,002; float16 3,575 |
+
+**Batches of 100 on SIFT, by recall,** against uint8 HNSW in the same run (uint8 lists;
+`fine_lists_sift.txt`):
+
+| Recall: siann / HNSW | siann GPU IVF (lists) | FAISS HNSW, uint8 | siann / HNSW |
+| --- | ---: | ---: | ---: |
+| 0.828 / 0.842 | 167,361 (4,000) | 251,083 | 0.67x |
+| 0.925 / 0.925 | 118,810 (4,000) | 175,348 | 0.68x |
+| 0.973 / 0.978 | 91,706 (4,000) | 109,788 | 0.84x |
+| 0.993 / 0.993 | 63,130 (4,000) | 63,698 | 0.99x |
+| 0.997 / 0.998 | 56,499 (8,000) | 34,124 | **1.66x** |
 
 What follows from these:
 
-- **Large batches belong to the GPU's list-major scan.** It is 2.2-3.5x the GPU's query-major scan on
-  large batches; against HNSW it leads by 3.8x on GloVe (compressed) and draws on SIFT at recall 0.97
-  (1.25x at 0.84; 1.1-2.0x against float32 HNSW). HNSW must walk much further through its graph on
-  GloVe for the same recall, while IVF's dense scans do not care.
-- **Batches of about 100 favor HNSW on SIFT** (about 2x, compressed or not) and draw on GloVe. The
-  query-major scan is memory-bound there: every query reads its own lists (about 7.6 MB each at
-  nprobe 64 on GloVe, some 115 GB/s in all, so 16 threads give only 2.3-3.7 times one thread's rate),
-  while HNSW reads far less per query.
+- **Large batches belong to the GPU's list-major scan:** 2.4-2.7x float32 HNSW on SIFT L2, 2.0-2.3x on
+  SIFT L1 and 5.3-6.4x on GloVe; against compressed HNSW, 1.2-1.3x on SIFT and 5.0x on GloVe. HNSW must
+  walk much further through its graph on GloVe for the same recall, while an IVF's dense scans do not
+  care.
+- **Batches of about 100 favor the GPU on GloVe** (1.3-1.4x float32 HNSW, 1.2-1.8x compressed). **On
+  SIFT they favor HNSW:** with float32 lists against float32 HNSW, about 1.5x at every recall; with
+  uint8 lists against uint8 HNSW, 1.2-1.5x below recall 0.99, level at 0.99 and behind HNSW above it.
 - **Compression helps HNSW as much as the IVF:** uint8 makes HNSW 1.6-2.3x as fast on SIFT at every
-  batch size (ef 64: 58,970 to 109,965 in batches of 100).
-- **Against FAISS's own IVF on the same lists:** Rust's query-major scan is 1.3-6.6x faster on single
-  queries (most at low nprobe, where FAISS's fixed cost per query dominates: SIFT L2 at nprobe 4, 20,491
-  against 3,737 per second) and level in batches of 100 (both memory-bound; 1.3-1.5x at nprobe 4).
-  Rust's list-major scan is 2.5-3.2x FAISS's IVF in batches of 10,000 with float32 lists, which FAISS
-  scans query by query, level with uint8 lists (37,690 against 38,997 at nprobe 64), and 1.0-1.4x with
+  batch size (ef 64: 60,424 to 114,125 in batches of 100).
+- **Against FAISS's own IVF on the same lists:** Rust's query-major scan is faster on single queries,
+  most at low nprobe, where FAISS's fixed cost per query dominates (SIFT L2 at nprobe 4: 16,705 against
+  3,720 per second; at 128: 2,547 against 1,224), and level in batches of 100 (both memory-bound). Rust's
+  list-major scan is 2.2-4.0x FAISS's IVF in batches of 10,000 with float32 lists from nprobe 16 (1.9x at
+  nprobe 4), since FAISS scans query by query, level with uint8 lists (38,567 against 40,490 at nprobe 64) and about 1.4x with
   float16.
 - **On the CPU, the query-major scan suits single queries and the list-major scan large batches:**
   list-major is slower for single queries (it pays for grouping), wins in batches of 100 from nprobe 64
   (32 on SIFT L1), and always wins at 10,000.
+
+### Small batches on the GPU (`gpu_small_batch.py`, `gpu_select_ab.py`)
+
+A query-major call for 100 queries has three stages: the coarse step (distances to the 4,000
+centroids, one fused multiply, then each query's nprobe nearest lists), the scan, and the merge of
+each query's candidates. Choosing the lists, not the scan, is the expensive stage with siann's ordered
+two-stage selection: each thread keeps a running top-nprobe, which at nprobe 64 does not fit in
+registers. SIFT, uint8 lists, nprobe 64, per call of 100 queries, each stage forced to finish before
+the next (so each includes a synchronization of about 0.175 ms, the cost of an empty round trip)
+(`gpu_small_batch_sift.txt`):
+
+| Stage | Time per call |
+| --- | ---: |
+| Coarse distances (one fused multiply) | 0.224 ms |
+| Choosing the lists: siann's ordered selection, 32 threads per query | 1.015 ms |
+| Choosing the lists: MLX's `argpartition` (unordered, which the scans do not need) | **0.301 ms** |
+| Scan, 64 threads per query | 1.139 ms (202 GB/s) |
+| Scan, 128 / 256 threads per query | 0.880 / 0.810 ms (261 / 284 GB/s) |
+| Merge (MLX operations over every thread's candidates) | 0.272 ms |
+
+- **Choose the probes by the scan and nprobe.** The query-major scan uses `argpartition` at every
+  nprobe. The list-major scan, for thousands of queries, uses the ordered selection up to nprobe 16
+  (cheap for a small nprobe: 938,134 against 581,377 queries per second at nprobe 8 on SIFT) and
+  `argpartition` from 32 (317,163 against 199,095) (`gpu_select_ab_crossover.txt`).
+- **128 threads per query** are the fastest whole call (91,774 queries per second at nprobe 64; 64
+  threads 73,913; 256 threads 88,992), and no slower than 64 at any measured nprobe.
+- **Merging inside the scan kernel** (each query's 128 threads in one threadgroup, their sorted best k
+  merged pairwise in seven steps) is 0-5% faster than the separate merge and writes only k results per
+  query (`gpu_merge_ab.txt`).
+- **With these defaults the GPU IVF is never slower than with the ordered selection and 64 threads**
+  on any measured case, with the same recall (`gpu_select_ab.txt`; queries per second, earlier
+  defaults against these):
+
+  | | nprobe | Single | Batches of 100 | 10,000 |
+  | --- | ---: | ---: | ---: | ---: |
+  | SIFT, uint8 | 16 | 1,781 / 2,605 | 140,643 / 162,860 | 567,282 / 564,289 |
+  | SIFT, uint8 | 64 | 645 / 1,554 | 52,084 / 93,835 | 144,734 / 198,197 |
+  | SIFT, uint8 | 128 | 309 / 1,016 | 25,849 / 62,621 | 45,115 / 114,499 |
+  | GloVe, float16 | 64 | 505 / 1,087 | 36,772 / 61,015 | 145,638 / 195,999 |
+  | GloVe, float16 | 128 | 247 / 689 | 18,491 / 37,364 | 45,783 / 118,525 |
+
+  At nprobe 16 and below the list-major scan runs the same code as before (within 1.4%). On SIFT the
+  query-major results differ from the earlier ones on 1.3% of neighbors, all ties (the thread count
+  breaks equal distances in another order), with the same recall; on GloVe they are identical.
+
+### Work per query (`dist_counts.py`)
+
+Small batches are limited by memory traffic, so the work is the number of vectors a query touches:
+for the IVF, the centroids compared plus the vectors in the probed lists (the lists' bytes are the
+query's own memory traffic; the centroids are shared and stay in cache); for HNSW, FAISS's own count
+(`hnsw_stats.ndis`). The IVF with 16,000 lists and the two-level coarse step (a quarter of 250 groups
+probed), against HNSW (M = 32) at the nearest recall (`dist_counts_sift.txt`, `dist_counts_glove.txt`):
+
+| Dataset, recall (IVF / HNSW) | IVF: distances, list KB | HNSW: distances, KB | HNSW touches fewer |
+| --- | ---: | ---: | ---: |
+| SIFT, 0.839 / 0.842 | 6,798, 301 | 764, 96 | 8.9x distances, 3.1x bytes |
+| SIFT, 0.919 / 0.925 | 9,144, 595 | 1,184, 148 | 7.7x, 4.0x |
+| SIFT, 0.967 / 0.974 | 13,736, 1,168 | 1,962, 245 | 7.0x, 4.8x |
+| GloVe, 0.719 / 0.711 | 8,567, 1,085 | 1,568, 613 | 5.5x, 1.8x |
+| GloVe, 0.832 / 0.856 | 15,948, 3,968 | 4,317, 1,686 | 3.7x, 2.4x |
+
+HNSW touches far fewer vectors on both datasets, but each visit costs it more (scattered reads, one
+step depending on the last), where an IVF streams contiguous lists. On GloVe its 4-5x fewer vectors
+are cancelled by that cost; on SIFT, 7-9x fewer keep it ahead in small batches below recall 0.99.
+Finer partitions cut the IVF's work (on SIFT at recall 0.97, 16,000 lists with the two-level coarse
+step touch 13,736 vectors and 1,168 KB of lists, 4,000 lists 21,934 and 2,242 KB), but that pays only
+on the GPU at high recall (8,000 lists reach recall 0.997 at 56,499 queries per second in batches of
+100, above). On the CPU it does not (next).
+
+### Where a small batch's time goes on the CPU (`batch_profile.py`, `samply_top.py`)
+
+SIFT, uint8 lists with the integer path, the Rust IVF in batches of 100 (`batch_profile_sift.txt`,
+`batch_profile_sift_gprobe.txt`; the profile from `samply` with `profile_batch.py`, summed by
+`samply_top.py` into `batch_profile_samply.txt`, as shares of the samples inside `search_one`):
+
+| | 4,000 lists, nprobe 64 | 16,000 lists, nprobe 128 |
+| --- | ---: | ---: |
+| One thread | 8,871 | 7,615 |
+| 8 threads | 40,373 (4.6x) | 38,475 (5.0x) |
+| 12 threads (the performance cores) | 40,626 | 40,683 |
+| 16 threads | 38,974 | 37,789 |
+| nprobe 1 (the coarse step and one list) | 289,401 | 149,314 |
+| k = 1 / 10 / 100 | 38,970 / 38,974 / 37,334 | 37,701 / 37,789 / 36,114 |
+| Exact coarse step instead of two-level | 37,818 | 27,315 |
+
+- **The list scan is the cost:** the scan loop over the lists' rows takes about 84% of the search, the
+  coarse step about 9% and the top-k updates about 6%.
+- **Throughput stops growing at about 8 threads,** at about 40,000 queries per second; the efficiency
+  cores neither help nor hurt.
+- **With 4,000 lists the scan is bandwidth-bound:** float32 lists (four times the bytes) run 2.9x slower
+  than uint8 in batches of 100, and at the plateau the scan streams about 88 GB/s. **With 16,000 lists**
+  (about 63 vectors each) it stops at the same rate with half the bytes, which points to a fixed cost
+  per list (the start of each list's stream) rather than bandwidth: 16,000 lists touch 1.6x fewer
+  vectors than 4,000 at recall 0.97 and run at the same speed (37,878 against 38,798 queries per second;
+  `fine_lists_sift.txt`).
+- **The centroids cost little:** varying the groups the two-level step probes (16,000 lists) changes
+  the centroid bytes per query 11x (381 to 4,125 KB) and throughput 1.4x (49,159 to 34,966), since the
+  centroids stay in cache. A quarter of the groups is more than needed: 31 of 250 groups give recall
+  0.963 at 41,664, against 0.967 at 38,735 for 62.
 
 ## IVF: list storage (`fp16_lists.py`, `single_query.py`, `faiss_sq8_query.py`)
 
@@ -275,19 +386,20 @@ exact integers. **float16** (half the bytes) rounds each coordinate: exact on SI
 at most 2.4e-4 on GloVe, moving recall by at most 0.001. **uint8** (a quarter, plus a row-major copy,
 so two bytes per coordinate in all) is lossless for data whose coordinates are integers 0-255, like
 SIFT's; both IVFs refuse it for other data. Speed over float32 lists on the same path, L2, same run
-(`fp16_*_l2.txt`, `uint8_sift_l2.txt`):
+(`faiss_sq_sift_l2.txt`, `faiss_sq_glove_l2.txt`):
 
 | Path | float16, SIFT and GloVe, nprobe 16 / 64 | uint8, SIFT, nprobe 16 / 64 |
 | --- | ---: | ---: |
-| Rust, batches of 100 | 1.58-1.61x / 1.66-1.76x | **2.16x / 2.85x** |
-| GPU, batches of 100 | 1.29-1.43x / 1.36-1.60x | **1.66x / 2.02x** |
-| GPU, 10,000 (list-major) | 1.04-1.07x / 1.02-1.06x | 1.08x / 1.09x |
-| Rust, 10,000 (list-major) | 0.89-0.91x / 0.87-0.99x | 0.96x / 1.11x |
-| Rust, single queries (1 thread) | 0.62-0.63x / 0.51-0.55x | see the integer path below |
+| Rust, batches of 100 | 1.50-1.52x / 1.68-1.73x | **2.41x / 3.01x** |
+| GPU, batches of 100 | 1.33-1.39x / 1.64-1.78x | **1.85x / 2.72x** |
+| GPU, 10,000 (list-major) | 1.02-1.04x / 1.03-1.05x | 1.08x / 1.08x |
+| Rust, 10,000 (list-major) | 0.89-0.90x / 0.85-0.89x | 0.96x / 0.98x |
+| Rust, single queries (1 thread) | 0.65-0.68x / 0.54-0.57x | **1.23x / 1.55x** (the integer path, below) |
 
 - **Smaller lists pay where the scan is memory-bound** (batches of 100, and split single queries) and
-  cost where it is not (a single query on one thread, and the list-major scans, which already read each
-  list once for many queries). So no storage is best at every batch size.
+  cost where it is not: a single query on one thread, unless byte lists take the integer path, and the
+  list-major scans, which already read each list once for many queries. So no storage is best at
+  every batch size.
 - **Byte lists with integer queries take an integer path,** exact: absolute differences of bytes,
   accumulated in integers, over the row-major copy. A query whose coordinates are not all integers 0-255
   takes the float path, so nothing is rounded; the integer distances, below 2^24 for up to 258
@@ -364,21 +476,22 @@ microseconds; HNSW on one thread, as it answers a single query (`faiss_single_*_
 
 ## IVF on PyTorch MPS (`ivf_torch.py`)
 
-The GPU IVF's Metal code, run through `torch.mps.compile_shader`, with the same coarse step, merge and
-centroids (run by `ivf_cpu.py` in a process of its own). SIFT L2, queries per second (the PyTorch rows
-of `ivf_*.txt`):
+The GPU IVF's Metal code, run through `torch.mps.compile_shader`, with the same coarse step and
+centroids (run by `ivf_cpu.py` in a process of its own), but with the ordered probe selection, 64
+threads per query and the separate merge. SIFT L2, queries per second (`ivf_sift_l2.txt`):
 
 | nprobe | Recall (both) | Single: MLX / PyTorch | Batches of 100 | Batch of 10,000 |
 | ---: | ---: | ---: | ---: | ---: |
-| 4 | 0.571 | 2,356 / 1,541 | 155,380 / 110,696 | 1,184,466 / 1,149,359 |
-| 16 | 0.840 | 1,287 / 936 | 75,859 / 62,148 | 517,798 / 512,256 |
-| 32 | 0.925 | 490 / 442 | 33,313 / 30,719 | 199,112 / 201,188 |
-| 64 | 0.973 | 455 / 416 | 25,193 / 23,737 | 141,078 / 143,308 |
-| 128 | 0.993 | 220 / 214 | 12,783 / 12,680 | 44,501 / 45,591 |
+| 4 | 0.571 | 2,879 / 1,547 | 169,284 / 112,800 | 1,194,143 / 1,199,508 |
+| 16 | 0.840 | 2,026 / 985 | 86,336 / 63,450 | 511,553 / 511,538 |
+| 32 | 0.925 | 1,440 / 442 | 57,943 / 30,855 | 291,416 / 203,756 |
+| 64 | 0.973 | 957 / 416 | 34,630 / 23,886 | 181,901 / 143,082 |
+| 128 | 0.993 | 603 / 212 | 18,996 / 12,612 | 104,438 / 45,814 |
 
-Large batches are level (within 3% on SIFT L2, SIFT L1 and GloVe), since the kernels do the work.
-Single queries and batches of 100 are up to a third slower in PyTorch at low nprobe: a fixed cost of
-about 0.2 ms per call.
+With the same selection the two run level on large batches, since the kernels do the work: at nprobe
+16 and below, where the list-major scan selects as PyTorch's does, they are within 1%. Above it, MLX's
+unordered selection makes it 1.3-2.3x PyTorch's, and single queries and batches of 100 run 1.4-3.3x
+PyTorch's, from the selection, the threads per query and PyTorch's fixed cost of about 0.2 ms per call.
 
 ## Inner product (`backends.py --metrics ip`, `ivf_cpu.py --metric ip`, `ip_reduction.py`)
 
@@ -427,9 +540,14 @@ fails** (`ip_ivf_glove_raw.txt`, `ip_reduction_glove_raw.txt`):
   coarse step and grouping free it would at best draw level. BLAS pays for exact L2, where the
   multiplies are large.
 - **The integer path in the list-major scan** (large batches): in a batch of 10,000 on SIFT at nprobe
-  64, Rust's list-major scan does 37,339 queries per second with uint8 lists, against the GPU IVF's
-  147,384 (`int_uint8_sift_l2.txt`) and compressed HNSW's 152,655 on the CPU. Even the single-query
+  64, Rust's list-major scan does 38,567 queries per second with uint8 lists, against the GPU IVF's
+  199,347 and compressed HNSW's 153,710 on the CPU (`faiss_sq_sift_l2.txt`). Even the single-query
   path's gain (1.6-1.8x) would leave it far behind both, for integer byte data only, at the cost of a
   new kernel.
+- **Reading four coordinates per load in the GPU scan** (`uchar4`, `half4`, `float4`, combined in the
+  same order, so with identical results): up to 6% faster on SIFT and 20-45% slower on GloVe
+  (`gpu_load4_ab.txt`, measured with a variant of the scan kernel not kept).
+- **Finer partitions for small batches on the CPU:** 16,000 lists touch 1.6x fewer vectors than 4,000
+  at recall 0.97 and run at the same speed (see "Where a small batch's time goes on the CPU").
 - **Fewer IVF lists** to cheapen the coarse step, and **splitting a single query on the global thread
   pool**: see "The coarse step" and "Single queries" above.

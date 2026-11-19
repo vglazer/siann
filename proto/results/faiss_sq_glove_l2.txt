@@ -1,25 +1,25 @@
 glove, l2: 1,183,514 vectors, 100 dimensions, 4000 lists; float16 changes 100.0% of coordinates (largest error 2.44e-04); batches: 1 and 100 over 1,000 queries, 10,000 at once
 
   method                         recall@10  q/s, single   q/s, 100  q/s, full
-  Rust IVF float32, nprobe 16        0.712       11,677     48,449    126,905
-  Rust IVF float16, nprobe 16        0.711        7,702     72,194    113,592
-  GPU IVF float32, nprobe 16         0.712                  76,659    534,251
-  GPU IVF float16, nprobe 16         0.711                  98,578    554,909
-  FAISS IVF float32, nprobe 16       0.712        9,747     45,640     48,242
-  FAISS IVF float16, nprobe 16       0.711       11,334     72,331     82,087
-  Rust IVF float32, nprobe 64        0.839        4,975     14,457     43,725
-  Rust IVF float16, nprobe 64        0.839        2,805     24,921     37,964
-  GPU IVF float32, nprobe 64         0.839                  26,899    148,469
-  GPU IVF float16, nprobe 64         0.839                  36,762    151,374
-  FAISS IVF float32, nprobe 64       0.839        3,748     13,472     14,423
-  FAISS IVF float16, nprobe 64       0.839        4,621     23,728     26,301
-  FAISS HNSW float32, ef 16          0.606       15,532    116,797    156,321
-  FAISS HNSW float16, ef 16          0.605       18,234    145,701    206,941
-  FAISS HNSW float32, ef 32          0.699        9,445     77,594     95,119
-  FAISS HNSW float16, ef 32          0.704       10,991     95,080    123,449
-  FAISS HNSW float32, ef 64          0.782        5,333     47,337     55,440
-  FAISS HNSW float16, ef 64          0.782        6,391     59,816     71,330
-  FAISS HNSW float32, ef 128         0.845        3,014     27,796     31,523
-  FAISS HNSW float16, ef 128         0.843        3,555     34,332     40,015
-  FAISS HNSW float32, ef 256         0.893        1,609     15,627     17,252
-  FAISS HNSW float16, ef 256         0.892        1,894     19,285     21,384
+  Rust IVF float32, nprobe 16        0.712       11,610     47,636    125,289
+  Rust IVF float16, nprobe 16        0.711        7,906     72,413    112,729
+  GPU IVF float32, nprobe 16         0.712                  89,442    529,838
+  GPU IVF float16, nprobe 16         0.711                 118,622    553,544
+  FAISS IVF float32, nprobe 16       0.712        9,907     46,217     48,769
+  FAISS IVF float16, nprobe 16       0.711       11,504     75,624     82,142
+  Rust IVF float32, nprobe 64        0.839        4,971     14,527     43,746
+  Rust IVF float16, nprobe 64        0.839        2,838     24,357     37,329
+  GPU IVF float32, nprobe 64         0.839                  36,914    193,574
+  GPU IVF float16, nprobe 64         0.839                  60,559    199,030
+  FAISS IVF float32, nprobe 64       0.839        3,698     13,007     14,299
+  FAISS IVF float16, nprobe 64       0.839        4,727     23,711     26,125
+  FAISS HNSW float32, ef 16          0.606       15,863    116,976    152,942
+  FAISS HNSW float16, ef 16          0.605       18,251    144,205    200,388
+  FAISS HNSW float32, ef 32          0.699        9,558     78,190     97,510
+  FAISS HNSW float16, ef 32          0.704       11,303     95,705    128,747
+  FAISS HNSW float32, ef 64          0.782        5,303     47,983     55,488
+  FAISS HNSW float16, ef 64          0.782        6,486     59,071     70,462
+  FAISS HNSW float32, ef 128         0.845        3,002     28,269     30,708
+  FAISS HNSW float16, ef 128         0.843        3,575     34,348     40,092
+  FAISS HNSW float32, ef 256         0.893        1,595     15,811     17,189
+  FAISS HNSW float16, ef 256         0.892        1,873     20,009     21,192

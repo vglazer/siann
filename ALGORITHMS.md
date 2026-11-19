@@ -118,8 +118,9 @@ SIFT1M with L2, nprobe 16 finds 84% of the true neighbors, nprobe 64 97%, nprobe
 
 **Query-major and list-major scans.** There are two ways to scan:
 
-- **Query-major:** each query walks its own lists. On the GPU, 64 threads per query each take a
-  strided share and keep their best k in registers. On the CPU, one thread per query. Cheap for a
+- **Query-major:** each query walks its own lists. On the GPU, 128 threads per query each take a
+  strided share and keep their best k in registers, then merge them pairwise in threadgroup memory
+  (seven steps), so the kernel writes only k results per query. On the CPU, one thread per query. Cheap for a
   single query, but in a batch every query reads its lists separately, so a popular list is read
   from memory many times.
 - **List-major:** queries are first grouped by the lists they probe, and each list is scanned once
@@ -136,8 +137,8 @@ threads, at the cost of occupying them; more threads help only at high nprobe, s
 joining tasks costs more than a small scan saves.
 
 List-major pays off with batches: in a batch of 10,000 queries, each list is probed by about 160 of
-them at nprobe 64, and read once instead of 160 times. On the GPU it is 2.2-3.5 times as fast as the
-query-major scan on large batches; on the CPU, 2.3-4.1 times from nprobe 16.
+them at nprobe 64, and read once instead of 160 times. On the CPU it is 2.3-3.9 times the query-major
+scan in batches of 10,000 from nprobe 16.
 
 **List storage.** The scan reads every vector of every probed list, so in a batch of queries scanned
 one by one it is limited by memory traffic, not arithmetic. The lists can therefore be stored in a
@@ -163,11 +164,11 @@ move into float32's positions, read as a number 2^112 times too small, normal or
 multiply corrects; `check_kernels.py` compares it with NumPy's conversion on every finite float16.
 
 Smaller lists pay where the scan is memory-bound: in batches of 100 queries, uint8 lists make the
-Rust scan 2.2-2.9 times and the GPU's 1.7-2.0 times as fast as float32 lists on SIFT, and float16
+Rust scan 2.4-3.0 times and the GPU's 1.9-2.7 times as fast as float32 lists on SIFT, and float16
 1.3-1.8 times on both datasets. They cost where it is not: a single query on one thread reads its
-lists below the memory system's limit, so widening is pure extra work (float16: 0.5-0.6 times
-float32's speed; uint8: 0.7-0.8), and the list-major scans already read each list once for many
-queries (0.9-1.1 times). So no storage is best for every batch size (see
+lists below the memory system's limit, so widening float16 is pure extra work (0.5-0.7 times
+float32's speed), while bytes with integer queries take the integer path and are 1.2-1.6 times
+faster; and the list-major scans already read each list once for many queries (0.9-1.1 times). So no storage is best for every batch size (see
 [BENCHMARKS](BENCHMARKS.md)).
 
 **The coarse step.** Finding the nearest nprobe centroids is itself a small exact search (4,000
@@ -176,8 +177,15 @@ SIFT). Fewer lists make it cheaper but each list longer, which cancels out at ma
 two-level coarse step avoids that trade: the centroids are clustered into groups (64 for 4,000 lists),
 and a query is compared with the groups' centres, then only with the centroids of its nearest groups.
 Probing 16 of 64 groups makes single queries 1.1-2.1 times faster on one thread (most at low nprobe)
-and costs at most 0.011 in recall. On the GPU and in large batches the coarse step is a small share of the work. On the GPU, the two-stage selection uses only 32 threads per query here: with k = nprobe
-= 64, 512 threads would leave 32,768 survivors per query, and the second stage would dominate.
+and costs at most 0.011 in recall.
+
+On the GPU, the distances to the centroids are one fused multiply, and choosing each query's nprobe
+nearest is the costly part: with siann's ordered two-stage selection each thread keeps a running
+top-nprobe, which at nprobe 64 does not fit in registers, and in a batch of 100 it takes as long as
+the scan. The scans need the lists in no order, so the query-major scan chooses them with MLX's
+`argpartition`, at a third of the cost; the list-major scan does too above nprobe 16, and at 16 and
+below uses the ordered selection with 32 threads per query, which is cheaper there for thousands of
+queries.
 
 ## What does not pay
 

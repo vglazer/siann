@@ -164,11 +164,18 @@ flowchart TB
 - **List-major scans.** FAISS's IVF scans each query's lists separately, so in a batch a popular list
   is read from memory once per query that probes it. siann's list-major scan groups the queries by
   list and reads each list once for all of them (about 160 queries per list in a batch of 10,000 at
-  nprobe 64). On the GPU it is 2.2-3.5 times siann's query-major scan on large batches, and on the CPU
-  the Rust list-major scan is 2.5-3.2 times FAISS's IVF with the same float32 lists.
-- **The GPU for large batches.** In batches of 10,000, the GPU IVF is 2.6-4.6 times FAISS's HNSW on
-  GloVe-100 (3.8 times against HNSW with compressed vectors) and 1.1-2.0 times on SIFT1M (level
-  against compressed HNSW at recall 0.97).
+  nprobe 64). On the CPU the Rust list-major scan is 2.2-4.0 times FAISS's IVF with the same float32
+  lists.
+- **The GPU for large batches.** In batches of 10,000, the GPU IVF is 5.3-6.4 times FAISS's HNSW on
+  GloVe-100 (5.0 times against HNSW with compressed vectors) and 2.0-2.7 times on SIFT1M (1.2-1.3 times
+  against compressed HNSW).
+- **Small batches on the GPU: cheap probe selection, merged in the kernel.** In a query-major call,
+  choosing each query's nprobe lists with siann's ordered selection costs as much as the scan, since at
+  nprobe 64 each thread's running top-64 does not fit in registers; the scans need the lists in no
+  order, so MLX's `argpartition` chooses them, at a third of the cost. Each query runs 128 threads,
+  which merge their candidates in threadgroup memory and write only k results. Together these make
+  batches of 100 1.7-2.4 times faster, and put the GPU IVF level with compressed HNSW on SIFT at recall
+  0.99 and ahead above it.
 - **Split single queries.** A single query on one thread is not limited by memory traffic (which is
   also why compressed lists do not help it there), so siann can spread one query's coarse step and lists over a few threads and merge their results in
   probe order, which gives exactly the one-thread result. The split runs on a pool of 4 threads of its
@@ -180,7 +187,7 @@ flowchart TB
   groups' centres first, then with the centroids of its 16 nearest groups, makes single queries
   1.1-2.1 times faster on one thread (most at low nprobe), with at most 0.011 less recall.
 - **Smaller lists.** The query-major scan is limited by memory traffic in batches, so lists stored in
-  float16 (half the bytes) or, for byte data like SIFT's, uint8 (a quarter) make it 1.3-2.9 times as
+  float16 (half the bytes) or, for byte data like SIFT's, uint8 (a quarter) make it 1.3-3.0 times as
   fast in batches of 100, with recall unchanged. FAISS compresses too, though (next section).
 - **Integer arithmetic for byte lists.** A query whose coordinates are all integers from 0 to 255 is
   compared with byte lists in exact integer arithmetic, over a row-major copy of the lists (each
@@ -193,11 +200,12 @@ flowchart TB
 siann's claims are only as good as the comparisons behind them, so the strongest FAISS option is
 always the baseline, including FAISS's compressed indexes, and this is where it wins:
 
-- **HNSW for small batches on SIFT-like data.** HNSW (a graph index) reads far less memory per query
-  than an IVF scan, and compressing its vectors speeds it up 1.6-2.3 times on SIFT, as much as it
-  speeds up the IVF. Compressed HNSW leads in batches of about 100 on SIFT (about 2 times) and on
-  single queries on one thread (1.3-1.45 times, against siann's two-level coarse step and integer
-  path); with 4 threads per query siann leads from recall 0.97.
+- **HNSW for small batches on SIFT-like data.** HNSW (a graph index) touches 7-9 times fewer vectors
+  per query than an IVF on SIFT (4-5 times on GloVe, where its scattered reads cost it the difference),
+  and compressing its vectors speeds it up 1.6-2.3 times, as much as it speeds up the IVF. Compressed
+  HNSW leads in batches of about 100 on SIFT below recall 0.99 (1.2-1.5 times) and on single queries on
+  one thread (1.3-1.45 times, against siann's two-level coarse step and integer path); with 4 threads
+  per query siann leads from recall 0.97.
 - **FAISS's byte lists round the query.** For uint8 lists, FAISS rounds the query to integers and
   computes in integer arithmetic: exact for integer queries such as SIFT's, approximate for others.
   siann's integer path is level with it on one thread (147 against 136 microseconds at nprobe 64) and

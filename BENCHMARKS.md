@@ -22,29 +22,56 @@ k = 10. Datasets: SIFT1M, GloVe-100 and Gaussian vectors ([DATASETS](DATASETS.md
 | Exact search, batches, GPU available | **siann's GPU kernels** (MLX) | L2 and cosine 8 times FAISS; L1 18-25 times; L-infinity 47-49 times (random vectors); inner product 4-18 times |
 | Exact search on the CPU, L1 or L-infinity | **siann's Rust kernel** | 3.8-4.3 times (L1), 7.3 times (L-infinity) |
 | Exact search on the CPU, L2, cosine or inner product | **siann's BLAS path** (NumPy's multiply, Accelerate, then siann's Rust top-k) | L2 and cosine 1.7-1.9 times on 1,000 queries, 3.0-3.6 times on 100; inner product level to 2.7 times |
-| Approximate, large batches (thousands) | **siann's GPU IVF, list-major** | GloVe: 3.8 times HNSW; SIFT: level at recall 0.97, 1.25 times at 0.84 |
-| Approximate, batches of about 100 | SIFT-like data: **FAISS HNSW**; GloVe-like data: **siann's GPU IVF** | SIFT: HNSW about 2 times faster; GloVe: level (1.0-1.07 times) |
+| Approximate, large batches (thousands) | **siann's GPU IVF, list-major** | GloVe: 5.0 times HNSW; SIFT: 1.2-1.3 times |
+| Approximate, batches of about 100 | GloVe-like data: **siann's GPU IVF**; SIFT-like data: **FAISS HNSW** below recall 0.99, **siann's GPU IVF** from 0.99 | GloVe: 1.2-1.8 times HNSW; SIFT: HNSW 1.2-1.5 times faster below 0.99, level at 0.99, siann 1.7 times at 0.997 |
 | Approximate, single queries, one core each (throughput) | GloVe-like data: **siann's Rust IVF**, two-level coarse step; SIFT-like data: **FAISS HNSW** | GloVe: 1.5-1.65 times HNSW; SIFT: HNSW 1.3-1.45 times faster |
 | Approximate, single query, lowest latency with cores to spare | **siann's Rust IVF, split over 4 threads**, except SIFT-like data below recall 0.97 | GloVe: 1.5-3.1 times HNSW; SIFT: 1.2-1.6 times from recall 0.97 |
 | Inner product on vectors of uneven length | **siann's exact search on the GPU** (an IVF fails there) | recall 1.0 at 0.88-1.36 times the speed of FAISS's HNSW at recall 0.89 |
 
 For approximate search, store the lists as bytes when every coordinate is an integer from 0 to 255
 (lossless), and otherwise as float16 for batches on the GPU (recall moves by at most 0.001) and float32
-for single queries. Where HNSW and the GPU cross over depends on the data: between 100 and 10,000
-queries per batch on SIFT, and at about 100 on GloVe.
+for single queries. On SIFT-like data, HNSW and the GPU cross over between 100 and 10,000 queries per
+batch below recall 0.99, and at about 100 from 0.99; on GloVe-like data, below 100.
+
+**How much faster, exact search** (the speed-up over FAISS's flat index; 1,000 queries; L-infinity on
+200,000 Gaussian vectors, inner product on raw GloVe-100; `proto/backends.py`, `proto/blas_l2.py`):
+
+| Metric | siann's GPU | siann's CPU |
+| --- | ---: | ---: |
+| L-infinity | **47-49x** (random vectors only) | **7.3x** |
+| L1 | **18-25x** | **3.8-4.3x** |
+| L2 and cosine | **8x** | 1.7-3.6x |
+| Inner product | **4-18x** | level to 2.7x |
+
+L1 and L-infinity have no matrix-multiply form, so FAISS computes them with plain loops (its L-infinity
+takes three times as long as its L1), where siann runs kernels laid out like a matrix multiply. L2,
+cosine and inner product are matrix multiplies, which FAISS runs through BLAS too, so on the CPU siann
+gains less there.
+
+**How much faster, approximate search** (siann's GPU IVF against FAISS's HNSW, queries per second, at
+the nearest recall; `proto/ivf_cpu.py`, `proto/fp16_lists.py --faiss`, `proto/fine_lists.py`):
+
+| Dataset, batch | Against float32 HNSW | Against compressed HNSW |
+| --- | ---: | ---: |
+| GloVe, 10,000 queries (recall 0.84) | **6.0x** (191,532 against 32,114) | **5.0x** (199,030 against 40,092) |
+| SIFT L2, 10,000 (recall 0.97) | **2.7x** (181,901 against 68,227) | **1.3x** (199,347 against 153,710) |
+| SIFT L1, 10,000 (recall 0.96) | **2.1x** (123,855 against 58,059) | (FAISS has no compressed L1) |
+| GloVe, batches of 100 (recall 0.84) | **1.4x** (38,744 against 28,088) | **1.8x** (60,559 against 34,348) |
+| SIFT L2, batches of 100 | 0.65x at recall 0.97 | 0.84x at 0.97, 0.99x at 0.99, **1.66x** at 0.997 |
+| SIFT L1, batches of 100 (recall 0.96) | 0.55x | (FAISS has no compressed L1) |
 
 **What decides it:**
 
-- **Batch size.** The GPU pays a fixed cost per call and needs thousands of queries to fill it; a
-  graph index on the CPU (HNSW) reads little memory per query and wins in between on SIFT-like data.
-  A single query is a contest of per-query work, where splitting it over a few threads trades cores
-  for latency.
-- **The data.** On GloVe, HNSW must walk much further through its graph for the same recall, while an
-  IVF's dense scans do not care: siann leads at every batch size there, or draws. On SIFT, HNSW is
-  strong up to large batches. On inner product with very uneven vector lengths, an IVF fails outright.
-- **The metric,** for exact search: L2, cosine and inner product are matrix multiplies, where BLAS does
-  the heavy lifting on the CPU (for siann as for FAISS, which use the same library, Accelerate); L1
-  and L-infinity are not, and siann's kernels gain far more.
+- **Batch size.** The GPU pays a fixed cost per call and needs many queries to fill it; a graph index
+  on the CPU (HNSW) touches far fewer vectors per query and wins small batches on SIFT-like data. A
+  single query is a contest of per-query work, where splitting it over a few threads trades cores for
+  latency.
+- **The data.** HNSW touches 7-9 times fewer vectors than an IVF on SIFT but only 4-5 times fewer on
+  GloVe, where its scattered reads cost it the difference: siann leads at every batch size on GloVe,
+  or draws. On inner product with very uneven vector lengths, an IVF fails outright.
+- **Recall.** HNSW's work grows faster with recall than an IVF's, so on SIFT the GPU IVF overtakes it in
+  batches of 100 at recall 0.99.
+- **The metric,** for exact search: see above.
 - **Not the framework.** A custom Metal kernel runs at the same speed in MLX and PyTorch; MLX's edge is
   its faster matrix multiply (exact L2) and smaller cost per call. JAX on a Mac cannot run custom
   kernels at all, and built-in operations lose to FAISS's CPU everywhere.
@@ -64,9 +91,8 @@ queries per batch on SIFT, and at about 100 on GloVe.
 | Best framework built-in operations (CPU) | 0.35x | 0.57x | | |
 
 L-infinity (200,000 Gaussian vectors): siann's GPU kernels 47-49 times FAISS and its Rust kernel 7.3
-times; FAISS takes three times as long as for its L1, siann's GPU kernels the same time. Inner
-product (raw GloVe-100): siann's GPU 17.7 times FAISS's `IndexFlatIP` on 100 queries, 5.9 times on
-1,000 and 4.1 times on 10,000; its CPU BLAS path 2.7 times on 100 and level on 1,000.
+times. Inner product (raw GloVe-100): siann's GPU 17.7 times FAISS's `IndexFlatIP` on 100 queries, 5.9
+times on 1,000 and 4.1 times on 10,000; its CPU BLAS path 2.7 times on 100 and level on 1,000.
 
 ## Approximate search
 
@@ -78,30 +104,32 @@ identical. Queries per second; single queries run one per call, on one thread, a
 
 | Dataset | Recall: IVF / HNSW | Single: Rust IVF / HNSW | Batches of 100: GPU IVF / HNSW | 10,000: GPU IVF / Rust list-major / HNSW |
 | --- | --- | ---: | ---: | ---: |
-| SIFT L2 | 0.925 / 0.937 | 7,862 / 11,330 | 33,313 / 95,579 | 199,112 / 71,867 / 119,917 |
-| SIFT L2 | 0.973 / 0.978 | 4,682 / 6,389 | 25,193 / 58,470 | 141,078 / 40,433 / 69,749 |
-| SIFT L2 | 0.993 / 0.993 | 2,614 / 3,287 | 12,783 / 32,131 | 44,501 / 22,089 / 38,921 |
-| SIFT L1 | 0.904 / 0.898 | 7,528 / 8,383 | 26,722 / 80,580 | 150,092 / 73,073 / 101,050 |
-| SIFT L1 | 0.960 / 0.957 | 4,418 / 4,806 | 19,609 / 48,898 | 102,057 / 41,344 / 58,297 |
-| SIFT L1 | 0.988 / 0.985 | 2,369 / 2,647 | 10,601 / 28,248 | 38,694 / 22,536 / 32,515 |
-| GloVe | 0.780 / 0.781 | 8,959 / 5,402 | 34,337 / 47,519 | 206,607 / 76,521 / 56,891 |
-| GloVe | 0.839 / 0.845 | 5,314 / 3,005 | 27,062 / 27,960 | 146,998 / 42,512 / 32,304 |
-| GloVe | 0.890 / 0.892 | 3,074 / 1,623 | 13,800 / 16,004 | 46,409 / 23,159 / 17,721 |
+| SIFT L2 | 0.925 / 0.937 | 7,228 / 9,565 | 57,943 / 93,668 | 291,416 / 70,969 / 120,988 |
+| SIFT L2 | 0.973 / 0.978 | 4,453 / 6,464 | 34,630 / 53,646 | 181,901 / 38,391 / 68,227 |
+| SIFT L2 | 0.993 / 0.993 | 2,547 / 3,279 | 18,996 / 28,686 | 104,438 / 21,839 / 38,725 |
+| SIFT L1 | 0.904 / 0.898 | 6,757 / 8,336 | 45,784 / 80,028 | 200,500 / 72,870 / 101,592 |
+| SIFT L1 | 0.960 / 0.957 | 4,084 / 4,457 | 27,081 / 48,911 | 123,855 / 40,794 / 58,059 |
+| SIFT L1 | 0.988 / 0.985 | 2,410 / 2,620 | 15,753 / 28,104 | 75,288 / 21,922 / 32,206 |
+| GloVe | 0.780 / 0.781 | 8,186 / 5,370 | 61,870 / 47,436 | 303,593 / 77,181 / 56,904 |
+| GloVe | 0.839 / 0.845 | 5,057 / 2,989 | 38,744 / 28,088 | 191,532 / 41,521 / 32,114 |
+| GloVe | 0.890 / 0.892 | 2,934 / 1,614 | 22,197 / 15,853 | 113,440 / 22,981 / 17,637 |
 
-The GPU IVF column is MLX's; PyTorch's is within 3% of it on batches of 10,000 and up to a third
-slower on smaller calls. FAISS's own IVF with the same lists is level with siann's Rust query-major
-scan on batches and 1.3-6.6 times slower on single queries.
+The GPU IVF column is MLX's. PyTorch's port of the same kernels, with the ordered probe selection, is
+level with it on large batches at nprobe 16 and below and up to 2.3 times slower above
+([RESULTS](RESULTS.md), "IVF on PyTorch MPS"). FAISS's own IVF with the same lists is level with siann's
+Rust query-major scan on batches and slower on single queries (2.1 times on SIFT L2 at nprobe 128, 4.5
+times at nprobe 4).
 
-**Compressed, against FAISS's compressed indexes**, the strongest alternatives (`IndexHNSWSQ` and
-`IndexIVFScalarQuantizer`, in the same storages as siann's lists; L2), and **single queries** with
-siann's two-level coarse step, integer path for byte lists and split queries (`proto/fp16_lists.py
---faiss`, `proto/single_query.py --faiss`, `proto/coarse_step.py`). siann's best against FAISS's
-best at the nearest recall (above 1: siann faster):
+**Compressed lists, against FAISS's compressed indexes** (`IndexHNSWSQ` and `IndexIVFScalarQuantizer`,
+in the same storages as siann's lists; L2), with siann's two-level coarse step, integer path for byte
+lists and split queries for single queries (`proto/fp16_lists.py --faiss`, `proto/fine_lists.py`,
+`proto/single_query.py --faiss`, `proto/coarse_step.py`). siann's best against FAISS's best at the
+nearest recall (above 1: siann faster):
 
 | Workload | SIFT (uint8 for both) | GloVe (float16, or float32 where faster) |
 | --- | --- | --- |
-| Batches of 10,000 | 0.96x at recall 0.97, **1.25x** at 0.84 (GPU) | **3.8x** at 0.84 (GPU) |
-| Batches of 100 | 0.47x at 0.97 (GPU) | 1.0-1.07x (GPU) |
+| Batches of 10,000 | **1.3x** at recall 0.97, **1.2x** at 0.84 (GPU) | **5.0x** at 0.84 (GPU) |
+| Batches of 100 | 0.67x at 0.83, 0.84x at 0.97, 0.99x at 0.99, **1.66x** at 0.997 (GPU) | **1.24x** at 0.71, **1.76x** at 0.84 (GPU) |
 | Single queries, one thread | 0.69x at 0.85 (42 against 29 microseconds), 0.77x at 0.92 (66 against 51) | **1.5x** at 0.71 (58 against 89), **1.65x** at 0.83-0.85 (173 against 285) |
 | Single query, split over 4 threads | 0.45x at 0.83, **1.2x** at 0.97 (76 against 94), **1.6x** at 0.99 (111 against 179) | **1.5x** at 0.71, **2.6x** at 0.84, **3.1x** at 0.89 |
 
@@ -128,8 +156,10 @@ uv run --no-sync --group proto python blas_l2.py --dataset sift            # exa
 uv run --no-sync --group proto python backends.py --metrics l1,linf --backends faiss-cpu,siann-rust-cpu,mlx-custom-gpu,torch-custom-mps
 uv run --no-sync --group proto python ivf_cpu.py --dataset glove --metric l2      # IVF and HNSW (with PyTorch)
 uv run --no-sync --group proto python fp16_lists.py --dataset sift --storages float32,float16,uint8 --faiss
+uv run --no-sync --group proto python fine_lists.py --dataset sift              # batches of 100 by recall
 uv run --no-sync --group proto python single_query.py --dataset sift --splits 1,4 --faiss
 uv run --no-sync --group proto python coarse_step.py --dataset sift              # the coarse step, two-level
+uv run --no-sync --group proto python gpu_select_ab.py --dataset sift --lists uint8 --defaults
 uv run --no-sync --group proto python backends.py --dataset glove-raw --metrics ip --backends faiss-cpu,mlx-custom-gpu
 uv run --no-sync --group proto python ip_reduction.py --dataset glove-raw        # IVF and inner product
 ```

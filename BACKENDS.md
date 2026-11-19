@@ -48,9 +48,14 @@ the Metal code unchanged (`proto/torch_kernels.py`).
 
 - **The same kernel runs at the same speed as in MLX:** L1 0.082 against 0.081 s; the top-k kernel
   3.8 against 4.2 ms per tile. A custom kernel's speed belongs to the kernel, not the framework.
-- **IVF too:** the GPU IVF ported the same way (`proto/ivf_torch.py`) is level with MLX's on
-  batches of 10,000 and up to a third slower on single queries and small batches, a fixed cost of
-  about 0.2 ms per call.
+- **IVF too:** the GPU IVF ported the same way (`proto/ivf_torch.py`) runs level with MLX's on
+  batches of 10,000 where both choose their lists the same way (nprobe 16 and below), and has a fixed
+  cost of about 0.2 ms per call. It keeps the ordered probe selection and the separate merge, so above
+  nprobe 16 MLX's IVF is 1.3-2.3 times faster on large batches and 1.4-3.3 times on small ones.
+- **For choosing a few dozen of a few thousand per row, MLX's `argpartition` is fast:** 0.30 ms for 100
+  rows of 4,000 at k = 64, against 1.0 ms for siann's two-stage selection kernel, whose running top-k
+  per thread does not fit in registers at that k. For the top 10 of a million, siann's kernel is the
+  one to use (4.1 against 146-152 ms per tile).
 - **The matrix multiply is about half MLX's speed,** and is the whole L2 gap (0.10 against 0.046 s).
   `torch.addmm` still helps: 18.1 against 31.4 ms per tile written out.
 - **`torch.cdist(p=1)` builds the whole broadcast** (queries x vectors x dimensions) and fails beyond
