@@ -26,7 +26,7 @@ k = 10. Datasets: SIFT1M, GloVe-100 and Gaussian vectors ([DATASETS](DATASETS.md
 | Approximate, batches of about 100 | SIFT-like data: **FAISS HNSW**; GloVe-like data: **siann's GPU IVF** | SIFT: HNSW about 2 times faster; GloVe: level (1.0-1.07 times) |
 | Approximate, single queries, one core each (throughput) | GloVe-like data: **siann's Rust IVF**, two-level coarse step; SIFT-like data: **FAISS HNSW** | GloVe: 1.5-1.65 times HNSW; SIFT: HNSW 1.3-1.45 times faster |
 | Approximate, single query, lowest latency with cores to spare | **siann's Rust IVF, split over 4 threads**, except SIFT-like data below recall 0.97 | GloVe: 1.5-3.1 times HNSW; SIFT: 1.2-1.6 times from recall 0.97 |
-| Inner product on vectors of uneven length | **exact search on the GPU** (an IVF fails there) | recall 1.0 at 0.88-1.36 times the speed of FAISS's HNSW at recall 0.89 |
+| Inner product on vectors of uneven length | **siann's exact search on the GPU** (an IVF fails there) | recall 1.0 at 0.88-1.36 times the speed of FAISS's HNSW at recall 0.89 |
 
 For approximate search, store the lists as bytes when every coordinate is an integer from 0 to 255
 (lossless), and otherwise as float16 for batches on the GPU (recall moves by at most 0.001) and float32
