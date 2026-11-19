@@ -6,7 +6,7 @@
 
 A Mac has several ways to run numerical code on its GPU and CPU. siann measures each of them on the
 same searches, with the same algorithms, and checks every result against exact search. This page
-describes what each backend offers and the pitfalls found along the way. The comparisons run through
+describes what each backend offers and its pitfalls. The comparisons run through
 `proto/backends.py`, which starts each backend in its own process.
 
 ## Summary
@@ -74,8 +74,8 @@ compiler.
 - **Make jitted functions once per process,** with arrays passed as arguments. Made anew on every
   call, with the base vectors captured inside, every call recompiled (0.33 s instead of 0.007 s for
   100 queries on 20,000 vectors).
-- **It ran without trouble,** first on a tiny problem, then at full size. It is experimental (it
-  prints a warning to that effect).
+- **It runs without trouble at full size,** though it is experimental (it prints a warning to that
+  effect).
 
 ## FAISS
 
@@ -90,8 +90,8 @@ approximate search).
   FAISS 1.16 defaults it to 128,000, so with fewer queries it skips BLAS and runs 4-7 times slower
   (GloVe-100: 2.90 s against 0.42 s). See `proto/faiss_blas.py`.
 - **Its Metal GPU path is not run.** FAISS 1.16's Mac builds include a Metal backend (flat and IVF
-  indexes). In one measurement it was 2.6 times slower than siann on exact L2; on a larger run it
-  failed and crashed the machine, twice.
+  indexes). It is 2.6 times slower than siann on exact L2 with 1,000 queries, and with 10,000 it fails
+  and crashes the machine.
 - **HNSW handles L1 well,** and is the method to beat for single queries and small batches.
 - **Pad to a multiple of 8 dimensions for its compressed indexes.** Its scalar quantizer
   (`IndexIVFScalarQuantizer`, `IndexHNSWSQ`) has a fast SIMD path only for such dimensions: at 100
@@ -102,8 +102,8 @@ approximate search).
   times. For bytes, FAISS also **rounds the query to integers** and computes in integer arithmetic:
   on one thread its uint8 IVF is twice as fast as siann's Rust (and faster than its own float32), and
   exact for integer queries like SIFT's, but only approximate for others (`proto/faiss_sq8_query.py`).
-- **Its IVF can split one query over threads** (`parallel_mode = 1`), but, like siann's first try on
-  rayon's global pool, it pays about 100 microseconds to wake the threads.
+- **Its IVF can split one query over threads** (`parallel_mode = 1`), but it pays about 100
+  microseconds to wake the threads, as any split on a shared pool does.
 - **Its inner product (`IndexFlatIP`) is faster than its L2** (0.29 against 0.46 s for 1,000 queries
   on GloVe), having no norms to add, so siann's CPU BLAS path is only level with it on 1,000 queries
   (2.7 times on 100); siann's GPU is 4.1-17.7 times.
@@ -120,34 +120,33 @@ backends fall short: exact L1 at 3.8 times FAISS and L-infinity at 7.3 times, an
 queries.
 
 The code relies on the compiler to turn plain loops into NEON instructions, without `unsafe` (which
-the explicit NEON intrinsics would need). That works, but the compiler's choices need checking in
-the assembly, and two went wrong:
+the explicit NEON intrinsics would need). Five rules keep it fast, each from a measurement:
 
-- **A maximum vectorized the wrong loop.** `f32::max` (and an integer maximum) is a reduction the
-  compiler may reorder, so it vectorized across dimensions, with shuffles and a large stack frame:
-  L-infinity took twice L1's time. A comparison and select fixed it.
-- **Nested arrays of 16-bit values were loaded one lane at a time.** Widening float16 lists over
-  `[u16; 8]` blocks gathered each value separately; the same loop over flat slices is one 16-byte
-  load per 8 values.
-
-A third pitfall is not the compiler's: **rayon's global pool is the wrong place for one query's
-work.** Spreading a single query over all 16 cores wakes the pool's sleeping threads, which cost about
-100 microseconds per query, more than the split saved at low nprobe. Split queries run on a small pool
-of their own (rayon's `ThreadPoolBuilder`, safe), made once per size: 4 threads cut latency 1.3-2.0
-times.
+1. **Check the assembly, not just the timing.** The compiler's choice of which loop to vectorize
+   decides the speed, and it is easy to see in the emitted instructions (`fabd.4s`, `udot`) and easy
+   to miss in a timing alone.
+2. **Write a floating-point maximum as a comparison and select.** `f32::max` (and an integer maximum
+   on the float bits) is a reduction the compiler may reorder, so it vectorizes across dimensions,
+   with shuffles and a large stack frame, and L-infinity takes twice L1's time; the select keeps one
+   running maximum per lane (1.4 times L1's time).
+3. **Choose the layout for the arithmetic.** Floating-point sums may not be reordered, so the blocked
+   layout (8 vectors per block, dimension by dimension) gets one running distance per lane. Integer
+   sums may be reordered, so for byte lists the integer path reads each vector's bytes contiguously:
+   a plain loop per vector compiles to 16-byte absolute differences and the dot-product instruction
+   (`udot`), 1.8 times the float path. In the blocked layout the same integer arithmetic is no faster
+   than float, even written with explicit SIMD types (the `wide` crate).
+4. **Loop over flat slices.** Widening float16 lists over nested `[u16; 8]` blocks makes the compiler
+   load each value separately; over flat slices it is one 16-byte load per 8 values.
+5. **Give one query's parallel work a thread pool of its own.** Spreading a single query over rayon's
+   global pool (all 16 cores) wakes its sleeping threads, about 100 microseconds per query, more than
+   the split saves at low nprobe. Split queries run on a small pool (rayon's `ThreadPoolBuilder`, safe),
+   made once per size: 4 threads cut latency 1.3-2.0 times.
 
 For exact L2, the Rust code does not multiply matrices itself: calling Accelerate from Rust would need
 `unsafe` (every call into a C library is), so NumPy does the multiply and Rust only ranks the products
 (`L2TopK`). It reads NumPy's arrays in place through rust-numpy (the PyO3 project's NumPy bindings),
 whose safe API keeps the `unsafe` inside the crate, as pyo3's does; copying the products instead would
 cost about as much as FAISS's whole search.
-
-A fourth lesson, from the integer path for byte lists: **the layout decides what the compiler can
-do.** Integer sums may be reordered, so in the blocked layout (a dimension's 8 bytes per row) plain
-loops were vectorized across dimensions, and even explicit SIMD types (the `wide` crate) only reached
-the float path's speed. With each vector's bytes contiguous, the same freedom works for us: a plain
-loop per vector compiles to 16-byte absolute differences and the dot-product instruction (`udot`),
-1.8 times faster, with no SIMD library.
 
 Rust has no stable float16 type (it exists only in nightly builds), so float16 lists are stored as
 their 16-bit patterns and widened in safe code (see [ALGORITHMS](ALGORITHMS.md), "List storage").

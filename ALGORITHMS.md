@@ -7,8 +7,7 @@
 siann answers k-nearest-neighbor queries: given a set of base vectors and a query, find the k base
 vectors closest to the query. It does this exactly, by comparing the query with every base vector,
 or approximately, with an IVF index that compares it only with the vectors in a few clusters. This
-page describes how each search works, on the GPU and on the CPU, and the methods that were tried and
-dropped. All the numbers below are from an Apple M3 Max, and each comes from a script in `proto/`
+page describes how each search works, on the GPU and on the CPU, and the methods that do not pay. All the numbers below are from an Apple M3 Max, and each comes from a script in `proto/`
 named in [RESULTS](RESULTS.md).
 
 ## Distances
@@ -24,7 +23,7 @@ named in [RESULTS](RESULTS.md).
 - **Inner product:** q·x, largest first, for embedding models trained to be compared by it. siann
   ranks by -q·x, so that smaller is nearer, as for the distances. Exact search is a matrix multiply,
   like L2 without the norms. IVF does not work well for it when vector lengths vary widely (see
-  "Tried and dropped").
+  "What does not pay").
 - **Cosine:** the angle between vectors. Normalized to unit length, vectors rank by cosine exactly as
   they rank by L2, so cosine search is L2 search on normalized vectors (see [DATASETS](DATASETS.md)).
 
@@ -47,9 +46,9 @@ million vectors).
 16 × 16 threads computes a 64 × 64 block of distances, 4 × 4 per thread, held in registers. The
 group loads 16 dimensions of its 64 queries and 64 base vectors at a time into threadgroup memory
 (a small, fast memory shared by the threads of a group), so each base vector is read from main memory
-once per 64 queries rather than once per query. A first version that computed each query's distances
-and selection in a single pass read the whole base once per query and was limited by memory speed,
-at a third of the tiled kernel's speed. The same kernel computes L-infinity: one line, the step that
+once per 64 queries rather than once per query. A kernel that computes each query's distances and
+selection in a single pass reads the whole base once per query and is limited by memory speed, at a
+third of the tiled kernel's speed. The same kernel computes L-infinity: one line, the step that
 folds a coordinate difference into the running distance, changes from a sum to a maximum, and the
 speed does not change.
 
@@ -99,7 +98,7 @@ distances never enter a top-k.
 The result: L1 in 0.47 s against FAISS's 1.8 s, 3.8 times as fast, with identical results. The
 same kernel computes L2 by squaring the differences; for L2, FAISS's BLAS path remains the faster
 CPU baseline. It computes L-infinity with a running maximum, written as a comparison and select
-rather than `f32::max` (see "Tried and dropped"): on 200,000 Gaussian vectors, 7.3 times FAISS, whose
+rather than `f32::max` (see "What does not pay"): on 200,000 Gaussian vectors, 7.3 times FAISS, whose
 L-infinity is three times slower than its L1.
 
 ## IVF: approximate search
@@ -180,20 +179,20 @@ Probing 16 of 64 groups makes single queries 1.1-2.1 times faster on one thread 
 and costs at most 0.011 in recall. On the GPU and in large batches the coarse step is a small share of the work. On the GPU, the two-stage selection uses only 32 threads per query here: with k = nprobe
 = 64, 512 threads would leave 32,768 survivors per query, and the second stage would dominate.
 
-## Tried and dropped
+## What does not pay
 
 - **LSH for dense vectors.** Locality-sensitive hashing hashes vectors so that near ones tend to
   collide, then compares only the colliding ones. With Cauchy random projections (the standard LSH
-  for L1) on SIFT1M, reaching recall 0.72 meant comparing a tenth of the database, which exact search
+  for L1) on SIFT1M, reaching recall 0.72 means comparing a tenth of the database, which exact search
   on the GPU already does faster. Real data has low contrast: a neighbor and a point twice as far
   collide with nearly the same probability (0.28 and 0.26).
-- **A fused L1 kernel** (distance and selection in one pass): limited by memory speed, replaced by
-  the tiled kernel above.
+- **A fused L1 kernel** (distance and selection in one pass): limited by memory speed, a third of the
+  tiled kernel's speed.
 - **FAISS's Metal GPU path** as a baseline: it crashed the machine twice, so it is not run (see
   [BACKENDS](BACKENDS.md)).
 - **`f32::max` for L-infinity in Rust:** the compiler treats a maximum as a reduction it may reorder,
-  and vectorized the wrong loop, taking twice L1's time (an unsigned-integer maximum on the float bits
-  did the same). A comparison and select keeps one running maximum per lane: 1.4 times L1's time.
+  and vectorizes the wrong loop, taking twice L1's time (an unsigned-integer maximum on the float bits
+  does the same). A comparison and select keeps one running maximum per lane: 1.4 times L1's time.
 - **IVF for inner product on vectors of very uneven length** (raw GloVe, lengths 0.04 to 18.7).
   Assigned by inner product, the lists are badly unbalanced (39% empty, 10 lists holding a fifth of
   the data) and recall stays below 0.65; reduced to L2 by extending each vector to the same length,
@@ -205,8 +204,11 @@ and costs at most 0.011 in recall. On the GPU and in large batches the coarse st
   for exact L2, where the multiplies are large.
 - **Splitting a single query on the global thread pool** (all 16 cores): a query injected into the
   pool wakes its sleeping threads, putting a floor of about 100 microseconds under every query,
-  slower than one thread at low nprobe. A small pool of its own (4 threads) removed it.
-- **Widening float16 inside the distance loops in Rust:** the compiler loaded the halves one lane at a
-  time. Widening each block into a buffer first, then running the float32 code, was 1.3-1.9 times
-  faster, but only once the loop ran over flat slices: over nested arrays of 8 it was compiled into
-  lane-by-lane loads too.
+  slower than one thread at low nprobe. A small pool of its own (4 threads) avoids it.
+- **Widening float16 inside the distance loops in Rust:** the compiler loads the halves one lane at a
+  time. Widening each block into a buffer first, in a loop over flat slices, then running the float32
+  code, is 1.3-1.9 times faster.
+- **Fewer IVF lists to cheapen the coarse step:** each list grows as the coarse step shrinks, which
+  cancels out at matched recall; the two-level coarse step is what helps.
+- **An integer kernel in the blocked layout:** no faster than the float path (259 against 263
+  microseconds at nprobe 64); the integer path needs each vector's bytes contiguous.

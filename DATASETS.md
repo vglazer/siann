@@ -67,7 +67,7 @@ calls it "angular").
 The same GloVe vectors without the normalization, for inner product. Their lengths run from 0.04 to
 18.7, so ranking by inner product differs from ranking by cosine: long vectors dominate every query's
 results. That makes it a hard case for maximum inner product search, where an IVF's lists, assigned
-by inner product, become badly unbalanced (see [ALGORITHMS](ALGORITHMS.md), "Tried and dropped").
+by inner product, become badly unbalanced (see [ALGORITHMS](ALGORITHMS.md), "What does not pay").
 
 ## Gaussian vectors
 
@@ -78,4 +78,4 @@ makes them the dataset for timing at sizes and dimensions the real ones lack.
 Random vectors are the hardest case for approximate search: in high dimensions every point is
 nearly equally far from every other, so there is no cluster structure for IVF or a graph to
 exploit. They are used for exact search only, where structure does not matter and the timings match
-the real datasets' (see [RESULTS](RESULTS.md), "Real data").
+the real datasets' (see [RESULTS](RESULTS.md), "Exact search on the GPU").

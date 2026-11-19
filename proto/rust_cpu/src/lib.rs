@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 /// The thread pool for split queries of `threads` threads, made once and kept. Split queries run on
 /// a small pool of their own: on rayon's global pool (every core), a query injected into the pool
-/// wakes its sleeping threads, which costs more than the split saves (RESULTS.md, "Single queries").
+/// wakes its sleeping threads, which costs more than the split saves (RESULTS.md, "IVF: single queries").
 fn split_pool(threads: usize) -> PyResult<Arc<rayon::ThreadPool>> {
     static POOLS: OnceLock<Mutex<HashMap<usize, Arc<rayon::ThreadPool>>>> = OnceLock::new();
     let mut pools = POOLS
@@ -202,7 +202,7 @@ trait Elem: Copy + Send + Sync {
     /// A block as f32: the block itself for f32; for float16, widened into `buf`. Widening a whole
     /// block first, in one flat loop, then running the f32 code on it was 1.3-1.9 times faster on
     /// SIFT1M than widening inside the distance loops, where the compiler gathered the halves one lane
-    /// at a time (RESULTS.md, "float16 lists").
+    /// at a time (RESULTS.md, "IVF: list storage").
     fn as_f32<'a>(blk: &'a [[Self; L]], buf: &'a mut Vec<[f32; L]>) -> &'a [[f32; L]];
     /// One stored value as f32, for converting in registers inside a distance loop.
     fn lane(x: Self) -> f32;

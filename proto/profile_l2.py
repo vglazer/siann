@@ -1,7 +1,7 @@
 """Where exact L2 search spends its time, per tile of queries, in MLX and in PyTorch MPS: the matrix
 multiply alone, the distances as `norms - 2 * (q @ x.T)`, the same through a fused `addmm`, and the
-custom top-k kernel. Each framework runs in its own process. RESULTS.md, "Exact search on every
-backend".
+custom top-k kernel. Each framework runs in its own process. RESULTS.md, "Exact search on the
+GPU".
 
     uv run --no-sync --group proto python profile_l2.py [--n 1000000] [--tile 256]
 """

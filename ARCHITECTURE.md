@@ -76,15 +76,15 @@ flowchart TB
 
 ## Why siann is faster than FAISS
 
-Each speed-up below comes from one choice, measured against the alternative it replaced or against
-FAISS directly.
+Each speed-up below comes from one choice, measured against the alternative or against FAISS
+directly.
 
 ### On the GPU: custom kernels, not built-in operations
 
 FAISS on a Mac runs on the CPU (its Metal GPU path crashed the machine twice, so it is not used).
 siann runs on the GPU, but the GPU alone is not enough: with only MLX's, PyTorch's or JAX's built-in
-operations, every GPU backend was slower than FAISS on the CPU (0.25-0.65 times its speed). Four
-choices turned that around.
+operations, every GPU backend is slower than FAISS on the CPU (0.25-0.65 times its speed). Four
+choices make the difference.
 
 ```mermaid
 flowchart LR
@@ -98,15 +98,14 @@ flowchart LR
 ```
 
 - **A dedicated top-k kernel.** With the distances computed, the frameworks' own selection
-  (`argpartition`, `topk`) took 146-152 ms for 256 queries against a million vectors, eight times the
+  (`argpartition`, `topk`) takes 146-152 ms for 256 queries against a million vectors, eight times the
   distance computation. siann's two-stage selection (each of 512 threads per query keeps its best k
-  in registers, then a small selection over the survivors) takes 4.1 ms. This was the single largest
-  gain.
+  in registers, then a small selection over the survivors) takes 4.1 ms: the largest single gain.
 - **L1 and L-infinity laid out like a matrix multiply.** These metrics have no matrix-multiply form,
   so siann's kernel computes 64 × 64 blocks of distances per group of threads, staging queries and base
   vectors in threadgroup memory (a small, fast memory shared by a group of threads), so that each base
-  vector is read from main memory once per 64 queries. A first kernel that read the base once per
-  query was limited by memory speed, at a third of the speed.
+  vector is read from main memory once per 64 queries. A kernel that reads the base once per query is
+  limited by memory speed, at a third of the speed.
 - **L2 as one fused multiply.** `|q - x|² = |q|² - 2 q·x + |x|²`, and the first term does not change
   a query's ranking, so L2 is a matrix multiply plus precomputed norms, fused into one call
   (`addmm`): 6.9 against 17.7 ms per tile written as separate steps.
@@ -127,8 +126,8 @@ time, keeping 32 independent running distances. Independent sums let the compile
 vector instructions, 4 numbers at a time) without reordering floating-point additions, which it may
 not do for a single sum. Each thread then scans the base in cache-sized tiles of 1,024 vectors for all
 of its queries. The result is 3.8-4.3 times FAISS for L1 and 7.3 times for L-infinity, in safe Rust
-(no `unsafe` code). The compiler's choices needed checking in the assembly: written with `f32::max`,
-L-infinity vectorized the wrong loop and took twice L1's time; a comparison and select fixed it.
+(no `unsafe` code). Check the compiler's choices in the assembly: written with `f32::max`, L-infinity
+vectorizes the wrong loop and takes twice L1's time; a comparison and select does not.
 
 **L2: the same BLAS as FAISS, with cache-sized tiles.** FAISS's exact L2 is a BLAS multiply (Apple's
 Accelerate, which runs matrix multiplies on the chip's matrix units) followed by a top-k. siann does
@@ -172,10 +171,10 @@ flowchart TB
   against compressed HNSW at recall 0.97).
 - **Split single queries.** A single query on one thread is not limited by memory traffic (which is
   also why compressed lists do not help it there), so siann can spread one query's coarse step and lists over a few threads and merge their results in
-  probe order, which gives exactly the one-thread result. On rayon's global pool (all 16 cores), waking
-  the threads cost about 100 microseconds per query, more than the split saved; a pool of 4 threads of
-  its own cut single-query latency 1.3-2.0 times. FAISS's own split (`parallel_mode = 1`) has the
-  wake-up cost siann's first version had.
+  probe order, which gives exactly the one-thread result. The split runs on a pool of 4 threads of its
+  own, which cuts single-query latency 1.3-2.0 times: on rayon's global pool (all 16 cores), waking the
+  threads costs about 100 microseconds per query, more than the split saves. FAISS's own split
+  (`parallel_mode = 1`) pays that wake-up cost.
 - **A two-level coarse step for single queries.** Comparing a query with all 4,000 centroids is half
   of a single query's work. Clustering the centroids into 64 groups and comparing the query with the
   groups' centres first, then with the centroids of its 16 nearest groups, makes single queries
@@ -183,6 +182,11 @@ flowchart TB
 - **Smaller lists.** The query-major scan is limited by memory traffic in batches, so lists stored in
   float16 (half the bytes) or, for byte data like SIFT's, uint8 (a quarter) make it 1.3-2.9 times as
   fast in batches of 100, with recall unchanged. FAISS compresses too, though (next section).
+- **Integer arithmetic for byte lists.** A query whose coordinates are all integers from 0 to 255 is
+  compared with byte lists in exact integer arithmetic, over a row-major copy of the lists (each
+  vector's bytes contiguous, so that 16 fill a register and L2's sum is one dot-product instruction per
+  16 values): 1.8 times the float path on one thread, level with FAISS's IVF. Other queries take the
+  float path, so nothing is rounded.
 
 ## Where FAISS is faster, and why
 
@@ -192,14 +196,12 @@ always the baseline, including FAISS's compressed indexes, and this is where it 
 - **HNSW for small batches on SIFT-like data.** HNSW (a graph index) reads far less memory per query
   than an IVF scan, and compressing its vectors speeds it up 1.6-2.3 times on SIFT, as much as it
   speeds up the IVF. Compressed HNSW leads in batches of about 100 on SIFT (about 2 times) and on
-  single queries on one thread (1.3-1.45 times, after siann's two-level coarse step and integer path;
-  with 4 threads per query siann leads from recall 0.97).
-- **Integer arithmetic for byte lists, now matched.** For uint8 lists, FAISS rounds the query to
-  integers and computes in integer arithmetic: exact for integer queries such as SIFT's, approximate
-  for others. siann now takes an exact integer path for integer queries only, over a row-major copy of
-  the lists, and is level with FAISS's IVF on one thread (147 against 136 microseconds at nprobe 64).
-  Together with the two-level coarse step, compressed HNSW's single-query lead on SIFT falls from
-  about 2 times to 1.3-1.45 times on one thread.
+  single queries on one thread (1.3-1.45 times, against siann's two-level coarse step and integer
+  path); with 4 threads per query siann leads from recall 0.97.
+- **FAISS's byte lists round the query.** For uint8 lists, FAISS rounds the query to integers and
+  computes in integer arithmetic: exact for integer queries such as SIFT's, approximate for others.
+  siann's integer path is level with it on one thread (147 against 136 microseconds at nprobe 64) and
+  applies to integer queries only, so it is always exact.
 - **GloVe-like data favors siann throughout,** because HNSW must walk much further through its graph
   there for the same recall, while an IVF's dense scans do not care.
 
@@ -220,7 +222,8 @@ always the baseline, including FAISS's compressed indexes, and this is where it 
 - **Exact search is the oracle.** Every kernel and index is checked against NumPy's exact search
   (`check_kernels.py`), and changes that should not move results are checked bit for bit against
   outputs saved before the change.
-- **Safe Rust.** No `unsafe` in siann's code; the bar for it is high, and so far every case had a safe
-  alternative (NumPy for BLAS calls, a compare-and-select for the maximum, a buffer for float16).
+- **Safe Rust.** No `unsafe` in siann's code; the bar for it is high, and every case has had a safe
+  alternative (NumPy for BLAS calls, a compare-and-select for the maximum, a buffer for float16, plain
+  loops over contiguous bytes for the integer path).
 - **Every number from a committed script,** with its raw output in `proto/results/` and its finding in
-  [RESULTS](RESULTS.md), including the ideas that were tried and dropped.
+  [RESULTS](RESULTS.md), including the approaches that do not pay.
