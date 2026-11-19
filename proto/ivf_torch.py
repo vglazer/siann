@@ -1,6 +1,7 @@
 """ivf_gpu.py's GPU IVF, ported to PyTorch's MPS backend through torch.mps.compile_shader: the same
 Metal code for the query-major and list-major scans, the same coarse step (the exact kernels from
-torch_kernels.py, then the two-stage selection with 32 threads) and the same final merge.
+torch_kernels.py, then the same probe selection) and the same merges (inside the query-major scan's
+kernel; the two-stage selection after the list-major scan).
 
 FAISS and PyTorch cannot share a process on macOS, so this runs on its own, from centroids saved by
 ivf_cpu.py (which calls it), and prints its rows in ivf_cpu.py's table. Each base vector goes to its
@@ -47,6 +48,36 @@ kernel void ivf_scan(device const float* q, device const float* x, device const 
     for (uint a = 0; a < K; ++a) {
         out_val[(i * T + t) * K + a] = best[a];
         out_idx[(i * T + t) * K + a] = where[a];
+    }
+}
+"""
+
+# The query-major scan with each query's candidates merged inside the kernel, as ivf_gpu.py's
+# SCAN_MERGED: one threadgroup of T threads per query (T a power of two up to 256), each thread's
+# sorted top-k written to threadgroup memory, then a tree merge in log2(T) steps.
+SCAN_MERGED = SCAN.split("    for (uint a = 0; a < K; ++a) {\n        out_val")[0].replace(
+    "    if (t >= T || i >= Q) return;\n", "").replace("kernel void ivf_scan(", "kernel void ivf_scan_merged(") + """
+    threadgroup float tv[T * K];
+    threadgroup int ti[T * K];
+    for (uint a = 0; a < K; ++a) { tv[t * K + a] = best[a]; ti[t * K + a] = where[a]; }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = T / 2; stride > 0; stride /= 2) {
+        if (t < stride) {
+            float mv[K];
+            int mi[K];
+            uint a0 = t * K, b0 = (t + stride) * K;
+            uint ia = 0, ib = 0;
+            for (uint c = 0; c < K; ++c) {
+                float va = tv[a0 + ia], vb = tv[b0 + ib];
+                if (va <= vb) { mv[c] = va; mi[c] = ti[a0 + ia]; ++ia; }
+                else { mv[c] = vb; mi[c] = ti[b0 + ib]; ++ib; }
+            }
+            for (uint c = 0; c < K; ++c) { tv[a0 + c] = mv[c]; ti[a0 + c] = mi[c]; }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (t == 0) {
+        for (uint a = 0; a < K; ++a) { out_val[i * K + a] = tv[a]; out_idx[i * K + a] = ti[a]; }
     }
 }
 """
@@ -137,11 +168,34 @@ class TorchIVF:
             return tk.select_k(tk.dist(q, self.centroids, self.metric), k, threads)
         return tk.select_k(torch.addmm(self.cnorms[None, :], q, self.centroids.T, alpha=-2), k, threads)
 
-    def search(self, xq: np.ndarray, k: int, nprobe: int, threads: int = 64) -> np.ndarray:
-        """The query-major scan: `threads` threads per query walk its lists."""
+    def probe_lists(self, q: torch.Tensor, nprobe: int, select: str = "argpartition") -> torch.Tensor:
+        """Each query's nprobe nearest lists: unordered by torch.topk (sorted=False, as ivf_gpu.py's
+        argpartition), or in increasing order by the two-stage selection with 32 threads ("select_k")."""
+        if select == "select_k":
+            return self._nearest(q, nprobe, threads=32).to(torch.int32).contiguous()
+        if self.metric != "l2":
+            dist = tk.dist(q, self.centroids, self.metric)
+        else:
+            dist = torch.addmm(self.cnorms[None, :], q, self.centroids.T, alpha=-2)
+        if nprobe >= self.nlist:
+            return torch.arange(self.nlist, device="mps", dtype=torch.int32).expand(len(q), -1).contiguous()
+        return torch.topk(dist, nprobe, dim=1, largest=False, sorted=False).indices.to(torch.int32).contiguous()
+
+    def search(self, xq: np.ndarray, k: int, nprobe: int, threads: int = 128, select: str = "auto",
+               merge: str = "kernel") -> np.ndarray:
+        """The query-major scan: `threads` threads per query walk its lists. select "auto" is the unordered
+        selection; merge "kernel" merges each query's candidates in the scan kernel (for threads a power of
+        two up to 256), "separate" with torch.topk over every thread's candidates."""
         q = torch.from_numpy(xq).to("mps")
         nq, d = q.shape
-        probes = self._nearest(q, nprobe, threads=32).to(torch.int32).contiguous()
+        probes = self.probe_lists(q, nprobe, "argpartition" if select == "auto" else select)
+        if merge == "kernel" and threads <= 256 and threads & (threads - 1) == 0 and threads * k * 8 <= 32768:
+            vals = torch.empty(nq * k, device="mps")
+            idx = torch.empty(nq * k, device="mps", dtype=torch.int32)
+            _lib(SCAN_MERGED, self.metric, Q=nq, D=d, P=nprobe, T=threads, K=k).ivf_scan_merged(
+                q, self.x, self.offsets, probes, vals, idx, threads=[threads, nq], group_size=[threads, 1])
+            local = idx.view(nq, k)
+            return self.ids[local.clamp(min=0).long()].cpu().numpy()
         vals = torch.empty(nq * threads * k, device="mps")
         idx = torch.empty(nq * threads * k, device="mps", dtype=torch.int32)
         _lib(SCAN, self.metric, Q=nq, D=d, P=nprobe, T=threads, K=k).ivf_scan(
@@ -150,12 +204,15 @@ class TorchIVF:
         local = torch.gather(idx.view(nq, -1), 1, best)
         return self.ids[local.clamp(min=0).long()].cpu().numpy()
 
-    def search_list_major(self, xq: np.ndarray, k: int, nprobe: int) -> np.ndarray:
-        """The list-major scan: queries grouped by list on the GPU, one threadgroup per list."""
+    def search_list_major(self, xq: np.ndarray, k: int, nprobe: int, select: str = "auto") -> np.ndarray:
+        """The list-major scan: queries grouped by list on the GPU, one threadgroup per list. select "auto" is
+        the ordered selection up to nprobe 16 (faster for large batches) and the unordered one above."""
         q = torch.from_numpy(xq).to("mps")
         nq, d = q.shape
         lanes = 16
-        probes = self._nearest(q, nprobe, threads=32).reshape(-1).long()   # pair id = query * nprobe + slot
+        if select == "auto":
+            select = "select_k" if nprobe <= 16 else "argpartition"
+        probes = self.probe_lists(q, nprobe, select).reshape(-1).long()   # pair id = query * nprobe + slot
         pair_ids = torch.argsort(probes).to(torch.int32)
         counts = torch.bincount(probes, minlength=self.nlist).to(torch.int32)
         first = (torch.cumsum(counts, 0) - counts).to(torch.int32)

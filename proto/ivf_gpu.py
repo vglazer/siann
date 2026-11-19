@@ -207,7 +207,7 @@ class GpuIVF:
         dist = coarse_dist(q, self.centroids, self.cnorms, self.metric)
         probes = probe_lists(dist, nprobe, select)
         nq, d = q.shape
-        if merge == "kernel" and threads <= 256 and threads & (threads - 1) == 0:
+        if merge == "kernel" and threads <= 256 and threads & (threads - 1) == 0 and threads * k * 8 <= 32768:
             # the merge inside the scan kernel: K sorted results per query
             _, idx = SCANS_MERGED[self.metric](
                 inputs=[q, self.x, self.offsets, probes],

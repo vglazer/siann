@@ -474,24 +474,34 @@ microseconds; HNSW on one thread, as it answers a single query (`faiss_single_*_
   own takes 45. FAISS's own split (`parallel_mode = 1`) has the same floor: its IVF answers one query
   faster on one thread at nprobe 16 and below.
 
-## IVF on PyTorch MPS (`ivf_torch.py`)
+## IVF on PyTorch MPS (`ivf_torch.py`, `torch_select_ab.py`)
 
-The GPU IVF's Metal code, run through `torch.mps.compile_shader`, with the same coarse step and
-centroids (run by `ivf_cpu.py` in a process of its own), but with the ordered probe selection, 64
-threads per query and the separate merge. SIFT L2, queries per second (`ivf_sift_l2.txt`):
+The GPU IVF's Metal code, run through `torch.mps.compile_shader`, with the same coarse step, probe
+selection (unordered by `torch.topk`, ordered for the list-major scan up to nprobe 16), 128 threads per
+query and merge inside the query-major scan's kernel. On the same lists (MLX's k-means centroids, float32)
+it returns the same neighbors as MLX's IVF, index for index, in every row below. Queries per second,
+L2, PyTorch with these settings against MLX, and against PyTorch with the ordered selection, 64 threads per
+query and the separate merge (`torch_select_ab_sift.txt`, `torch_select_ab_glove.txt`):
 
-| nprobe | Recall (both) | Single: MLX / PyTorch | Batches of 100 | Batch of 10,000 |
-| ---: | ---: | ---: | ---: | ---: |
-| 4 | 0.571 | 2,879 / 1,547 | 169,284 / 112,800 | 1,194,143 / 1,199,508 |
-| 16 | 0.840 | 2,026 / 985 | 86,336 / 63,450 | 511,553 / 511,538 |
-| 32 | 0.925 | 1,440 / 442 | 57,943 / 30,855 | 291,416 / 203,756 |
-| 64 | 0.973 | 957 / 416 | 34,630 / 23,886 | 181,901 / 143,082 |
-| 128 | 0.993 | 603 / 212 | 18,996 / 12,612 | 104,438 / 45,814 |
+| Dataset | nprobe | Recall | Single: PyTorch / MLX (PyTorch, ordered) | Batches of 100 | Batch of 10,000 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| SIFT | 8 | 0.716 | 1,655 / 2,572 (1,348) | 100,110 / 118,950 (86,233) | 871,159 / 879,927 (858,409) |
+| SIFT | 16 | 0.840 | 1,446 / 2,070 (990) | 75,656 / 86,824 (64,432) | 521,842 / 525,111 (519,793) |
+| SIFT | 32 | 0.925 | 1,121 / 1,468 (446) | 52,877 / 58,333 (31,321) | 313,611 / 295,787 (202,210) |
+| SIFT | 64 | 0.973 | 805 / 968 (420) | 32,852 / 34,921 (24,230) | 194,432 / 182,272 (141,550) |
+| SIFT | 128 | 0.993 | 541 / 614 (216) | 19,121 / 19,803 (12,843) | 108,639 / 107,322 (45,873) |
+| GloVe | 8 | 0.631 | 1,639 / 2,513 (1,341) | 99,963 / 113,876 (90,868) | 899,436 / 889,301 (874,056) |
+| GloVe | 16 | 0.712 | 1,450 / 1,992 (662) | 80,595 / 91,142 (72,001) | 532,096 / 530,652 (524,610) |
+| GloVe | 32 | 0.780 | 699 / 1,395 (444) | 57,325 / 63,073 (32,487) | 339,220 / 303,899 (209,177) |
+| GloVe | 64 | 0.839 | 817 / 945 (420) | 36,660 / 39,236 (26,053) | 206,804 / 194,198 (147,679) |
+| GloVe | 128 | 0.890 | 422 / 602 (200) | 21,199 / 22,571 (13,848) | 113,667 / 114,019 (47,639) |
 
-With the same selection the two run level on large batches, since the kernels do the work: at nprobe
-16 and below, where the list-major scan selects as PyTorch's does, they are within 1%. Above it, MLX's
-unordered selection makes it 1.3-2.3x PyTorch's, and single queries and batches of 100 run 1.4-3.3x
-PyTorch's, from the selection, the threads per query and PyTorch's fixed cost of about 0.2 ms per call.
+On batches of 10,000 the two frameworks run level (within 1%) up to nprobe 16 and PyTorch is up to
+1.12x MLX above it. On batches of 100 PyTorch reaches 0.84-0.97x MLX's speed, and on single queries
+0.50-0.88x, from PyTorch's fixed cost of about 0.2 ms per call. Against the ordered selection, 64 threads
+and the separate merge, these settings make PyTorch's IVF 1.2-2.5x faster on single queries, 1.1-1.8x on
+batches of 100 and, above nprobe 16, 1.4-2.4x on batches of 10,000 (level at nprobe 16 and below,
+where the list-major scan selects the same way).
 
 ## Inner product (`backends.py --metrics ip`, `ivf_cpu.py --metric ip`, `ip_reduction.py`)
 

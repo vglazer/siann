@@ -50,8 +50,8 @@ language) through MLX, Apple's array framework, which compiles kernels written a
 module), plus NumPy's matrix multiply, which on a Mac is Apple's Accelerate BLAS (the tuned
 linear-algebra library). There is no Rust core between Python and the GPU: MLX goes from Python to
 Metal directly. FAISS appears only in the benchmarks: siann does not wrap it, and
-the GPU path is MLX alone (PyTorch's MPS backend runs siann's custom kernels at the same speed, but its matrix multiply is
-slower, and it appears in the benchmark only).
+the GPU path runs on MLX or, with the same custom kernels, on PyTorch's MPS backend (the kernels run at the
+same speed on both; MLX is the default, as PyTorch's matrix multiply is about half MLX's speed).
 
 ## Which path a search takes
 
@@ -221,7 +221,7 @@ always the baseline, including FAISS's compressed indexes, and this is where it 
 | `proto/ivf_gpu.py` | The GPU IVF: k-means build, query-major and list-major scans, float16 and uint8 lists |
 | `proto/rust_cpu/src/lib.rs` | The Rust extension: `FlatIndex`, `IvfIndex` (storages, split queries), `L2TopK` |
 | `proto/blas_l2.py` | Exact L2 on the CPU through NumPy's BLAS and `L2TopK`, with the default tile sizes |
-| `proto/torch_kernels.py`, `proto/ivf_torch.py` | The same kernels on PyTorch MPS (benchmark only) |
+| `proto/torch_kernels.py`, `proto/ivf_torch.py` | The same kernels on PyTorch MPS |
 | `proto/check_kernels.py` | Every kernel and index against NumPy's exact search |
 | `proto/backends.py`, `ivf_cpu.py`, `fp16_lists.py`, `single_query.py` | The benchmarks against FAISS |
 

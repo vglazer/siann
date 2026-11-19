@@ -1,0 +1,23 @@
+glove, l2: 4000 lists (float32); queries per second
+
+  nprobe, backend and settings             recall@10    single       100    10,000
+  8, PyTorch, earlier                          0.631     1,341    90,868   874,056
+  8, PyTorch, defaults                         0.631     1,639    99,963   899,436
+  8, MLX, defaults                             0.631     2,513   113,876   889,301
+                                           identical neighbors, PyTorch and MLX defaults: 1.0000 (query-major), 1.0000 (list-major)
+  16, PyTorch, earlier                         0.712       662    72,001   524,610
+  16, PyTorch, defaults                        0.712     1,450    80,595   532,096
+  16, MLX, defaults                            0.712     1,992    91,142   530,652
+                                           identical neighbors, PyTorch and MLX defaults: 1.0000 (query-major), 1.0000 (list-major)
+  32, PyTorch, earlier                         0.780       444    32,487   209,177
+  32, PyTorch, defaults                        0.780       699    57,325   339,220
+  32, MLX, defaults                            0.780     1,395    63,073   303,899
+                                           identical neighbors, PyTorch and MLX defaults: 1.0000 (query-major), 1.0000 (list-major)
+  64, PyTorch, earlier                         0.839       420    26,053   147,679
+  64, PyTorch, defaults                        0.839       817    36,660   206,804
+  64, MLX, defaults                            0.839       945    39,236   194,198
+                                           identical neighbors, PyTorch and MLX defaults: 1.0000 (query-major), 1.0000 (list-major)
+  128, PyTorch, earlier                        0.890       200    13,848    47,639
+  128, PyTorch, defaults                       0.890       422    21,199   113,667
+  128, MLX, defaults                           0.890       602    22,571   114,019
+                                           identical neighbors, PyTorch and MLX defaults: 1.0000 (query-major), 1.0000 (list-major)

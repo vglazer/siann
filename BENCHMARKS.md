@@ -114,8 +114,9 @@ identical. Queries per second; single queries run one per call, on one thread, a
 | GloVe | 0.839 / 0.845 | 5,057 / 2,989 | 38,744 / 28,088 | 191,532 / 41,521 / 32,114 |
 | GloVe | 0.890 / 0.892 | 2,934 / 1,614 | 22,197 / 15,853 | 113,440 / 22,981 / 17,637 |
 
-The GPU IVF column is MLX's. PyTorch's port of the same kernels, with the ordered probe selection, is
-level with it on large batches at nprobe 16 and below and up to 2.3 times slower above
+The GPU IVF column is MLX's. PyTorch's port of the same kernels returns the same neighbors, runs level
+with it on batches of 10,000 (up to 1.12 times faster above nprobe 16), and reaches 0.84-0.97 times its
+speed on batches of 100 and 0.50-0.88 times on single queries, from PyTorch's higher fixed cost per call
 ([RESULTS](RESULTS.md), "IVF on PyTorch MPS"). FAISS's own IVF with the same lists is level with siann's
 Rust query-major scan on batches and slower on single queries (2.1 times on SIFT L2 at nprobe 128, 4.5
 times at nprobe 4).
@@ -160,6 +161,7 @@ uv run --no-sync --group proto python fine_lists.py --dataset sift              
 uv run --no-sync --group proto python single_query.py --dataset sift --splits 1,4 --faiss
 uv run --no-sync --group proto python coarse_step.py --dataset sift              # the coarse step, two-level
 uv run --no-sync --group proto python gpu_select_ab.py --dataset sift --lists uint8 --defaults
+uv run --no-sync --group proto python torch_select_ab.py --dataset sift            # PyTorch's IVF against MLX's
 uv run --no-sync --group proto python backends.py --dataset glove-raw --metrics ip --backends faiss-cpu,mlx-custom-gpu
 uv run --no-sync --group proto python ip_reduction.py --dataset glove-raw        # IVF and inner product
 ```
