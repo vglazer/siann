@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+data/
+target/
+.DS_Store
+research_notes/
+reports/
+placeholder/pypi/dist/
+
+# Project notes and plans: kept locally, not published
+CLAUDE.md
+DESIGN.md
+docs/src/
+site/

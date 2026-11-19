@@ -1,0 +1,5 @@
+faiss 1.16.0, IndexIVFScalarQuantizer QT_8bit_direct, queries with fraction 0.3
+FAISS distances:           [84810. 87227. 90610.]
+exact, float query:        [84802.08 87410.48 90639.28]
+exact, query rounded:      [84810. 87227. 90610.]
+FAISS matches the rounded query: True ; the float query: False

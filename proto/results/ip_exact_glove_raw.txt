@@ -1,0 +1,8 @@
+glove-raw: 1,183,514 base vectors, 100 dimensions, 1,000 queries, k=10, 16 CPU threads
+versions: faiss 1.16.0, mlx 0.32.4, siann_cpu (Rust)
+
+IP
+  faiss-cpu               0.287 s     1.00x FAISS  agreement 1.0000
+  siann-rust-cpu          0.392 s     0.73x FAISS  agreement 1.0000
+  mlx-custom-gpu          0.049 s     5.89x FAISS  agreement 1.0000
+  mlx-builtin-gpu         0.806 s     0.36x FAISS  agreement 1.0000

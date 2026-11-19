@@ -1,0 +1,1236 @@
+//! Prototype: exact and IVF k-nearest neighbors on the CPU, for L1, L2 and L-infinity, in safe Rust.
+//!
+//! Vectors are stored in blocks of `L`, dimension by dimension (`blocks[b * d + j][l]` is dimension
+//! `j` of vector `b * L + l`). The inner loop computes queries against one block, keeping one
+//! running distance per (query, vector) pair: a sum for L1 and L2, a maximum for L-infinity. They are
+//! independent, so the compiler can map them onto NEON (Apple's vector instructions) without
+//! reordering any floating-point additions. Padding vectors hold infinity and never enter a top-k.
+//!
+//! - `FlatIndex`: exact search. `QB` queries at a time against each block; each thread scans the
+//!   base in tiles of `TILE` blocks, reused for all of its queries while in cache.
+//! - `IvfIndex`: inverted lists. Each base vector belongs to its nearest centroid's list, stored in
+//!   blocks. A query finds its `nprobe` nearest centroids, then scans their lists. One thread per
+//!   query, so that single queries are cheap and batches spread across cores.
+
+use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+use pyo3::buffer::PyBuffer;
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
+use rayon::prelude::*;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// The thread pool for split queries of `threads` threads, made once and kept. Split queries run on
+/// a small pool of their own: on rayon's global pool (every core), a query injected into the pool
+/// wakes its sleeping threads, which costs more than the split saves (RESULTS.md, "Single queries").
+fn split_pool(threads: usize) -> PyResult<Arc<rayon::ThreadPool>> {
+    static POOLS: OnceLock<Mutex<HashMap<usize, Arc<rayon::ThreadPool>>>> = OnceLock::new();
+    let mut pools = POOLS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| PyValueError::new_err("split pool lock poisoned"))?;
+    if let Some(pool) = pools.get(&threads) {
+        return Ok(Arc::clone(pool));
+    }
+    let pool = Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("siann-split-{i}"))
+            .build()
+            .map_err(|e| PyValueError::new_err(format!("cannot start split pool: {e}")))?,
+    );
+    pools.insert(threads, Arc::clone(&pool));
+    Ok(pool)
+}
+
+/// Vectors per block.
+const L: usize = 8;
+/// Queries per register block in exact search.
+const QB: usize = 4;
+/// Blocks per cache tile in exact search: 128 blocks of 8 vectors of 128 dimensions is 512 KB.
+const TILE: usize = 128;
+
+/// How a metric builds a distance one coordinate at a time. L2 distances are squared.
+trait Metric {
+    /// Whether the integer path for byte lists applies: true for the distances; not for the inner
+    /// product, whose values are negative.
+    const INTEGER: bool = true;
+    /// The running distance `acc` with the coordinates `a` and `b` added.
+    fn combine(acc: f32, a: f32, b: f32) -> f32;
+    /// Two running distances over disjoint coordinates, joined.
+    fn join(x: f32, y: f32) -> f32;
+    /// The distance between two byte vectors, in integers: exact. A plain loop over each vector's
+    /// contiguous bytes, which the compiler may reorder (integer sums are associative), and so
+    /// vectorizes 16 bytes at a time (`uabd`, then `udot` for L2).
+    fn dist_int(q: &[u8], x: &[u8]) -> u32;
+}
+
+/// The sum of |a - b|.
+struct L1;
+/// The sum of (a - b)^2.
+struct L2;
+/// The largest |a - b|.
+struct Linf;
+/// The inner product, negated (the sum of -a b), so that, as for the distances, smaller is nearer.
+struct Ip;
+
+impl Metric for L1 {
+    #[inline(always)]
+    fn combine(acc: f32, a: f32, b: f32) -> f32 {
+        acc + (a - b).abs()
+    }
+    #[inline(always)]
+    fn join(x: f32, y: f32) -> f32 {
+        x + y
+    }
+    #[inline(always)]
+    fn dist_int(q: &[u8], x: &[u8]) -> u32 {
+        q.iter()
+            .zip(x)
+            .map(|(&a, &b)| u32::from(a.abs_diff(b)))
+            .sum()
+    }
+}
+
+impl Metric for L2 {
+    #[inline(always)]
+    fn combine(acc: f32, a: f32, b: f32) -> f32 {
+        let e = a - b;
+        acc + e * e
+    }
+    #[inline(always)]
+    fn join(x: f32, y: f32) -> f32 {
+        x + y
+    }
+    #[inline(always)]
+    fn dist_int(q: &[u8], x: &[u8]) -> u32 {
+        q.iter()
+            .zip(x)
+            .map(|(&a, &b)| {
+                let e = u32::from(a.abs_diff(b));
+                e * e
+            })
+            .sum()
+    }
+}
+
+// A comparison and select rather than `f32::max`: LLVM treats `max` as a reduction it may reorder,
+// and then vectorizes the wrong loop (over dimensions, with shuffles and a 3.7 KB stack frame),
+// taking twice L1's time; so does an unsigned-integer max on the bits. The select keeps one running
+// maximum per lane, like L1's sums (fcmgt and bit where L1 has one fadd: 1.35 times L1's time on
+// 200,000 Gaussian vectors, against 2.1 with `max`). The inputs hold no NaN, so the two agree.
+#[inline(always)]
+fn larger(x: f32, y: f32) -> f32 {
+    if y > x { y } else { x }
+}
+
+impl Metric for Linf {
+    #[inline(always)]
+    fn combine(acc: f32, a: f32, b: f32) -> f32 {
+        larger(acc, (a - b).abs())
+    }
+    #[inline(always)]
+    fn join(x: f32, y: f32) -> f32 {
+        larger(x, y)
+    }
+    #[inline(always)]
+    fn dist_int(q: &[u8], x: &[u8]) -> u32 {
+        u32::from(
+            q.iter()
+                .zip(x)
+                .map(|(&a, &b)| a.abs_diff(b))
+                .max()
+                .unwrap_or(0),
+        )
+    }
+}
+
+impl Metric for Ip {
+    const INTEGER: bool = false;
+    #[inline(always)]
+    fn combine(acc: f32, a: f32, b: f32) -> f32 {
+        acc - a * b
+    }
+    #[inline(always)]
+    fn join(x: f32, y: f32) -> f32 {
+        x + y
+    }
+    fn dist_int(_q: &[u8], _x: &[u8]) -> u32 {
+        unreachable!("the integer path is not used for the inner product")
+    }
+}
+
+/// The metric an index was built with, chosen at run time; each search dispatches on it once.
+#[derive(Clone, Copy)]
+enum Kind {
+    L1,
+    L2,
+    Linf,
+    Ip,
+}
+
+/// Runs `$body` with `$m` the metric type for `$kind`.
+macro_rules! with_metric {
+    ($kind:expr, $m:ident => $body:expr) => {
+        match $kind {
+            Kind::L1 => {
+                type $m = L1;
+                $body
+            }
+            Kind::L2 => {
+                type $m = L2;
+                $body
+            }
+            Kind::Linf => {
+                type $m = Linf;
+                $body
+            }
+            Kind::Ip => {
+                type $m = Ip;
+                $body
+            }
+        }
+    };
+}
+
+/// How list vectors are stored: as f32; as float16 bits (`u16`), half the memory traffic; or as
+/// bytes (`u8`), a quarter, for vectors whose coordinates are integers from 0 to 255 (SIFT's). Either
+/// way, distances are computed in f32 from the stored values, widened exactly.
+trait Elem: Copy + Send + Sync {
+    /// The value of padding slots.
+    const PAD: Self;
+    /// A block as f32: the block itself for f32; for float16, widened into `buf`. Widening a whole
+    /// block first, in one flat loop, then running the f32 code on it was 1.3-1.9 times faster on
+    /// SIFT1M than widening inside the distance loops, where the compiler gathered the halves one lane
+    /// at a time (RESULTS.md, "float16 lists").
+    fn as_f32<'a>(blk: &'a [[Self; L]], buf: &'a mut Vec<[f32; L]>) -> &'a [[f32; L]];
+    /// One stored value as f32, for converting in registers inside a distance loop.
+    fn lane(x: Self) -> f32;
+    /// Whether single-query scans convert in registers (`lane`) rather than through a buffer
+    /// (`as_f32`). Bytes convert in two vector instructions and gain; float16's bit operations make
+    /// the compiler load the halves one lane at a time, so it keeps the buffer.
+    const DIRECT: bool;
+    /// For byte lists: the query as bytes, if every coordinate is an integer from 0 to 255 and `d` is
+    /// small enough for the integer distances to be exact as float32 (d * 255^2 below 2^24, so they
+    /// rank exactly, and equal the float path's, whose partial sums of integers are exact too);
+    /// otherwise None, and the float path is used. None for other storages.
+    fn integer_query(_q: &[f32]) -> Option<Vec<u8>> {
+        None
+    }
+    /// Whether lists also keep their vectors row by row (each vector's coordinates contiguous),
+    /// for the integer path.
+    const ROW_MAJOR: bool = false;
+    /// For byte lists with an integer query: one vector's distance in integer arithmetic.
+    fn int_dist<M: Metric>(_q: &[u8], _x: &[Self]) -> u32 {
+        unreachable!("integer distances are only for byte lists")
+    }
+}
+
+impl Elem for f32 {
+    /// Infinity: padding vectors never enter a top-k.
+    const PAD: f32 = f32::INFINITY;
+    const DIRECT: bool = true;
+    #[inline(always)]
+    fn as_f32<'a>(blk: &'a [[f32; L]], _buf: &'a mut Vec<[f32; L]>) -> &'a [[f32; L]] {
+        blk
+    }
+    #[inline(always)]
+    fn lane(x: f32) -> f32 {
+        x
+    }
+}
+
+impl Elem for u8 {
+    /// Zero: list scans skip padding slots by their missing ids.
+    const PAD: u8 = 0;
+    const DIRECT: bool = true;
+    #[inline]
+    fn as_f32<'a>(blk: &'a [[u8; L]], buf: &'a mut Vec<[f32; L]>) -> &'a [[f32; L]] {
+        buf.resize(blk.len(), [0.0; L]);
+        for (o, &h) in buf.as_flattened_mut().iter_mut().zip(blk.as_flattened()) {
+            *o = f32::from(h);
+        }
+        buf
+    }
+    #[inline(always)]
+    fn lane(x: u8) -> f32 {
+        f32::from(x)
+    }
+    fn integer_query(q: &[f32]) -> Option<Vec<u8>> {
+        // L2 sums reach d * 255^2, exact in float32 (and so in the top-k) below 2^24: d <= 258.
+        if q.len() > 258
+            || !q
+                .iter()
+                .all(|&v| (0.0..=255.0).contains(&v) && v.fract() == 0.0)
+        {
+            return None;
+        }
+        Some(q.iter().map(|&v| v as u8).collect())
+    }
+    /// Byte lists keep a row-major copy for integer queries: in the blocked layout a dimension's 8
+    /// bytes fill half a register, and the integer kernel there was no faster than converting to
+    /// float; row by row, 16 of a vector's bytes fill one, and the sum is one dot product.
+    const ROW_MAJOR: bool = true;
+    #[inline]
+    fn int_dist<M: Metric>(q: &[u8], x: &[u8]) -> u32 {
+        M::dist_int(q, x)
+    }
+}
+
+/// 2^112: the difference between float32's exponent bias (127) and float16's (15).
+const HALF_SCALE: f32 = f32::from_bits((127 + 112) << 23);
+
+/// A finite float16 (its bits) as f32, exactly: its sign, exponent and mantissa moved into f32's
+/// positions read as an f32 2^112 times too small, normal or subnormal, so one exact multiply
+/// finishes it. Branch-free, so the compiler vectorizes it. Infinity and NaN (exponent 31) would come
+/// out finite, so lists reject them when built.
+#[inline(always)]
+fn widen_half(h: u16) -> f32 {
+    let h = u32::from(h);
+    f32::from_bits(((h & 0x8000) << 16) | ((h & 0x7fff) << 13)) * HALF_SCALE
+}
+
+impl Elem for u16 {
+    /// Zero: float16 has no padding value that widens to infinity here, so list scans skip padding
+    /// slots by their missing ids instead.
+    const PAD: u16 = 0;
+    const DIRECT: bool = false;
+    #[inline]
+    fn as_f32<'a>(blk: &'a [[u16; L]], buf: &'a mut Vec<[f32; L]>) -> &'a [[f32; L]] {
+        buf.resize(blk.len(), [0.0; L]);
+        // Flat slices: over nested [u16; L] arrays the compiler loads the halves one lane at a time.
+        for (o, &h) in buf.as_flattened_mut().iter_mut().zip(blk.as_flattened()) {
+            *o = widen_half(h);
+        }
+        buf
+    }
+    #[inline(always)]
+    fn lane(x: u16) -> f32 {
+        widen_half(x)
+    }
+}
+
+/// The distances between `QB` queries (interleaved: `qq[j][a]` is dimension `j` of query `a`) and
+/// the `L` vectors of one block.
+#[inline]
+fn block_dists<M: Metric>(qq: &[[f32; QB]], blk: &[[f32; L]]) -> [[f32; L]; QB] {
+    let mut acc = [[0.0f32; L]; QB];
+    for (q, x) in qq.iter().zip(blk) {
+        for a in 0..QB {
+            for l in 0..L {
+                acc[a][l] = M::combine(acc[a][l], q[a], x[l]);
+            }
+        }
+    }
+    acc
+}
+
+/// The distances between one query and the `L` vectors of one block. With one query there are only
+/// `L` running distances, so each is split four ways by dimension, to keep the operations from
+/// waiting on each other; the four parts are joined at the end.
+#[inline]
+fn block_dists_one<M: Metric>(q: &[f32], blk: &[[f32; L]]) -> [f32; L] {
+    let mut acc = [[0.0f32; L]; 4];
+    let (q4, q_rest) = q.as_chunks::<4>();
+    let (b4, b_rest) = blk.as_chunks::<4>();
+    for (qs, xs) in q4.iter().zip(b4) {
+        for p in 0..4 {
+            for l in 0..L {
+                acc[p][l] = M::combine(acc[p][l], qs[p], xs[p][l]);
+            }
+        }
+    }
+    for (&qv, x) in q_rest.iter().zip(b_rest) {
+        for l in 0..L {
+            acc[0][l] = M::combine(acc[0][l], qv, x[l]);
+        }
+    }
+    let mut out = [0.0f32; L];
+    for l in 0..L {
+        out[l] = M::join(M::join(acc[0][l], acc[1][l]), M::join(acc[2][l], acc[3][l]));
+    }
+    out
+}
+
+/// `block_dists_one` reading the block in its stored type, converting each value in registers inside
+/// the loop instead of widening the block into a buffer first.
+#[inline]
+fn block_dists_one_direct<M: Metric, T: Elem>(q: &[f32], blk: &[[T; L]]) -> [f32; L] {
+    let mut acc = [[0.0f32; L]; 4];
+    let (q4, q_rest) = q.as_chunks::<4>();
+    let (b4, b_rest) = blk.as_chunks::<4>();
+    for (qs, xs) in q4.iter().zip(b4) {
+        for p in 0..4 {
+            for l in 0..L {
+                acc[p][l] = M::combine(acc[p][l], qs[p], T::lane(xs[p][l]));
+            }
+        }
+    }
+    for (&qv, x) in q_rest.iter().zip(b_rest) {
+        for l in 0..L {
+            acc[0][l] = M::combine(acc[0][l], qv, T::lane(x[l]));
+        }
+    }
+    let mut out = [0.0f32; L];
+    for l in 0..L {
+        out[l] = M::join(M::join(acc[0][l], acc[1][l]), M::join(acc[2][l], acc[3][l]));
+    }
+    out
+}
+
+/// The k smallest distances seen so far, in increasing order.
+struct TopK {
+    dist: Vec<f32>,
+    idx: Vec<u32>,
+}
+
+impl TopK {
+    fn new(k: usize) -> Self {
+        TopK {
+            dist: vec![f32::INFINITY; k],
+            idx: vec![u32::MAX; k],
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, v: f32, i: u32) {
+        let k = self.dist.len();
+        if v >= self.dist[k - 1] {
+            return;
+        }
+        let mut p = k - 1;
+        while p > 0 && self.dist[p - 1] > v {
+            self.dist[p] = self.dist[p - 1];
+            self.idx[p] = self.idx[p - 1];
+            p -= 1;
+        }
+        self.dist[p] = v;
+        self.idx[p] = i;
+    }
+}
+
+/// Vectors (rows, each `d` long) in blocks of `L`, dimension by dimension, padded with `T::PAD`.
+fn to_blocks<'a, T: Elem + 'a>(
+    rows: impl ExactSizeIterator<Item = &'a [T]>,
+    d: usize,
+) -> Vec<[T; L]> {
+    let nb = rows.len().div_ceil(L);
+    let mut blocks = vec![[T::PAD; L]; nb * d];
+    for (i, row) in rows.enumerate() {
+        let (b, l) = (i / L, i % L);
+        for (j, &v) in row.iter().enumerate() {
+            blocks[b * d + j][l] = v;
+        }
+    }
+    blocks
+}
+
+/// Exact k nearest neighbors of a chunk of queries among `blocks`, written to `out` (m * k).
+fn flat_chunk<M: Metric>(
+    blocks: &[[f32; L]],
+    d: usize,
+    n: usize,
+    qc: &[f32],
+    k: usize,
+    out: &mut [u32],
+) {
+    let m = qc.len() / d;
+    let groups = m.div_ceil(QB);
+    // The queries, interleaved by groups of QB; padding queries are zero and their results dropped.
+    let mut qq = vec![[0.0f32; QB]; groups * d];
+    for (i, row) in qc.chunks_exact(d).enumerate() {
+        let (g, a) = (i / QB, i % QB);
+        for (j, &v) in row.iter().enumerate() {
+            qq[g * d + j][a] = v;
+        }
+    }
+    let mut tops: Vec<TopK> = (0..groups * QB).map(|_| TopK::new(k)).collect();
+    let nb = blocks.len() / d;
+    for t0 in (0..nb).step_by(TILE) {
+        let t1 = (t0 + TILE).min(nb);
+        for (g, qg) in qq.chunks_exact(d).enumerate() {
+            let tg = &mut tops[g * QB..(g + 1) * QB];
+            for b in t0..t1 {
+                let acc = block_dists::<M>(qg, &blocks[b * d..(b + 1) * d]);
+                for (top, row) in tg.iter_mut().zip(&acc) {
+                    for (l, &v) in row.iter().enumerate() {
+                        // Skip the padding slots past the last vector: they hold infinity, which
+                        // never enters a top-k for the distances but is the best possible inner
+                        // product (or NaN, against a zero coordinate).
+                        let i = b * L + l;
+                        if i < n {
+                            top.push(v, i as u32);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (o, top) in out.chunks_exact_mut(k).zip(&tops) {
+        o.copy_from_slice(&top.idx);
+    }
+}
+
+/// Exact search of `n` vectors held in `blocks`.
+fn flat_search<M: Metric>(
+    blocks: &[[f32; L]],
+    d: usize,
+    n: usize,
+    xq: &[f32],
+    k: usize,
+    chunk: usize,
+) -> Vec<u32> {
+    let nq = xq.len() / d;
+    let mut out = vec![0u32; nq * k];
+    out.par_chunks_mut(chunk * k)
+        .zip(xq.par_chunks(chunk * d))
+        .for_each(|(o, qc)| flat_chunk::<M>(blocks, d, n, qc, k, o));
+    out
+}
+
+fn parse_metric(metric: &str) -> PyResult<Kind> {
+    match metric {
+        "l1" => Ok(Kind::L1),
+        "l2" => Ok(Kind::L2),
+        "linf" => Ok(Kind::Linf),
+        "ip" => Ok(Kind::Ip),
+        _ => Err(PyValueError::new_err(
+            "metric must be 'l1', 'l2', 'linf' or 'ip' (inner product)",
+        )),
+    }
+}
+
+fn read(py: Python<'_>, buf: &Bound<'_, PyAny>, d: usize) -> PyResult<Vec<f32>> {
+    let buf = PyBuffer::<f32>::get(buf)?;
+    let v = buf.to_vec(py)?;
+    if d == 0 || v.len() % d != 0 {
+        return Err(PyValueError::new_err(
+            "expected a C-contiguous float32 array with d columns",
+        ));
+    }
+    Ok(v)
+}
+
+/// Exact search.
+#[pyclass]
+struct FlatIndex {
+    d: usize,
+    n: usize,
+    metric: Kind,
+    blocks: Vec<[f32; L]>,
+}
+
+#[pymethods]
+impl FlatIndex {
+    /// Build from a C-contiguous float32 array of shape (n, d); `metric` is "l1", "l2", "linf" or "ip" (inner product, largest first).
+    #[new]
+    #[pyo3(signature = (xb, d, metric = "l1"))]
+    fn py_new(py: Python<'_>, xb: &Bound<'_, PyAny>, d: usize, metric: &str) -> PyResult<Self> {
+        let metric = parse_metric(metric)?;
+        let v = read(py, xb, d)?;
+        let n = v.len() / d;
+        let blocks = py.detach(|| to_blocks(v.chunks_exact(d), d));
+        Ok(FlatIndex {
+            d,
+            n,
+            metric,
+            blocks,
+        })
+    }
+
+    /// The indices of the k nearest base vectors to each query, flattened (nq * k), nearest first.
+    /// Each thread takes `chunk` queries at a time.
+    #[pyo3(signature = (xq, k, chunk = 32))]
+    fn search(
+        &self,
+        py: Python<'_>,
+        xq: &Bound<'_, PyAny>,
+        k: usize,
+        chunk: usize,
+    ) -> PyResult<Vec<u32>> {
+        if k == 0 || k > self.n || chunk == 0 {
+            return Err(PyValueError::new_err("need 0 < k <= n and chunk > 0"));
+        }
+        let v = read(py, xq, self.d)?;
+        Ok(py.detach(
+            || with_metric!(self.metric, M => flat_search::<M>(&self.blocks, self.d, self.n, &v, k, chunk)),
+        ))
+    }
+}
+
+/// One inverted list: its vectors in blocks, and their ids in the base.
+struct List<T> {
+    blocks: Vec<[T; L]>,
+    ids: Vec<u32>,
+    /// The vectors row by row, if `T::ROW_MAJOR` (byte lists, for integer queries); else empty.
+    rows: Vec<T>,
+}
+
+/// The inverted lists, stored as f32 or as float16.
+enum Lists {
+    F32(Vec<List<f32>>),
+    F16(Vec<List<u16>>),
+    U8(Vec<List<u8>>),
+}
+
+/// The vectors given for the lists, in their storage type.
+enum Stored {
+    F32,
+    F16(Vec<u16>),
+    U8(Vec<u8>),
+}
+
+/// Runs `$body` with `$lists` the lists, whichever their storage.
+macro_rules! with_lists {
+    ($lists:expr, $l:ident => $body:expr) => {
+        match $lists {
+            Lists::F32($l) => $body,
+            Lists::F16($l) => $body,
+            Lists::U8($l) => $body,
+        }
+    };
+}
+
+/// Inverted lists over given centroids.
+#[pyclass]
+struct IvfIndex {
+    d: usize,
+    metric: Kind,
+    nlist: usize,
+    centroids: Vec<[f32; L]>,
+    lists: Lists,
+    /// For a two-level coarse step (`set_coarse_groups`), the centroids clustered into groups.
+    groups: Option<Groups>,
+}
+
+/// How one query is searched: lists to scan, parallel tasks (one: this thread), and groups for a
+/// two-level coarse step (zero: exact coarse step).
+#[derive(Clone, Copy)]
+struct Probe {
+    nprobe: usize,
+    tasks: usize,
+    gprobe: usize,
+}
+
+/// The centroids clustered into groups, for a two-level coarse step: a query is compared with the
+/// groups' centres, then only with the centroids of its `gprobe` nearest groups.
+struct Groups {
+    /// The groups' centres, in blocks.
+    centres: Vec<[f32; L]>,
+    count: usize,
+    /// Each group's centroids, in blocks, and their ids.
+    blocks: Vec<Vec<[f32; L]>>,
+    ids: Vec<Vec<u32>>,
+}
+
+/// Each list's members (ids), in blocks.
+fn make_lists<T: Elem>(members: Vec<Vec<u32>>, x: &[T], d: usize) -> Vec<List<T>> {
+    members
+        .into_par_iter()
+        .map(|ids| {
+            let row = |i: u32| &x[i as usize * d..(i as usize + 1) * d];
+            let blocks = to_blocks(ids.iter().map(|&i| row(i)), d);
+            let rows = if T::ROW_MAJOR {
+                ids.iter().flat_map(|&i| row(i).iter().copied()).collect()
+            } else {
+                Vec::new()
+            };
+            List { blocks, ids, rows }
+        })
+        .collect()
+}
+
+impl IvfIndex {
+    /// The distances from one query to every centroid, with their ids, in `tasks` parallel tasks
+    /// (one: on this thread).
+    fn coarse<M: Metric>(&self, q: &[f32], tasks: usize, gprobe: usize) -> Vec<(f32, u32)> {
+        let d = self.d;
+        if let (Some(g), true) = (&self.groups, gprobe > 0) {
+            // Two levels: the nearest gprobe groups, then their centroids only.
+            let mut near: Vec<(f32, u32)> = g
+                .centres
+                .chunks_exact(d)
+                .enumerate()
+                .flat_map(|(b, blk)| {
+                    block_dists_one::<M>(q, blk)
+                        .into_iter()
+                        .enumerate()
+                        .map(move |(l, v)| (v, (b * L + l) as u32))
+                })
+                .collect();
+            near.truncate(g.count);
+            let gprobe = gprobe.min(g.count);
+            if gprobe < near.len() {
+                near.select_nth_unstable_by(gprobe - 1, |a, b| a.0.total_cmp(&b.0));
+            }
+            let mut out = Vec::new();
+            for &(_, gi) in &near[..gprobe] {
+                let (blocks, ids) = (&g.blocks[gi as usize], &g.ids[gi as usize]);
+                for (b, blk) in blocks.chunks_exact(d).enumerate() {
+                    for (l, v) in block_dists_one::<M>(q, blk).into_iter().enumerate() {
+                        if let Some(&c) = ids.get(b * L + l) {
+                            out.push((v, c));
+                        }
+                    }
+                }
+            }
+            return out;
+        }
+        let block = |(b, blk): (usize, &[[f32; L]])| {
+            block_dists_one::<M>(q, blk)
+                .into_iter()
+                .enumerate()
+                .map(move |(l, v)| (v, (b * L + l) as u32))
+        };
+        let mut coarse: Vec<(f32, u32)> = if tasks > 1 {
+            let per = (self.centroids.len() / d).div_ceil(tasks);
+            self.centroids
+                .par_chunks(d * per)
+                .enumerate()
+                .flat_map_iter(|(c, chunk)| {
+                    chunk
+                        .chunks_exact(d)
+                        .enumerate()
+                        .flat_map(move |(i, blk)| block((c * per + i, blk)))
+                })
+                .collect()
+        } else {
+            self.centroids
+                .chunks_exact(d)
+                .enumerate()
+                .flat_map(block)
+                .collect()
+        };
+        coarse.truncate(self.nlist);
+        coarse
+    }
+
+    /// The vectors of one list, pushed into `top` in order.
+    fn scan_one<M: Metric, T: Elem>(
+        &self,
+        list: &List<T>,
+        q: &[f32],
+        q8: Option<&[u8]>,
+        top: &mut TopK,
+        buf: &mut Vec<[f32; L]>,
+    ) {
+        if let Some(q8) = q8 {
+            // integer query, byte list: exact integer distances, vector by vector
+            for (x, &id) in list.rows.chunks_exact(self.d).zip(&list.ids) {
+                top.push(T::int_dist::<M>(q8, x) as f32, id);
+            }
+            return;
+        }
+        for (b, blk) in list.blocks.chunks_exact(self.d).enumerate() {
+            let dists = if T::DIRECT {
+                block_dists_one_direct::<M, T>(q, blk)
+            } else {
+                block_dists_one::<M>(q, T::as_f32(blk, buf))
+            };
+            for (l, v) in dists.into_iter().enumerate() {
+                if let Some(&id) = list.ids.get(b * L + l) {
+                    top.push(v, id);
+                }
+            }
+        }
+    }
+
+    /// One query. With `tasks` above one (run on a split pool of that many threads), the coarse step
+    /// and the list scans are spread over that many parallel tasks, each scanning a contiguous run of
+    /// the probed lists, and the tasks' best k are merged in probe order, which gives the same result
+    /// as one thread scanning the lists in that order, ties included: each task's best k keeps the
+    /// earliest of tied vectors, as one scan would.
+    fn search_one<M: Metric, T: Elem>(
+        &self,
+        lists: &[List<T>],
+        q: &[f32],
+        k: usize,
+        how: Probe,
+        out: &mut [u32],
+    ) {
+        let Probe {
+            nprobe,
+            tasks,
+            gprobe,
+        } = how;
+        // Byte lists with an integer query take the exact integer path.
+        let q8 = if M::INTEGER {
+            T::integer_query(q)
+        } else {
+            None
+        };
+        // The nearest nprobe centroids (among those the two-level step examined, with gprobe).
+        let mut coarse = self.coarse::<M>(q, tasks, gprobe);
+        let nprobe = nprobe.min(coarse.len());
+        if nprobe < coarse.len() {
+            coarse.select_nth_unstable_by(nprobe - 1, |a, b| a.0.total_cmp(&b.0));
+        }
+        // Scan their lists.
+        let mut top = TopK::new(k);
+        if tasks > 1 {
+            let parts: Vec<TopK> = coarse[..nprobe]
+                .par_chunks(nprobe.div_ceil(tasks))
+                .map(|run| {
+                    let mut t = TopK::new(k);
+                    let mut buf = Vec::new();
+                    for &(_, c) in run {
+                        self.scan_one::<M, T>(
+                            &lists[c as usize],
+                            q,
+                            q8.as_deref(),
+                            &mut t,
+                            &mut buf,
+                        );
+                    }
+                    t
+                })
+                .collect();
+            for t in &parts {
+                for (&v, &id) in t.dist.iter().zip(&t.idx) {
+                    top.push(v, id);
+                }
+            }
+        } else {
+            let mut buf = Vec::new();
+            for &(_, c) in &coarse[..nprobe] {
+                self.scan_one::<M, T>(&lists[c as usize], q, q8.as_deref(), &mut top, &mut buf);
+            }
+        }
+        out.copy_from_slice(&top.idx);
+    }
+
+    /// One list against the queries that probe it, `QB` at a time: the best k in this list for each
+    /// of those queries, as (query, distances and ids).
+    fn scan_list<M: Metric, T: Elem>(
+        &self,
+        list: &List<T>,
+        queries: &[u32],
+        xq: &[f32],
+        k: usize,
+    ) -> Vec<(u32, TopK)> {
+        let d = self.d;
+        let mut out = Vec::with_capacity(queries.len());
+        let mut qq = vec![[0.0f32; QB]; d];
+        let mut buf = Vec::new();
+        for group in queries.chunks(QB) {
+            for slot in qq.iter_mut() {
+                *slot = [0.0; QB];
+            }
+            for (a, &qi) in group.iter().enumerate() {
+                for (j, &v) in xq[qi as usize * d..(qi as usize + 1) * d]
+                    .iter()
+                    .enumerate()
+                {
+                    qq[j][a] = v;
+                }
+            }
+            let mut tops: Vec<TopK> = (0..group.len()).map(|_| TopK::new(k)).collect();
+            for (b, blk) in list.blocks.chunks_exact(d).enumerate() {
+                let acc = block_dists::<M>(&qq, T::as_f32(blk, &mut buf));
+                for (top, row) in tops.iter_mut().zip(&acc) {
+                    for (l, &v) in row.iter().enumerate() {
+                        if let Some(&id) = list.ids.get(b * L + l) {
+                            top.push(v, id);
+                        }
+                    }
+                }
+            }
+            out.extend(group.iter().copied().zip(tops));
+        }
+        out
+    }
+
+    fn search_list_major_impl<M: Metric, T: Elem>(
+        &self,
+        lists: &[List<T>],
+        xq: &[f32],
+        k: usize,
+        nprobe: usize,
+    ) -> Vec<u32> {
+        let d = self.d;
+        let nq = xq.len() / d;
+        let nprobe = nprobe.min(self.nlist);
+        // Each query's nearest nprobe centroids, by exact search over the centroids.
+        let probes = flat_search::<M>(&self.centroids, d, self.nlist, xq, nprobe, 32);
+        // For each list, the queries that probe it.
+        let mut members: Vec<Vec<u32>> = vec![Vec::new(); self.nlist];
+        for (qi, ps) in probes.chunks_exact(nprobe).enumerate() {
+            for &c in ps {
+                if let Some(m) = members.get_mut(c as usize) {
+                    m.push(qi as u32);
+                }
+            }
+        }
+        // Scan each list once for all of its queries.
+        let partial: Vec<Vec<(u32, TopK)>> = lists
+            .par_iter()
+            .zip(members.par_iter())
+            .map(|(list, queries)| self.scan_list::<M, T>(list, queries, xq, k))
+            .collect();
+        // Merge: each query's best k over its lists.
+        let mut tops: Vec<TopK> = (0..nq).map(|_| TopK::new(k)).collect();
+        for (qi, t) in partial.iter().flatten() {
+            let top = &mut tops[*qi as usize];
+            for (&v, &id) in t.dist.iter().zip(&t.idx) {
+                top.push(v, id);
+            }
+        }
+        tops.iter().flat_map(|t| t.idx.iter().copied()).collect()
+    }
+}
+
+#[pymethods]
+impl IvfIndex {
+    /// Build from base vectors (n, d) and centroids (nlist, d), both C-contiguous float32. Each base
+    /// vector goes to the list of its nearest centroid in `metric`, found by exact search. The lists
+    /// store `xb` itself (`storage="float32"`), or `stored`, the same vectors in a smaller type:
+    /// with "float16", rounded to float16 (a C-contiguous uint16 array of their bits, such as NumPy's
+    /// `xb.astype(np.float16).view(np.uint16)`), half the memory traffic; with "uint8", as bytes (a
+    /// uint8 array), a quarter, which needs every coordinate of `xb` to be an integer from 0 to 255,
+    /// so that nothing is lost. Distances are computed in f32 from the stored values.
+    #[new]
+    #[pyo3(signature = (xb, centroids, d, metric = "l1", stored = None, storage = "float32"))]
+    fn py_new(
+        py: Python<'_>,
+        xb: &Bound<'_, PyAny>,
+        centroids: &Bound<'_, PyAny>,
+        d: usize,
+        metric: &str,
+        stored: Option<&Bound<'_, PyAny>>,
+        storage: &str,
+    ) -> PyResult<Self> {
+        let kind = parse_metric(metric)?;
+        let xb = read(py, xb, d)?;
+        let shape_err = || PyValueError::new_err("stored must have the shape of xb");
+        let copy = match (storage, stored) {
+            ("float32", None) => Stored::F32,
+            ("float16", Some(buf)) => {
+                let h = PyBuffer::<u16>::get(buf)?.to_vec(py)?;
+                if h.len() != xb.len() {
+                    return Err(shape_err());
+                }
+                if h.iter().any(|&b| (b >> 10) & 0x1f == 0x1f) {
+                    return Err(PyValueError::new_err(
+                        "stored holds infinity or NaN: values beyond float16's range (65504)",
+                    ));
+                }
+                Stored::F16(h)
+            }
+            ("uint8", Some(buf)) => {
+                let h = PyBuffer::<u8>::get(buf)?.to_vec(py)?;
+                if h.len() != xb.len() {
+                    return Err(shape_err());
+                }
+                if h.iter().zip(&xb).any(|(&b, &v)| f32::from(b) != v) {
+                    return Err(PyValueError::new_err(
+                        "uint8 lists need xb's coordinates to be integers from 0 to 255, equal to stored",
+                    ));
+                }
+                Stored::U8(h)
+            }
+            _ => {
+                return Err(PyValueError::new_err(
+                    "storage is 'float32' (no stored), or 'float16' or 'uint8' with stored",
+                ));
+            }
+        };
+        let cents = read(py, centroids, d)?;
+        let nlist = cents.len() / d;
+        if nlist == 0 {
+            return Err(PyValueError::new_err("need at least one centroid"));
+        }
+        Ok(py.detach(|| {
+            let centroids = to_blocks(cents.chunks_exact(d), d);
+            let assign =
+                with_metric!(kind, M => flat_search::<M>(&centroids, d, nlist, &xb, 1, 256));
+            let mut members: Vec<Vec<u32>> = vec![Vec::new(); nlist];
+            for (i, &c) in assign.iter().enumerate() {
+                members[c as usize].push(i as u32);
+            }
+            let lists = match &copy {
+                Stored::F32 => Lists::F32(make_lists(members, &xb, d)),
+                Stored::F16(h) => Lists::F16(make_lists(members, h, d)),
+                Stored::U8(h) => Lists::U8(make_lists(members, h, d)),
+            };
+            IvfIndex {
+                d,
+                metric: kind,
+                nlist,
+                centroids,
+                lists,
+                groups: None,
+            }
+        }))
+    }
+
+    /// The indices of the k nearest base vectors to each query among the lists of its `nprobe`
+    /// nearest centroids, flattened (nq * k), nearest first; u32::MAX where fewer than k were found.
+    /// One thread per query, or with `split` above one, one query at a time, its coarse step and
+    /// its lists spread over a pool of that many threads, kept for later calls: lower latency for
+    /// single queries, the same results.
+    /// With `gprobe` above zero (after `set_coarse_groups`), the coarse step is two-level: the
+    /// query's `gprobe` nearest groups of centroids, then the nearest `nprobe` of their centroids.
+    #[pyo3(signature = (xq, k, nprobe, split = 1, gprobe = 0))]
+    fn search(
+        &self,
+        py: Python<'_>,
+        xq: &Bound<'_, PyAny>,
+        k: usize,
+        nprobe: usize,
+        split: usize,
+        gprobe: usize,
+    ) -> PyResult<Vec<u32>> {
+        if gprobe > 0 && self.groups.is_none() {
+            return Err(PyValueError::new_err(
+                "gprobe needs set_coarse_groups first",
+            ));
+        }
+        if k == 0 || nprobe == 0 {
+            return Err(PyValueError::new_err("need k > 0 and nprobe > 0"));
+        }
+        let v = read(py, xq, self.d)?;
+        let d = self.d;
+        let pool = if split > 1 {
+            Some(split_pool(split)?)
+        } else {
+            None
+        };
+        Ok(py.detach(|| {
+            let mut out = vec![u32::MAX; (v.len() / d) * k];
+            with_lists!(&self.lists, lists => with_metric!(self.metric, M => if let Some(pool) = &pool {
+                pool.install(|| {
+                    for (o, q) in out.chunks_mut(k).zip(v.chunks(d)) {
+                        self.search_one::<M, _>(lists, q, k, Probe { nprobe, tasks: split, gprobe }, o);
+                    }
+                });
+            } else {
+                out.par_chunks_mut(k)
+                    .zip(v.par_chunks(d))
+                    .for_each(|(o, q)| self.search_one::<M, _>(lists, q, k, Probe { nprobe, tasks: 1, gprobe }, o));
+            }));
+            out
+        }))
+    }
+
+    /// The same search, list-major: queries are grouped by the lists they probe, and each list is
+    /// scanned once for all of them, `QB` queries at a time, so that it is read from memory once per
+    /// batch rather than once per query. For large batches.
+    fn search_list_major(
+        &self,
+        py: Python<'_>,
+        xq: &Bound<'_, PyAny>,
+        k: usize,
+        nprobe: usize,
+    ) -> PyResult<Vec<u32>> {
+        if k == 0 || nprobe == 0 {
+            return Err(PyValueError::new_err("need k > 0 and nprobe > 0"));
+        }
+        let v = read(py, xq, self.d)?;
+        Ok(py.detach(
+            || with_lists!(&self.lists, lists => with_metric!(self.metric, M => self.search_list_major_impl::<M, _>(lists, &v, k, nprobe))),
+        ))
+    }
+
+    /// Clusters the centroids into groups for a two-level coarse step: `centres` (ngroups, d), the
+    /// groups' centres (C-contiguous float32), and `assign` (nlist,), each centroid's group.
+    fn set_coarse_groups(
+        &mut self,
+        py: Python<'_>,
+        centres: &Bound<'_, PyAny>,
+        assign: PyReadonlyArray1<'_, i64>,
+    ) -> PyResult<()> {
+        let c = read(py, centres, self.d)?;
+        let count = c.len() / self.d;
+        let a = assign
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("assign must be contiguous"))?;
+        if a.len() != self.nlist || a.iter().any(|&g| g < 0 || g as usize >= count) {
+            return Err(PyValueError::new_err(
+                "assign must give each centroid a group in range",
+            ));
+        }
+        // Each centroid's coordinates, from the blocked layout.
+        let d = self.d;
+        let row = |i: usize| -> Vec<f32> {
+            (0..d)
+                .map(|j| self.centroids[(i / L) * d + j][i % L])
+                .collect()
+        };
+        let mut ids: Vec<Vec<u32>> = vec![Vec::new(); count];
+        for (i, &g) in a.iter().enumerate() {
+            ids[g as usize].push(i as u32);
+        }
+        let blocks = ids
+            .iter()
+            .map(|members| {
+                let rows: Vec<Vec<f32>> = members.iter().map(|&i| row(i as usize)).collect();
+                to_blocks(rows.iter().map(|r| r.as_slice()), d)
+            })
+            .collect();
+        self.groups = Some(Groups {
+            centres: to_blocks(c.chunks_exact(d), d),
+            count,
+            blocks,
+            ids,
+        });
+        Ok(())
+    }
+
+    /// The number of vectors in each list.
+    fn list_sizes(&self) -> Vec<usize> {
+        with_lists!(&self.lists, lists => lists.iter().map(|l| l.ids.len()).collect())
+    }
+}
+
+/// One IVF list's products for `push_l2_lists`: products (rows x m), norms (m), ids (m), rows.
+type ListProducts<'a> = (&'a [f32], &'a [f32], &'a [i64], &'a [i64]);
+
+/// The best k of each query's L2 distances, kept across blocks of base vectors, for exact L2 search
+/// with the products from a BLAS matrix multiply (NumPy's `@`, Accelerate on a Mac): for each block,
+/// `push_l2` takes the queries' products with the block's vectors and the vectors' squared norms, and
+/// ranks by |x|^2 - 2 q.x (|q|^2 is the same for all of a query's candidates). Reads NumPy's arrays in
+/// place, without copying; the queries' rows are split over threads.
+#[pyclass]
+struct L2TopK {
+    tops: Vec<TopK>,
+}
+
+#[pymethods]
+impl L2TopK {
+    #[new]
+    fn py_new(nq: usize, k: usize) -> PyResult<Self> {
+        if k == 0 {
+            return Err(PyValueError::new_err("need k > 0"));
+        }
+        Ok(L2TopK {
+            tops: (0..nq).map(|_| TopK::new(k)).collect(),
+        })
+    }
+
+    /// One block: `prod` (nq, m), C-contiguous float32, the products of the queries with base vectors
+    /// `offset` to `offset + m`; `norms` (m,), their squared norms.
+    fn push_l2(
+        &mut self,
+        py: Python<'_>,
+        prod: PyReadonlyArray2<'_, f32>,
+        norms: PyReadonlyArray1<'_, f32>,
+        offset: usize,
+    ) -> PyResult<()> {
+        let p = prod
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("prod must be C-contiguous"))?;
+        let nm = norms
+            .as_slice()
+            .map_err(|_| PyValueError::new_err("norms must be contiguous"))?;
+        let m = nm.len();
+        if m == 0 || p.len() != self.tops.len() * m {
+            return Err(PyValueError::new_err("prod must be (nq, len(norms))"));
+        }
+        let tops = &mut self.tops;
+        py.detach(|| {
+            tops.par_iter_mut()
+                .zip(p.par_chunks(m))
+                .for_each(|(top, row)| {
+                    for (j, (&pv, &n)) in row.iter().zip(nm).enumerate() {
+                        top.push(n - 2.0 * pv, (offset + j) as u32);
+                    }
+                })
+        });
+        Ok(())
+    }
+
+    /// A group of IVF lists, each list `i` given as `prods[i]` (len(rows[i]), m_i), the products of
+    /// the queries `rows[i]` (distinct within a list) with the list's m_i vectors, whose squared norms
+    /// are `norms[i]` and whose ids in the base are `ids[i]`. The lists are ranked in parallel, each
+    /// into its own best k per query, which are then merged into the queries' best k.
+    fn push_l2_lists(
+        &mut self,
+        py: Python<'_>,
+        prods: Vec<PyReadonlyArray2<'_, f32>>,
+        norms: Vec<PyReadonlyArray1<'_, f32>>,
+        ids: Vec<PyReadonlyArray1<'_, i64>>,
+        rows: Vec<PyReadonlyArray1<'_, i64>>,
+    ) -> PyResult<()> {
+        let n = prods.len();
+        if norms.len() != n || ids.len() != n || rows.len() != n {
+            return Err(PyValueError::new_err(
+                "prods, norms, ids and rows must have one entry per list",
+            ));
+        }
+        let contiguous = || PyValueError::new_err("arrays must be C-contiguous");
+        let mut lists: Vec<ListProducts<'_>> = Vec::with_capacity(n);
+        let nq = self.tops.len();
+        for i in 0..n {
+            let (p, nm) = (
+                prods[i].as_slice().map_err(|_| contiguous())?,
+                norms[i].as_slice().map_err(|_| contiguous())?,
+            );
+            let (id, rs) = (
+                ids[i].as_slice().map_err(|_| contiguous())?,
+                rows[i].as_slice().map_err(|_| contiguous())?,
+            );
+            if id.len() != nm.len()
+                || p.len() != rs.len() * nm.len()
+                || rs.iter().any(|&r| r < 0 || r as usize >= nq)
+            {
+                return Err(PyValueError::new_err(
+                    "each prod must be (len(rows), m), ids (m,), rows in range",
+                ));
+            }
+            lists.push((p, nm, id, rs));
+        }
+        let k = self.tops.first().map_or(1, |t| t.dist.len());
+        let tops = &mut self.tops;
+        py.detach(|| {
+            let parts: Vec<Vec<(usize, TopK)>> = lists
+                .par_iter()
+                .map(|&(p, nm, id, rs)| {
+                    let m = nm.len();
+                    if m == 0 {
+                        return Vec::new();
+                    }
+                    rs.iter()
+                        .zip(p.chunks_exact(m))
+                        .map(|(&r, row)| {
+                            let mut t = TopK::new(k);
+                            for ((&pv, &nv), &i) in row.iter().zip(nm).zip(id) {
+                                t.push(nv - 2.0 * pv, i as u32);
+                            }
+                            (r as usize, t)
+                        })
+                        .collect()
+                })
+                .collect();
+            for (r, t) in parts.iter().flatten() {
+                for (&v, &i) in t.dist.iter().zip(&t.idx) {
+                    tops[*r].push(v, i);
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// The indices of each query's k nearest, flattened (nq * k), nearest first.
+    fn result(&self) -> Vec<u32> {
+        self.tops
+            .iter()
+            .flat_map(|t| t.idx.iter().copied())
+            .collect()
+    }
+}
+
+/// float16 values (their bits, a uint16 buffer) widened to f32 as the lists widen them: for
+/// check_kernels.py, which compares every finite float16 with NumPy's conversion.
+#[pyfunction]
+fn widen_f16(py: Python<'_>, bits: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
+    let h = PyBuffer::<u16>::get(bits)?.to_vec(py)?;
+    Ok(h.into_iter().map(widen_half).collect())
+}
+
+#[pymodule]
+fn siann_cpu(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<FlatIndex>()?;
+    m.add_class::<L2TopK>()?;
+    m.add_function(wrap_pyfunction!(widen_f16, m)?)?;
+    m.add_class::<IvfIndex>()
+}

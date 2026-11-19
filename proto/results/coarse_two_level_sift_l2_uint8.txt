@@ -1,0 +1,27 @@
+sift, l2: 1,000,000 vectors, 128 dimensions, 1,000 single queries; latency in microseconds (median)
+  call overhead (8 vectors, 1 centroid), split=1: 1
+  call overhead (8 vectors, 1 centroid), split=4: 7
+
+  two-level: 4000 lists in 64 groups (largest 132 lists), uint8 lists:
+    nprobe gprobe recall@10  split=1  split=4
+        16  exact     0.828      109       64
+        16      8     0.821       66       50
+        16     16     0.828       71       58
+        32  exact     0.921      160       80
+        32      8     0.906      121       67
+        32     16     0.920      127       75
+        48  exact     0.953      213       97
+        48      8     0.936      175       83
+        48     16     0.952      184       90
+
+  two-level: 8000 lists in 128 groups (largest 138 lists), uint8 lists:
+    nprobe gprobe recall@10  split=1  split=4
+        16  exact     0.772      129       78
+        16      8     0.757       41       44
+        16     16     0.771       46       51
+        32  exact     0.879      156       88
+        32      8     0.851       70       54
+        32     16     0.876       74       61
+        48  exact     0.918      184       96
+        48      8     0.882       99       62
+        48     16     0.913      104       73

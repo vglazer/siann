@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "siann"
+version = "0.0.1"
+description = "Silicon approximate nearest neighbors: fast similarity search on Apple silicon (placeholder; in development)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Victor Glazer" }]
+keywords = ["nearest-neighbor", "vector-search", "apple-silicon", "metal", "similarity"]
+classifiers = ["Development Status :: 1 - Planning", "Programming Language :: Python :: 3"]
+
+[project.urls]
+Homepage = "https://github.com/vglazer/siann"

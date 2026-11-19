@@ -1,0 +1,13 @@
+glove, l2: 1,183,514 vectors, 100 dimensions, 4000 lists; batches of 100 over 1,000 queries, and 10,000 at once
+
+  method                                   recall@10   q/s, 100  q/s, full
+  Rust IVF (query-major / list-major), nprobe 16     0.712     48,827    126,068
+  BLAS IVF, 1 workers, nprobe 16               0.712      7,565     57,724
+  BLAS IVF, 4 workers, nprobe 16               0.712      4,384     62,437
+    BLAS IVF, 1 workers, batch of 10,000: coarse and grouping 0.042 s, products 0.077 s, ranking 0.041 s
+    BLAS IVF, 4 workers, batch of 10,000: coarse and grouping 0.041 s, products 0.072 s, ranking 0.040 s
+  Rust IVF (query-major / list-major), nprobe 64     0.839     14,481     44,571
+  BLAS IVF, 1 workers, nprobe 64               0.839      2,007     18,901
+  BLAS IVF, 4 workers, nprobe 64               0.839      1,696     31,216
+    BLAS IVF, 1 workers, batch of 10,000: coarse and grouping 0.110 s, products 0.288 s, ranking 0.101 s
+    BLAS IVF, 4 workers, batch of 10,000: coarse and grouping 0.116 s, products 0.154 s, ranking 0.103 s

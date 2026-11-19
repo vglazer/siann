@@ -1,0 +1,8 @@
+sift: 1,000,000 vectors, 128 dimensions, 100 queries, k=10; NumPy's BLAS: accelerate
+  FAISS IndexFlatL2: 0.107 s
+
+  query tile base block     time  vs FAISS  multiply   top-k agreement
+         100      8,192   0.074s     1.44x    0.050s  0.024s    1.0000
+         100     16,384   0.061s     1.75x    0.047s  0.013s    1.0000
+         100     32,768   0.036s     3.00x    0.026s  0.008s    1.0000
+         100     65,536   0.032s     3.29x    0.026s  0.006s    1.0000

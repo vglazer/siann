@@ -1,0 +1,21 @@
+site_name: siann
+site_description: Fast similarity search on Apple silicon, and a benchmark of the Mac's compute backends
+repo_url: https://github.com/vglazer/siann
+docs_dir: docs/src        # filled by docs/prepare.sh from the pages at the top of the repository
+theme:
+  name: material
+nav:
+  - Home: README.md
+  - Architecture: ARCHITECTURE.md
+  - Algorithms: ALGORITHMS.md
+  - Backends: BACKENDS.md
+  - Datasets: DATASETS.md
+  - Benchmarks: BENCHMARKS.md
+  - All measurements: proto/RESULTS.md
+markdown_extensions:
+  - tables
+  - pymdownx.superfences:   # renders the Mermaid diagrams in ARCHITECTURE.md
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format

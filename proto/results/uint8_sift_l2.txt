@@ -1,0 +1,15 @@
+sift, l2: 1,000,000 vectors, 128 dimensions, 4000 lists; float16 changes 0.0% of coordinates (largest error 0.00e+00); batches: 1 and 100 over 1,000 queries, 10,000 at once
+
+  method                         recall@10  q/s, single   q/s, 100  q/s, full
+  Rust IVF float32, nprobe 16        0.840       12,170     44,513    115,856
+  Rust IVF float16, nprobe 16        0.840        7,494     69,768    103,565
+  Rust IVF uint8, nprobe 16          0.840       10,055     95,992    111,563
+  GPU IVF float32, nprobe 16         0.840                  74,390    521,517
+  GPU IVF float16, nprobe 16         0.840                 106,143    552,897
+  GPU IVF uint8, nprobe 16           0.840                 123,808    565,392
+  Rust IVF float32, nprobe 64        0.973        4,721     12,737     34,127
+  Rust IVF float16, nprobe 64        0.973        2,397     21,149     33,626
+  Rust IVF uint8, nprobe 64          0.973        3,491     36,318     37,895
+  GPU IVF float32, nprobe 64         0.973                  25,603    138,355
+  GPU IVF float16, nprobe 64         0.973                  40,531    146,908
+  GPU IVF uint8, nprobe 64           0.973                  51,821    150,856

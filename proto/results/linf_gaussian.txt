@@ -1,0 +1,14 @@
+gaussian: 200,000 base vectors, 128 dimensions, 1,000 queries, k=10, 16 CPU threads
+versions: faiss 1.16.0, mlx 0.32.4, siann_cpu (Rust), torch 2.15.0
+
+L1
+  faiss-cpu               0.334 s     1.00x FAISS  agreement 1.0000
+  siann-rust-cpu          0.095 s     3.51x FAISS  agreement 1.0000
+  mlx-custom-gpu          0.019 s    17.39x FAISS  agreement 1.0000
+  torch-custom-mps        0.020 s    16.57x FAISS  agreement 1.0000
+
+LINF
+  faiss-cpu               0.972 s     1.00x FAISS  agreement 1.0000
+  siann-rust-cpu          0.133 s     7.30x FAISS  agreement 1.0000
+  mlx-custom-gpu          0.020 s    48.99x FAISS  agreement 1.0000
+  torch-custom-mps        0.021 s    47.16x FAISS  agreement 1.0000

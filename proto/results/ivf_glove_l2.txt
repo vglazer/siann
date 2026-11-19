@@ -1,0 +1,38 @@
+glove, l2: 1,183,514 vectors, 100 dimensions; 4000 lists; 16 CPU threads; batches: 1 and 100 over 1,000 queries, 10,000 at once
+exact neighbors (Rust flat): 6.2 s
+GPU IVF built in 13.2 s
+Rust IVF built in 2.4 s (from the same centroids)
+FAISS IVF built in 3.7 s (from the same centroids)
+FAISS HNSW (M=32) built in 15.6 s
+
+  method                   recall@10  q/s, single   q/s, 100  q/s, full
+  Rust IVF, nprobe 4           0.538       23,801    139,458    188,878
+  Rust IVF list-major, 4       0.538        2,726     58,761    249,872
+  FAISS IVF, nprobe 4          0.538        3,620    101,832    128,197
+  GPU IVF, nprobe 4            0.538        2,334    153,617  1,226,166
+  Rust IVF, nprobe 16          0.712       13,729     51,481     55,884
+  Rust IVF list-major, 16      0.712        2,665     33,030    128,610
+  FAISS IVF, nprobe 16         0.712        2,826     48,248     56,438
+  GPU IVF, nprobe 16           0.712        1,237     74,940    531,637
+  Rust IVF, nprobe 32          0.780        8,959     27,113     29,641
+  Rust IVF list-major, 32      0.780        2,534     23,103     76,521
+  FAISS IVF, nprobe 32         0.780        2,386     26,614     30,260
+  GPU IVF, nprobe 32           0.780          483     34,337    206,607
+  Rust IVF, nprobe 64          0.839        5,314     14,848     15,623
+  Rust IVF list-major, 64      0.839        2,294     17,963     42,512
+  FAISS IVF, nprobe 64         0.839        1,919     14,616     15,773
+  GPU IVF, nprobe 64           0.839          455     27,062    146,998
+  Rust IVF, nprobe 128         0.890        3,074      7,941      8,200
+  Rust IVF list-major, 128     0.890        1,768     13,465     23,159
+  FAISS IVF, nprobe 128        0.890        1,348      7,858      8,165
+  GPU IVF, nprobe 128          0.890          225     13,800     46,409
+  FAISS HNSW, efSearch 16      0.607       15,322    117,640    158,646
+  FAISS HNSW, efSearch 32      0.699        9,013     77,801     97,848
+  FAISS HNSW, efSearch 64      0.781        5,402     47,519     56,891
+  FAISS HNSW, efSearch 128     0.845        3,005     27,960     32,304
+  FAISS HNSW, efSearch 256     0.892        1,623     16,004     17,721
+  PyTorch IVF, nprobe 4        0.538        1,527    113,244  1,212,133
+  PyTorch IVF, nprobe 16       0.712          972     63,334    528,399
+  PyTorch IVF, nprobe 32       0.780          439     31,808    206,191
+  PyTorch IVF, nprobe 64       0.839          415     25,521    148,687
+  PyTorch IVF, nprobe 128      0.890          216     13,550     47,317

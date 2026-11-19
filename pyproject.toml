@@ -1,0 +1,16 @@
+[project]
+name = "siann"
+version = "0.1.0"
+description = "Fast similarity search on Apple silicon, across metrics"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+proto = [
+    "faiss-cpu>=1.16.0",
+    "h5py>=3.16.0",
+    "jax-mps>=0.11.1",
+    "mlx>=0.32.4",
+    "numpy>=2.5.5",
+    "torch>=2.15.0",
+]

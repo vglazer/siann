@@ -1,0 +1,18 @@
+glove-raw, ip: 1,183,514 vectors, 100 dimensions, 1,000 queries, k=10; NumPy's BLAS: accelerate
+  FAISS IndexFlatIP: 0.256 s
+
+  query tile base block     time  vs FAISS  multiply   top-k agreement
+         512      8,192   0.273s     0.94x    0.182s  0.090s    1.0000
+  (sweep)
+         512      8,192   0.244s     1.05x    0.158s  0.094s    1.0000
+         512     16,384   0.237s     1.08x    0.170s  0.066s    1.0000
+         512     32,768   0.391s     0.66x    0.334s  0.054s    1.0000
+glove-raw, ip: 1,183,514 vectors, 100 dimensions, 100 queries, k=10; NumPy's BLAS: accelerate
+  FAISS IndexFlatIP: 0.108 s
+
+  query tile base block     time  vs FAISS  multiply   top-k agreement
+         100     32,768   0.040s     2.70x    0.026s  0.010s    1.0000
+  (sweep)
+         512      8,192   0.104s     1.04x    0.077s  0.028s    1.0000
+         512     16,384   0.069s     1.56x    0.052s  0.016s    1.0000
+         512     32,768   0.035s     3.11x    0.024s  0.010s    1.0000

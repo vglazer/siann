@@ -1,0 +1,10 @@
+[package]
+name = "siann"
+version = "0.0.1"
+edition = "2021"
+description = "Silicon approximate nearest neighbors: fast similarity search on Apple silicon (placeholder; in development)"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/vglazer/siann"
+keywords = ["nearest-neighbor", "vector-search", "apple-silicon", "metal", "similarity"]
+categories = ["algorithms", "science"]

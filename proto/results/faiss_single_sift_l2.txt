@@ -1,0 +1,66 @@
+sift, l2: 1,000,000 vectors, 128 dimensions, 4000 lists; 1,000 single queries; 'n threads' is split=n, a pool of n threads per query; latency in microseconds
+
+  method                             recall@10   median      p99
+  Rust IVF float32, 1 thread, nprobe 4     0.559       65       99
+  Rust IVF float32, 4 threads, nprobe 4     0.559       45       83
+  Rust IVF float16, 1 thread, nprobe 4     0.559       75      116
+  Rust IVF float16, 4 threads, nprobe 4     0.559       52       83
+  Rust IVF uint8, 1 thread, nprobe 4     0.559       67       93
+  Rust IVF uint8, 4 threads, nprobe 4     0.559       47       84
+  FAISS IVF float32, 1 thread, nprobe 4     0.559       49       77
+  FAISS IVF float32, 4 threads, nprobe 4     0.559      102      119
+  FAISS IVF float16, 1 thread, nprobe 4     0.559       48       69
+  FAISS IVF float16, 4 threads, nprobe 4     0.559      101      119
+  FAISS IVF uint8, 1 thread, nprobe 4     0.559       41       53
+  FAISS IVF uint8, 4 threads, nprobe 4     0.559      100      119
+  Rust IVF float32, 1 thread, nprobe 16     0.828       99      140
+  Rust IVF float32, 4 threads, nprobe 16     0.828       64       92
+  Rust IVF float16, 1 thread, nprobe 16     0.828      146      246
+  Rust IVF float16, 4 threads, nprobe 16     0.828       74      116
+  Rust IVF uint8, 1 thread, nprobe 16     0.828      111      178
+  Rust IVF uint8, 4 threads, nprobe 16     0.828       66      103
+  FAISS IVF float32, 1 thread, nprobe 16     0.828       85      124
+  FAISS IVF float32, 4 threads, nprobe 16     0.828      121      147
+  FAISS IVF float16, 1 thread, nprobe 16     0.828       87      130
+  FAISS IVF float16, 4 threads, nprobe 16     0.828      117      137
+  FAISS IVF uint8, 1 thread, nprobe 16     0.828       62       86
+  FAISS IVF uint8, 4 threads, nprobe 16     0.828      109      127
+  Rust IVF float32, 1 thread, nprobe 64     0.972      224      312
+  Rust IVF float32, 4 threads, nprobe 64     0.972      124      175
+  Rust IVF float16, 1 thread, nprobe 64     0.972      412      645
+  Rust IVF float16, 4 threads, nprobe 64     0.972      149      224
+  Rust IVF uint8, 1 thread, nprobe 64     0.972      286      439
+  Rust IVF uint8, 4 threads, nprobe 64     0.972      117      174
+  FAISS IVF float32, 1 thread, nprobe 64     0.972      223      317
+  FAISS IVF float32, 4 threads, nprobe 64     0.972      185      236
+  FAISS IVF float16, 1 thread, nprobe 64     0.972      228      326
+  FAISS IVF float16, 4 threads, nprobe 64     0.972      165      205
+  FAISS IVF uint8, 1 thread, nprobe 64     0.972      134      176
+  FAISS IVF uint8, 4 threads, nprobe 64     0.972      140      166
+  Rust IVF float32, 1 thread, nprobe 128     0.994      398      534
+  Rust IVF float32, 4 threads, nprobe 128     0.994      201      276
+  Rust IVF float16, 1 thread, nprobe 128     0.994      780     1112
+  Rust IVF float16, 4 threads, nprobe 128     0.994      252      358
+  Rust IVF uint8, 1 thread, nprobe 128     0.994      517      727
+  Rust IVF uint8, 4 threads, nprobe 128     0.994      181      256
+  FAISS IVF float32, 1 thread, nprobe 128     0.994      418      551
+  FAISS IVF float32, 4 threads, nprobe 128     0.994      280      352
+  FAISS IVF float16, 1 thread, nprobe 128     0.994      423      563
+  FAISS IVF float16, 4 threads, nprobe 128     0.994      233      284
+  FAISS IVF uint8, 1 thread, nprobe 128     0.994      243      332
+  FAISS IVF uint8, 4 threads, nprobe 128     0.994      185      217
+  FAISS HNSW float32, efSearch 16        0.842       53       81
+  FAISS HNSW float16, efSearch 16        0.842       43       69
+  FAISS HNSW uint8, efSearch 16          0.842       29       45
+  FAISS HNSW float32, efSearch 32        0.925       88      120
+  FAISS HNSW float16, efSearch 32        0.925       73      100
+  FAISS HNSW uint8, efSearch 32          0.925       51       71
+  FAISS HNSW float32, efSearch 64        0.974      160      203
+  FAISS HNSW float16, efSearch 64        0.974      129      171
+  FAISS HNSW uint8, efSearch 64          0.974       92      114
+  FAISS HNSW float32, efSearch 128       0.992      298      380
+  FAISS HNSW float16, efSearch 128       0.992      247      320
+  FAISS HNSW uint8, efSearch 128         0.992      179      217
+  FAISS HNSW float32, efSearch 256       0.999      550      709
+  FAISS HNSW float16, efSearch 256       0.999      463      582
+  FAISS HNSW uint8, efSearch 256         0.999      346      421

@@ -1,0 +1,6 @@
+glove-raw: 1,183,514 base vectors, 100 dimensions, 100 queries, k=10, 16 CPU threads
+  faiss-cpu               0.136 s     1.00x FAISS  agreement 1.0000
+  mlx-custom-gpu          0.008 s    17.71x FAISS  agreement 1.0000
+glove-raw: 1,183,514 base vectors, 100 dimensions, 10,000 queries, k=10, 16 CPU threads
+  faiss-cpu               1.985 s     1.00x FAISS  agreement 1.0000
+  mlx-custom-gpu          0.482 s     4.12x FAISS  agreement 1.0000

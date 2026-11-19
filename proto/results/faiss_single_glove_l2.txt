@@ -1,0 +1,45 @@
+glove, l2: 1,183,514 vectors, 100 dimensions, 4000 lists; 1,000 single queries; 'n threads' is split=n, a pool of n threads per query; latency in microseconds
+
+  method                             recall@10   median      p99
+  Rust IVF float32, 1 thread, nprobe 4     0.539       58       93
+  Rust IVF float32, 4 threads, nprobe 4     0.539       43       62
+  Rust IVF float16, 1 thread, nprobe 4     0.539       67       93
+  Rust IVF float16, 4 threads, nprobe 4     0.539       51       69
+  FAISS IVF float32, 1 thread, nprobe 4     0.539       62      104
+  FAISS IVF float32, 4 threads, nprobe 4     0.539      109      128
+  FAISS IVF float16, 1 thread, nprobe 4     0.539       54       70
+  FAISS IVF float16, 4 threads, nprobe 4     0.539      108      128
+  Rust IVF float32, 1 thread, nprobe 16     0.716       88      118
+  Rust IVF float32, 4 threads, nprobe 16     0.716       60       84
+  Rust IVF float16, 1 thread, nprobe 16     0.716      128      189
+  Rust IVF float16, 4 threads, nprobe 16     0.716       72      112
+  FAISS IVF float32, 1 thread, nprobe 16     0.716      104      146
+  FAISS IVF float32, 4 threads, nprobe 16     0.716      128      147
+  FAISS IVF float16, 1 thread, nprobe 16     0.716       88      117
+  FAISS IVF float16, 4 threads, nprobe 16     0.716      121      143
+  Rust IVF float32, 1 thread, nprobe 64     0.843      199      263
+  Rust IVF float32, 4 threads, nprobe 64     0.843      111      161
+  Rust IVF float16, 1 thread, nprobe 64     0.842      352      503
+  Rust IVF float16, 4 threads, nprobe 64     0.842      136      190
+  FAISS IVF float32, 1 thread, nprobe 64     0.843      264      357
+  FAISS IVF float32, 4 threads, nprobe 64     0.843      190      235
+  FAISS IVF float16, 1 thread, nprobe 64     0.842      217      292
+  FAISS IVF float16, 4 threads, nprobe 64     0.842      166      204
+  Rust IVF float32, 1 thread, nprobe 128     0.894      341      444
+  Rust IVF float32, 4 threads, nprobe 128     0.894      174      235
+  Rust IVF float16, 1 thread, nprobe 128     0.893      628      885
+  Rust IVF float16, 4 threads, nprobe 128     0.893      215      296
+  FAISS IVF float32, 1 thread, nprobe 128     0.894      473      633
+  FAISS IVF float32, 4 threads, nprobe 128     0.894      275      336
+  FAISS IVF float16, 1 thread, nprobe 128     0.893      382      499
+  FAISS IVF float16, 4 threads, nprobe 128     0.893      227      272
+  FAISS HNSW float32, efSearch 16        0.602       62      121
+  FAISS HNSW float16, efSearch 16        0.606       52       96
+  FAISS HNSW float32, efSearch 32        0.706      102      192
+  FAISS HNSW float16, efSearch 32        0.716       89      177
+  FAISS HNSW float32, efSearch 64        0.794      185      342
+  FAISS HNSW float16, efSearch 64        0.797      159      294
+  FAISS HNSW float32, efSearch 128       0.855      338      537
+  FAISS HNSW float16, efSearch 128       0.852      285      453
+  FAISS HNSW float32, efSearch 256       0.898      665     1040
+  FAISS HNSW float16, efSearch 256       0.894      544      756

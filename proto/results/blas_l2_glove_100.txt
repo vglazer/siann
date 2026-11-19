@@ -1,0 +1,8 @@
+glove: 1,183,514 vectors, 100 dimensions, 100 queries, k=10; NumPy's BLAS: accelerate
+  FAISS IndexFlatL2: 0.130 s
+
+  query tile base block     time  vs FAISS  multiply   top-k agreement
+         100      8,192   0.104s     1.25x    0.075s  0.028s    1.0000
+         100     16,384   0.067s     1.94x    0.050s  0.016s    1.0000
+         100     32,768   0.036s     3.56x    0.025s  0.010s    1.0000
+         100     65,536   0.033s     3.88x    0.026s  0.007s    1.0000

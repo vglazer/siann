@@ -1,0 +1,32 @@
+glove, l2: 1,183,514 vectors, 100 dimensions, 4000 lists; 1,000 single queries; 'n threads' is split=n, a pool of n threads per query; latency in microseconds
+
+  method                             recall@10   median      p99
+  Rust IVF float32, 1 thread, nprobe 4     0.539       57       82
+  Rust IVF float32, 4 threads, nprobe 4     0.539       43       61
+  Rust IVF float32, 8 threads, nprobe 4     0.539       68      112
+  Rust IVF float16, 1 thread, nprobe 4     0.539       69       97
+  Rust IVF float16, 4 threads, nprobe 4     0.539       50       71
+  Rust IVF float16, 8 threads, nprobe 4     0.539       76      118
+  Rust IVF float32, 1 thread, nprobe 16     0.716       88      120
+  Rust IVF float32, 4 threads, nprobe 16     0.716       60       84
+  Rust IVF float32, 8 threads, nprobe 16     0.716       90      131
+  Rust IVF float16, 1 thread, nprobe 16     0.716      133      201
+  Rust IVF float16, 4 threads, nprobe 16     0.716       71      101
+  Rust IVF float16, 8 threads, nprobe 16     0.716       93      140
+  Rust IVF float32, 1 thread, nprobe 64     0.843      203      287
+  Rust IVF float32, 4 threads, nprobe 64     0.843      111      159
+  Rust IVF float32, 8 threads, nprobe 64     0.843      137      186
+  Rust IVF float16, 1 thread, nprobe 64     0.842      350      500
+  Rust IVF float16, 4 threads, nprobe 64     0.842      135      186
+  Rust IVF float16, 8 threads, nprobe 64     0.842      131      209
+  Rust IVF float32, 1 thread, nprobe 128     0.894      338      446
+  Rust IVF float32, 4 threads, nprobe 128     0.894      176      232
+  Rust IVF float32, 8 threads, nprobe 128     0.894      203      266
+  Rust IVF float16, 1 thread, nprobe 128     0.893      631      885
+  Rust IVF float16, 4 threads, nprobe 128     0.893      214      302
+  Rust IVF float16, 8 threads, nprobe 128     0.893      175      290
+  FAISS HNSW, efSearch 16                0.603       61      120
+  FAISS HNSW, efSearch 32                0.711      103      197
+  FAISS HNSW, efSearch 64                0.795      188      344
+  FAISS HNSW, efSearch 128               0.856      346      540
+  FAISS HNSW, efSearch 256               0.899      649      915

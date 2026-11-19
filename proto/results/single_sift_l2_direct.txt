@@ -1,0 +1,19 @@
+sift, l2: 1,000,000 vectors, 128 dimensions, 4000 lists; 1,000 single queries; 'n threads' is split=n, a pool of n threads per query; latency in microseconds
+
+  method                             recall@10   median      p99
+  Rust IVF float32, 1 thread, nprobe 4     0.559       72      112
+  Rust IVF float32, 4 threads, nprobe 4     0.559       45       65
+  Rust IVF uint8, 1 thread, nprobe 4     0.559       63       88
+  Rust IVF uint8, 4 threads, nprobe 4     0.559       46       64
+  Rust IVF float32, 1 thread, nprobe 16     0.828       99      145
+  Rust IVF float32, 4 threads, nprobe 16     0.828       62       86
+  Rust IVF uint8, 1 thread, nprobe 16     0.828      104      165
+  Rust IVF uint8, 4 threads, nprobe 16     0.828       64       91
+  Rust IVF float32, 1 thread, nprobe 64     0.972      218      304
+  Rust IVF float32, 4 threads, nprobe 64     0.972      119      166
+  Rust IVF uint8, 1 thread, nprobe 64     0.972      263      398
+  Rust IVF uint8, 4 threads, nprobe 64     0.972      108      152
+  Rust IVF float32, 1 thread, nprobe 128     0.994      380      500
+  Rust IVF float32, 4 threads, nprobe 128     0.994      201      266
+  Rust IVF uint8, 1 thread, nprobe 128     0.994      478      674
+  Rust IVF uint8, 4 threads, nprobe 128     0.994      166      226

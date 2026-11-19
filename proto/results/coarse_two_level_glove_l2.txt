@@ -1,0 +1,27 @@
+glove, l2: 1,183,514 vectors, 100 dimensions, 1,000 single queries; latency in microseconds (median)
+  call overhead (8 vectors, 1 centroid), split=1: 1
+  call overhead (8 vectors, 1 centroid), split=4: 7
+
+  two-level: 4000 lists in 64 groups (largest 223 lists), float32 lists:
+    nprobe gprobe recall@10  split=1  split=4
+        16  exact     0.716       89       60
+        16      8     0.698       52       49
+        16     16     0.712       58       57
+        32  exact     0.784      125       78
+        32      8     0.761       92       66
+        32     16     0.777       96       74
+        64  exact     0.843      198      114
+        64      8     0.813      168      102
+        64     16     0.832      173      112
+
+  two-level: 8000 lists in 128 groups (largest 213 lists), float32 lists:
+    nprobe gprobe recall@10  split=1  split=4
+        16  exact     0.680      114       71
+        16      8     0.654       38       39
+        16     16     0.667       43       48
+        32  exact     0.748      136       84
+        32      8     0.718       62       52
+        32     16     0.733       68       62
+        64  exact     0.813      182      103
+        64      8     0.769      110       73
+        64     16     0.791      116       81

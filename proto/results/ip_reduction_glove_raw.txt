@@ -1,0 +1,26 @@
+glove-raw, inner product: 1,183,514 vectors, 100 dimensions (lengths 0.04 to 18.68), 4000 lists
+  lists assigned by ip: largest 35,725, 10 largest hold 21% of the vectors, 39% empty
+  lists assigned by l2: largest 2,066, 10 largest hold 2% of the vectors, 0% empty
+  extended vectors, lists by L2: largest 2,091, 10 largest hold 1.6%
+
+  method                             recall@10  q/s, single   q/s, 100  q/s, full
+  Rust IVF, extended, nprobe 4           0.031       23,417    191,741    330,879
+  GPU IVF, extended, nprobe 4            0.031        2,430    150,295  1,101,514
+  Rust IVF, extended, nprobe 16          0.092       21,980    184,113    218,287
+  GPU IVF, extended, nprobe 16           0.092        1,236    108,065    688,079
+  Rust IVF, extended, nprobe 32          0.152       19,684    166,258    143,679
+  GPU IVF, extended, nprobe 32           0.152          454     44,024    266,771
+  Rust IVF, extended, nprobe 64          0.230       16,165    138,599     83,838
+  GPU IVF, extended, nprobe 64           0.230          365     33,543    181,696
+  Rust IVF, extended, nprobe 128         0.337       11,463    106,430     45,532
+  GPU IVF, extended, nprobe 128          0.337          166     15,532     52,917
+  FAISS HNSW, inner product, ef 16       0.433       16,253    123,401    162,796
+  FAISS HNSW, extended L2, ef 16         0.163       18,204    134,972    199,104
+  FAISS HNSW, inner product, ef 32       0.560        8,860     79,204     94,858
+  FAISS HNSW, extended L2, ef 32         0.201       10,879     91,925    118,321
+  FAISS HNSW, inner product, ef 64       0.685        4,947     47,546     53,658
+  FAISS HNSW, extended L2, ef 64         0.241        6,322     58,672     69,311
+  FAISS HNSW, inner product, ef 128      0.798        2,847     26,668     28,972
+  FAISS HNSW, extended L2, ef 128        0.287        3,220     34,586     39,611
+  FAISS HNSW, inner product, ef 256      0.888        1,463     14,224     15,275
+  FAISS HNSW, extended L2, ef 256        0.336        1,931     19,931     22,011

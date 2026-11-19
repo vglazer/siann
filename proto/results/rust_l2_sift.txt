@@ -1,0 +1,6 @@
+sift: 1,000,000 base vectors, 128 dimensions, 1,000 queries, k=10, 16 CPU threads
+versions: faiss 1.16.0, siann_cpu (Rust)
+
+L2
+  faiss-cpu               0.446 s     1.00x FAISS  agreement 1.0000
+  siann-rust-cpu          0.630 s     0.71x FAISS  agreement 1.0000

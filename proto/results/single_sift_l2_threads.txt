@@ -1,0 +1,35 @@
+sift, l2: 1,000,000 vectors, 128 dimensions, 4000 lists; 1,000 single queries; 'n threads' is split=n, a pool of n threads per query; latency in microseconds
+
+  method                             recall@10   median      p99
+  Rust IVF float32, 1 thread, nprobe 4     0.559       65       99
+  Rust IVF float32, 2 threads, nprobe 4     0.559       54       76
+  Rust IVF float32, 4 threads, nprobe 4     0.559       45       67
+  Rust IVF float32, 8 threads, nprobe 4     0.559       69      112
+  Rust IVF uint8, 1 thread, nprobe 4     0.559       67       96
+  Rust IVF uint8, 2 threads, nprobe 4     0.559       55       76
+  Rust IVF uint8, 4 threads, nprobe 4     0.559       46       70
+  Rust IVF uint8, 8 threads, nprobe 4     0.559       72      116
+  Rust IVF float32, 1 thread, nprobe 16     0.828       96      139
+  Rust IVF float32, 2 threads, nprobe 16     0.828       71       99
+  Rust IVF float32, 4 threads, nprobe 16     0.828       62       89
+  Rust IVF float32, 8 threads, nprobe 16     0.828       92      134
+  Rust IVF uint8, 1 thread, nprobe 16     0.828      112      174
+  Rust IVF uint8, 2 threads, nprobe 16     0.828       80      123
+  Rust IVF uint8, 4 threads, nprobe 16     0.828       64       97
+  Rust IVF uint8, 8 threads, nprobe 16     0.828       90      135
+  Rust IVF float32, 1 thread, nprobe 64     0.972      225      315
+  Rust IVF float32, 2 threads, nprobe 64     0.972      143      201
+  Rust IVF float32, 4 threads, nprobe 64     0.972      122      174
+  Rust IVF float32, 8 threads, nprobe 64     0.972      149      213
+  Rust IVF uint8, 1 thread, nprobe 64     0.972      284      433
+  Rust IVF uint8, 2 threads, nprobe 64     0.972      173      262
+  Rust IVF uint8, 4 threads, nprobe 64     0.972      115      166
+  Rust IVF uint8, 8 threads, nprobe 64     0.972      121      182
+  Rust IVF float32, 1 thread, nprobe 128     0.994      394      537
+  Rust IVF float32, 2 threads, nprobe 128     0.994      234      320
+  Rust IVF float32, 4 threads, nprobe 128     0.994      198      273
+  Rust IVF float32, 8 threads, nprobe 128     0.994      227      306
+  Rust IVF uint8, 1 thread, nprobe 128     0.994      518      730
+  Rust IVF uint8, 2 threads, nprobe 128     0.994      291      422
+  Rust IVF uint8, 4 threads, nprobe 128     0.994      179      252
+  Rust IVF uint8, 8 threads, nprobe 128     0.994      154      267
