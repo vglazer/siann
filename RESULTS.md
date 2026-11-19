@@ -1,3 +1,14 @@
+# Results
+
+*Part of the siann documentation: [README](README.md), [ALGORITHMS](ALGORITHMS.md),
+[ARCHITECTURE](ARCHITECTURE.md), [BACKENDS](BACKENDS.md), [DATASETS](DATASETS.md),
+[BENCHMARKS](BENCHMARKS.md).*
+
+Every measurement behind siann's documentation, in the order it was made, with the script that
+produced it and what it showed, including the ideas that were tried and dropped. The scripts named
+below are in [proto/](proto/) and run from there (`uv run --no-sync --group proto python <script>`);
+their raw output is in [proto/results/](proto/results/).
+
 # First measurements: the GPU against FAISS
 
 M3 Max (16 cores, 400 GB/s), MLX 0.32.4, FAISS 1.16 (faiss-cpu, 16 threads). Synthetic Gaussian
@@ -332,7 +343,7 @@ list-major scan above. Raw output: `results/ivf_sift_l2.txt`, `results/ivf_sift_
   by memory; at nprobe 4, Rust is 1.3-1.5 times faster) and well behind it on single queries.
 
 **What this means for the recommendation** (first draft; the final version, from the rerun's
-numbers, is in [BENCHMARKS.md](../BENCHMARKS.md)):
+numbers, is in [BENCHMARKS](BENCHMARKS.md)):
 
 | Workload | Best choice measured |
 | --- | --- |

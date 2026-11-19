@@ -1,5 +1,7 @@
 # siann
 
+[![Documentation](https://img.shields.io/readthedocs/siann/latest)](https://siann.readthedocs.io)
+
 *Pronounced like "cyan".*
 
 **si**licon **a**pproximate **n**earest **n**eighbors: fast similarity search on Apple silicon, for
@@ -52,4 +54,4 @@ search:
 | [BACKENDS](BACKENDS.md) | MLX, PyTorch MPS, jax-mps, FAISS and siann's Rust code: what each offers, and their pitfalls |
 | [DATASETS](DATASETS.md) | SIFT1M, GloVe-100 and Gaussian vectors: sources, preparation and quirks |
 | [BENCHMARKS](BENCHMARKS.md) | Which backend to use for each workload, and the measurements behind it |
-| [proto/RESULTS.md](proto/RESULTS.md) | Every measurement, with the script that produced it |
+| [RESULTS](RESULTS.md) | Every measurement, with the script that produced it |

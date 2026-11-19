@@ -2,14 +2,14 @@
 
 *Part of the siann documentation: [README](README.md), [ALGORITHMS](ALGORITHMS.md),
 [ARCHITECTURE](ARCHITECTURE.md), [BACKENDS](BACKENDS.md), [DATASETS](DATASETS.md), [BENCHMARKS](BENCHMARKS.md); measurements in
-[proto/RESULTS.md](proto/RESULTS.md).*
+[RESULTS](RESULTS.md).*
 
 siann answers k-nearest-neighbor queries: given a set of base vectors and a query, find the k base
 vectors closest to the query. It does this exactly, by comparing the query with every base vector,
 or approximately, with an IVF index that compares it only with the vectors in a few clusters. This
 page describes how each search works, on the GPU and on the CPU, and the methods that were tried and
 dropped. All the numbers below are from an Apple M3 Max, and each comes from a script in `proto/`
-named in [proto/RESULTS.md](proto/RESULTS.md).
+named in [RESULTS](RESULTS.md).
 
 ## Distances
 

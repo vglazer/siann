@@ -2,7 +2,7 @@
 
 *Part of the siann documentation: [README](README.md), [ALGORITHMS](ALGORITHMS.md),
 [ARCHITECTURE](ARCHITECTURE.md), [BACKENDS](BACKENDS.md), [DATASETS](DATASETS.md), [BENCHMARKS](BENCHMARKS.md); every measurement,
-with its script, in [proto/RESULTS.md](proto/RESULTS.md).*
+with its script, in [RESULTS](RESULTS.md).*
 
 The question: for each kind of similarity search on a Mac, which backend is fastest, and by how
 much? This page gives the answer and the main measurements behind it. Every number comes from a
@@ -46,7 +46,7 @@ nearer 100 on GloVe, where they are already level at 100 for recall 0.84.
 ## Exact search
 
 1,000 queries; the speed-up over FAISS's flat index on the CPU. From `proto/backends.py --dataset`;
-see [proto/RESULTS.md](proto/RESULTS.md), "Real data".
+see [RESULTS](RESULTS.md), "Real data".
 
 | Backend | SIFT L2 | SIFT L1 | GloVe L2 (cosine) | GloVe L1 |
 | --- | ---: | ---: | ---: | ---: |
@@ -77,13 +77,13 @@ one thread, as HNSW's do. From `proto/ivf_cpu.py` (raw output in `proto/results/
 
 The GPU IVF column is MLX's; PyTorch's is within 3% of it on batches of 10,000 and up to a third
 slower on smaller calls. FAISS's own IVF with the same lists is level with siann's Rust query-major
-scan on batches and 1.3-6.6 times slower on single queries (see [proto/RESULTS.md](proto/RESULTS.md)).
+scan on batches and 1.3-6.6 times slower on single queries (see [RESULTS](RESULTS.md)).
 
 ## L-infinity, compressed lists, single queries and inner product
 
 These come from shorter runs than the tables above (fewer settings per dataset; L-infinity on random
 vectors only), and the recommendation table above does not include them, except for exact L2 on the
-CPU. Details in [proto/RESULTS.md](proto/RESULTS.md).
+CPU. Details in [RESULTS](RESULTS.md).
 
 **L-infinity, exact search** (200,000 Gaussian vectors, 1,000 queries): siann's GPU kernels 47-49
 times FAISS, and its Rust kernel 7.3 times. FAISS's L-infinity takes three times its L1 time; siann's
@@ -146,9 +146,9 @@ thread, because it rounds the query to integers and computes in integer arithmet
 integer queries, approximate for others). siann now has an exact integer path for integer queries and
 is level with it (147 against 136 microseconds on SIFT at nprobe 64); with the two-level coarse step,
 compressed HNSW's single-query lead on SIFT is 1.3-1.45 times on one thread, and siann leads with 4
-threads from recall 0.97 (`proto/RESULTS.md`, "An integer path for byte lists").
+threads from recall 0.97 ([RESULTS](RESULTS.md), "An integer path for byte lists").
 
-**Inner product** (raw GloVe-100, unnormalized, lengths 0.04 to 18.7; `proto/RESULTS.md`, "Inner
+**Inner product** (raw GloVe-100, unnormalized, lengths 0.04 to 18.7; [RESULTS](RESULTS.md), "Inner
 product"). Exact search on the GPU is 4.1-17.7 times FAISS's IndexFlatIP (5.9 times on 1,000 queries);
 the CPU BLAS path is level with it on 1,000 queries and 2.7 times on 100. IVF fails on this data (recall
 below 0.65, for FAISS's IVF too), and FAISS's HNSW with inner product reaches recall 0.888 at about

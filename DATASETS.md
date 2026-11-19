@@ -2,7 +2,7 @@
 
 *Part of the siann documentation: [README](README.md), [ALGORITHMS](ALGORITHMS.md),
 [ARCHITECTURE](ARCHITECTURE.md), [BACKENDS](BACKENDS.md), [DATASETS](DATASETS.md), [BENCHMARKS](BENCHMARKS.md); measurements in
-[proto/RESULTS.md](proto/RESULTS.md).*
+[RESULTS](RESULTS.md).*
 
 siann is measured on two standard real datasets from
 [ann-benchmarks](https://github.com/erikbern/ann-benchmarks), the usual benchmark suite for
@@ -78,4 +78,4 @@ makes them the dataset for timing at sizes and dimensions the real ones lack.
 Random vectors are the hardest case for approximate search: in high dimensions every point is
 nearly equally far from every other, so there is no cluster structure for IVF or a graph to
 exploit. They are used for exact search only, where structure does not matter and the timings match
-the real datasets' (see [proto/RESULTS.md](proto/RESULTS.md), "Real data").
+the real datasets' (see [RESULTS](RESULTS.md), "Real data").

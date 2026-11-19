@@ -2,7 +2,7 @@
 
 *Part of the siann documentation: [README](README.md), [ALGORITHMS](ALGORITHMS.md),
 [ARCHITECTURE](ARCHITECTURE.md), [BACKENDS](BACKENDS.md), [DATASETS](DATASETS.md),
-[BENCHMARKS](BENCHMARKS.md); measurements in [proto/RESULTS.md](proto/RESULTS.md).*
+[BENCHMARKS](BENCHMARKS.md); measurements in [RESULTS](RESULTS.md).*
 
 siann is fast similarity search on Apple silicon, and it is often several times faster than FAISS on
 the same Mac with the same results. People reasonably ask how. The answer is not a cleverer
@@ -12,7 +12,7 @@ describes those choices, how the pieces fit together, and where FAISS stays ahea
 
 The code described here is in [proto/](proto/). Every number below is from an
 Apple M3 Max against FAISS 1.16 on the CPU, from a script named in
-[proto/RESULTS.md](proto/RESULTS.md).
+[RESULTS](RESULTS.md).
 
 ## How the pieces fit together
 
@@ -223,4 +223,4 @@ always the baseline, including FAISS's compressed indexes, and this is where it 
 - **Safe Rust.** No `unsafe` in siann's code; the bar for it is high, and so far every case had a safe
   alternative (NumPy for BLAS calls, a compare-and-select for the maximum, a buffer for float16).
 - **Every number from a committed script,** with its raw output in `proto/results/` and its finding in
-  [proto/RESULTS.md](proto/RESULTS.md), including the ideas that were tried and dropped.
+  [RESULTS](RESULTS.md), including the ideas that were tried and dropped.

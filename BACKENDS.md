@@ -2,7 +2,7 @@
 
 *Part of the siann documentation: [README](README.md), [ALGORITHMS](ALGORITHMS.md),
 [ARCHITECTURE](ARCHITECTURE.md), [BACKENDS](BACKENDS.md), [DATASETS](DATASETS.md), [BENCHMARKS](BENCHMARKS.md); measurements in
-[proto/RESULTS.md](proto/RESULTS.md).*
+[RESULTS](RESULTS.md).*
 
 A Mac has several ways to run numerical code on its GPU and CPU. siann measures each of them on the
 same searches, with the same algorithms, and checks every result against exact search. This page
