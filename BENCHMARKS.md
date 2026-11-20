@@ -29,6 +29,9 @@ comparison, and [ARCHITECTURE](ARCHITECTURE.md) explains where the speed comes f
   "FAISS's BLAS threshold"), and its compressed indexes need dimensions in multiples of 8 (see "List
   storage"); every comparison sets both. FAISS's Metal GPU path is not run: with 10,000 queries it
   fails and crashes the machine (with 1,000, on exact L2, it is 2.6 times slower than siann's GPU).
+- **Other GPU libraries:** [mlxvs](https://github.com/mikepapadim/mlxvs), which runs NVIDIA cuVS's
+  methods (CAGRA graphs, IVF variants, exact search; L2, cosine and inner product) on MLX, is not part
+  of these comparisons, so siann's GPU results are against FAISS on the CPU only.
 
 ## Which to use
 

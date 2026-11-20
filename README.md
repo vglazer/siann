@@ -17,7 +17,9 @@ The fastest path for each workload, measured on an Apple M3 Max against FAISS 1.
 comparison against FAISS's strongest option for the case (its compressed indexes included), with
 exact search returning exactly FAISS's neighbors and approximate search compared at matched recall.
 "SIFT-like" and "GloVe-like" refer to the two real datasets measured, SIFT1M (image descriptors) and
-GloVe-100 (word embeddings), which favor different methods ([DATASETS](DATASETS.md)):
+GloVe-100 (word embeddings), which favor different methods ([DATASETS](DATASETS.md)). On the GPU,
+[mlxvs](https://github.com/mikepapadim/mlxvs) (NVIDIA cuVS's methods, CAGRA graphs among them, on MLX;
+L2, cosine and inner product) and FAISS's Metal backend are not part of these comparisons.
 
 | Workload | Use | Against FAISS's strongest option |
 | --- | --- | --- |
