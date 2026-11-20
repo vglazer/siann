@@ -217,7 +217,7 @@ class GpuIVF:
                 grid=(threads, nq, 1), threadgroup=(min(threads, 256), 1, 1),
                 output_shapes=[(nq * threads * k,), (nq * threads * k,)], output_dtypes=[mx.float32, mx.int32])
             local = _finish(vals, idx, nq, k)
-        result = mx.take(self.ids, mx.maximum(local, 0))
+        result = mx.where(local >= 0, mx.take(self.ids, mx.maximum(local, 0)), -1)   # -1: fewer than k found
         mx.eval(result)
         return np.array(result)
 
@@ -243,8 +243,9 @@ def search_list_major(self, xq: np.ndarray, k: int, nprobe: int, select: str = "
         grid=(256 * nlist, 1, 1), threadgroup=(256, 1, 1),
         output_shapes=[(nq * nprobe * lanes * k,), (nq * nprobe * lanes * k,)], output_dtypes=[mx.float32, mx.int32])
     pick = select_k(vals.reshape(nq, -1), k, threads=64)
-    local = mx.take_along_axis(idx.reshape(nq, -1), pick, axis=1)
-    result = mx.take(self.ids, mx.maximum(local, 0))
+    # pick is -1 where fewer than k candidates were found; take_along_axis would read it as the last column
+    local = mx.where(pick >= 0, mx.take_along_axis(idx.reshape(nq, -1), mx.maximum(pick, 0), axis=1), -1)
+    result = mx.where(local >= 0, mx.take(self.ids, mx.maximum(local, 0)), -1)   # -1: fewer than k found
     mx.eval(result)
     return np.array(result)
 

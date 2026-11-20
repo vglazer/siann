@@ -261,10 +261,12 @@ def distances(xb: np.ndarray, xq: np.ndarray, idx: np.ndarray, metric: str) -> n
 def agreement(xb, xq, ours: np.ndarray, ref: np.ndarray, metric: str) -> float:
     """The fraction of returned neighbors no farther than the reference's k-th nearest. Unlike
     comparing indices, this counts a tie broken differently (common on SIFT's integer data) as
-    correct."""
+    correct. A missing neighbor (-1, or an id past the base, where fewer than k were found) is a miss."""
+    ours = np.asarray(ours, dtype=np.int64)
+    valid = (ours >= 0) & (ours < len(xb))
     kth = distances(xb, xq, ref, metric).max(axis=1, keepdims=True)
-    mine = distances(xb, xq, ours, metric)
-    return float(np.mean(mine <= kth + 1e-6 * np.abs(kth) + 1e-9))
+    mine = distances(xb, xq, np.where(valid, ours, 0), metric)
+    return float(np.mean(valid & (mine <= kth + 1e-6 * np.abs(kth) + 1e-9)))
 
 
 def main() -> None:

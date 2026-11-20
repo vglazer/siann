@@ -52,6 +52,14 @@ def check() -> bool:
                 res[f"query-major {m}{tag}"] = same(index.search(qs, k, nlist), want)
                 res[f"list-major {m}{tag}"] = same(index.search_list_major(qs, k, nlist), want)
                 res[f"scans agree {m}{tag}"] = same(index.search(qs, k, 3), index.search_list_major(qs, k, 3))
+        # one probed list of a few vectors holds fewer than k: the missing neighbors are -1, after the
+        # found ones, which are distinct, and both scans agree
+        for m in METRICS:
+            index = GpuIVF(x[:200], 100, m, "float32")
+            qm, lm = index.search(q, 10, 1), index.search_list_major(q, 10, 1)   # k = 10, more than a list holds
+            found_first = all(np.all(np.diff((r < 0).astype(int)) >= 0) for r in qm)
+            distinct = all(len(set(r[r >= 0])) == int((r >= 0).sum()) for r in qm)
+            res[f"fewer than k: -1 {m}"] = bool((qm < 0).any() and found_first and distinct and np.array_equal(qm, lm))
         ok &= all(res.values())
         print(f"mlx ivf n={n} d={d} q={nq} k={k}: " + ", ".join(f"{name} {r}" for name, r in res.items()))
     return ok

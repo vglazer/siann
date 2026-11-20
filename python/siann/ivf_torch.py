@@ -183,14 +183,14 @@ class TorchIVF:
             _lib(SCAN_MERGED, self.metric, Q=nq, D=d, P=nprobe, T=threads, K=k).ivf_scan_merged(
                 q, self.x, self.offsets, probes, vals, idx, threads=[threads, nq], group_size=[threads, 1])
             local = idx.view(nq, k)
-            return self.ids[local.clamp(min=0).long()].cpu().numpy()
+            return torch.where(local >= 0, self.ids[local.clamp(min=0).long()], -1).cpu().numpy()   # -1: fewer than k found
         vals = torch.empty(nq * threads * k, device="mps")
         idx = torch.empty(nq * threads * k, device="mps", dtype=torch.int32)
         _lib(SCAN, self.metric, Q=nq, D=d, P=nprobe, T=threads, K=k).ivf_scan(
             q, self.x, self.offsets, probes, vals, idx, threads=[threads, nq], group_size=[min(threads, 256), 1])
         best = torch.topk(vals.view(nq, -1), k, dim=1, largest=False, sorted=True).indices
         local = torch.gather(idx.view(nq, -1), 1, best)
-        return self.ids[local.clamp(min=0).long()].cpu().numpy()
+        return torch.where(local >= 0, self.ids[local.clamp(min=0).long()], -1).cpu().numpy()   # -1: fewer than k found
 
     def search_list_major(self, xq: np.ndarray, k: int, nprobe: int, select: str = "auto") -> np.ndarray:
         """The list-major scan: queries grouped by list on the GPU, one threadgroup per list. select "auto" is
@@ -210,5 +210,6 @@ class TorchIVF:
             q, self.x, self.offsets, pair_ids, first, counts, vals, idx,
             threads=[256 * self.nlist], group_size=[256])
         pick = tk.select_k(vals.view(nq, -1), k, threads=64)
-        local = torch.gather(idx.view(nq, -1), 1, pick.long())
-        return self.ids[local.clamp(min=0).long()].cpu().numpy()
+        pick = pick.long()   # -1 where fewer than k candidates were found
+        local = torch.where(pick >= 0, torch.gather(idx.view(nq, -1), 1, pick.clamp(min=0)), -1)
+        return torch.where(local >= 0, self.ids[local.clamp(min=0).long()], -1).cpu().numpy()   # -1: fewer than k found
