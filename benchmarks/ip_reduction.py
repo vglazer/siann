@@ -40,7 +40,7 @@ def extend(xb: np.ndarray, xq: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset", default="glove-raw", choices=["sift", "glove", "glove-raw"])
+    p.add_argument("--dataset", default="glove-raw", choices=["sift", "glove", "glove-raw", "music100"])
     p.add_argument("--nlist", type=int, default=4000)
     p.add_argument("--queries", type=int, default=10_000)
     p.add_argument("--small", type=int, default=1000)

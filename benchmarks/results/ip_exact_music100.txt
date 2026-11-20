@@ -1,0 +1,6 @@
+music100: 1,000,000 base vectors, 100 dimensions, 1,000 queries, k=10, 16 CPU threads
+versions: faiss 1.16.0, mlx 0.32.4
+
+IP
+  faiss-cpu               0.247 s     1.00x FAISS  agreement 1.0000
+  mlx-custom-gpu          0.039 s     6.33x FAISS  agreement 1.0000

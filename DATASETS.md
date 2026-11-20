@@ -4,19 +4,22 @@
 
 siann is measured on two standard real datasets from
 [ann-benchmarks](https://github.com/erikbern/ann-benchmarks), the usual benchmark suite for
-approximate nearest-neighbor search, and on random Gaussian vectors. `benchmarks/datasets.py` loads the
-real ones from `data/` (not committed), which holds the ann-benchmarks HDF5 files
-(`sift-128-euclidean.hdf5`, `glove-100-angular.hdf5`) as published on the ann-benchmarks site.
+approximate nearest-neighbor search, on Music-100, the standard benchmark for maximum inner product
+search, and on random Gaussian vectors. `benchmarks/datasets.py` loads the real ones from `data/` (not
+committed): the ann-benchmarks HDF5 files (`sift-128-euclidean.hdf5`, `glove-100-angular.hdf5`) as
+published on the ann-benchmarks site, and Music-100's raw files in `data/music-100/`. The figures below
+come from `benchmarks/dataset_stats.py`.
 
 | Dataset | Base vectors | Queries | Dimensions | Metric | Values |
 | --- | ---: | ---: | ---: | --- | --- |
 | SIFT1M | 1,000,000 | 10,000 | 128 | L2 (and L1) | integers, 0 to 218 |
 | GloVe-100 | 1,183,514 | 10,000 | 100 | cosine | real numbers, -6.5 to 6.0 |
+| Music-100 | 1,000,000 | 10,000 | 100 | inner product | real numbers, -0.70 to 0.75 |
 | Gaussian | 1,000,000 by default | 1,000 by default | 128 by default | L2, L1 | standard normal |
 
-The HDF5 files also hold each query's 100 true nearest neighbors in the dataset's own metric. siann
-computes its own ground truth by exact search instead, because it also searches in L1, for which the
-files have none.
+The HDF5 files (and Music-100's) also come with each query's true nearest neighbors in the dataset's
+own metric. siann computes its own ground truth by exact search instead, because it also searches in
+L1, for which the files have none.
 
 ## SIFT1M
 
@@ -66,6 +69,26 @@ The same GloVe vectors without the normalization, for inner product. Their lengt
 18.7, so ranking by inner product differs from ranking by cosine: long vectors dominate every query's
 results. That makes it a hard case for maximum inner product search, where an IVF's lists, assigned
 by inner product, become badly unbalanced (see [BENCHMARKS](BENCHMARKS.md#inner-product)).
+
+## Music-100 (`music100`)
+
+A million 100-dimensional vectors and 10,000 queries made to be compared by inner product, introduced
+with Morozov and Babenko's ip-nsw ("Non-metric Similarity Graphs for Maximum Inner Product Search",
+NeurIPS 2018) and loaded by FAISS's own benchmarks (`DatasetMusic100`). The files are on Yandex Disk,
+linked from the [ip-nsw repository](https://github.com/stanis-morozov/ip-nsw#dataset)
+(`database_music100.bin` and `query_music100.bin`, raw float32, 400 MB and 4 MB); the repository
+states no license.
+
+- **The lengths are uneven,** as inner-product data's often are: base vectors run from 0.017 to 2.12
+  long (median 0.73, 99th percentile 1.43), the longest 2.9 times the median, close to raw GloVe's 3.4.
+  Queries run from 0.0001 to 5.0 (median 0.69). A query's length scales every inner product it takes
+  by the same amount, so it does not change its ranking.
+- **An IVF's lists, assigned by inner product, are unbalanced** (22% empty), though less than raw
+  GloVe's, and an IVF still reaches recall 0.98; FAISS's HNSW is faster (see
+  [BENCHMARKS](BENCHMARKS.md#inner-product)).
+- **Not integers,** so uint8 lists do not apply; no zero-length vectors.
+- **100 dimensions,** as GloVe: not a multiple of the kernels' 16-dimension tiles or of the 8 FAISS's
+  compressed indexes need.
 
 ## Gaussian vectors
 

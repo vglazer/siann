@@ -60,7 +60,9 @@ flowchart TB
     where -- no --> metric{"metric?"}
     metric -- "L2, cosine, inner product" --> cb["NumPy BLAS + Rust top-k"]
     metric -- "L1, L-infinity" --> cr["Rust blocked kernel"]
-    kind -- approximate --> size{"batch size?"}
+    kind -- approximate --> ip{"inner<br/>product?"}
+    ip -- yes --> hip["FAISS HNSW;<br/>GPU exact search for recall 1.0"]
+    ip -- "no: L2, cosine, L1" --> size{"batch size?"}
     size -- "thousands" --> gl["GPU IVF, list-major scan"]
     size -- "about 100" --> hn["GPU IVF on GloVe-like data;<br/>on SIFT-like data, FAISS HNSW below recall 0.99,<br/>GPU IVF from 0.99"]
     size -- "one query" --> lat{"latency or<br/>throughput?"}
@@ -172,6 +174,11 @@ wins:
   and compressing its vectors speeds it up 1.6-2.3 times, as much as it speeds up the IVF. Compressed
   HNSW leads in batches of about 100 on SIFT below recall 0.99 (1.2-1.5 times) and on single queries on
   one thread (1.3-1.45 times); with 4 threads per query siann leads from recall 0.97.
+- **HNSW for inner product.** An IVF assigned by inner product has unbalanced lists (centroids
+  pointing towards long vectors attract much of the data): on Music-100, the standard inner-product
+  benchmark, FAISS's HNSW is 2.6-4.5 times siann's IVF at matched recall, and on raw GloVe the IVF fails
+  outright. siann's exact search on the GPU, 4-18 times FAISS's exact search, is the choice where recall
+  must be 1.0.
 - **FAISS's byte lists round the query.** For uint8 lists, FAISS rounds the query to integers and
   computes in integer arithmetic: exact for integer queries such as SIFT's, approximate for others.
   siann's integer path is level with it on one thread and applies to integer queries only, so it is

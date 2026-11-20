@@ -24,12 +24,12 @@ L2, cosine and inner product) and FAISS's Metal backend are not part of these co
 | --- | --- | --- |
 | Exact search, batches, GPU available | **siann's GPU kernels** (MLX) | L2 and cosine 8 times FAISS; L1 18-25 times; L-infinity 47-49 times (random vectors); inner product 4-18 times |
 | Exact search on the CPU, L1 or L-infinity | **siann's Rust kernel** | 3.8-4.3 times (L1), 7.3 times (L-infinity) |
-| Exact search on the CPU, L2, cosine or inner product | **siann's BLAS path** (NumPy's multiply, Accelerate, then siann's Rust top-k) | L2 and cosine 1.7-1.9 times on 1,000 queries, 3.0-3.6 times on 100; inner product level to 2.7 times |
+| Exact search on the CPU, L2, cosine or inner product | **siann's BLAS path** (NumPy's multiply, Accelerate, then siann's Rust top-k) | L2 and cosine 1.7-1.9 times on 1,000 queries, 3.0-3.6 times on 100; inner product 0.9-2.7 times |
 | Approximate, large batches (thousands) | **siann's GPU IVF, list-major** | GloVe: 5.0 times HNSW; SIFT: 1.2-1.3 times |
 | Approximate, batches of about 100 | GloVe-like data: **siann's GPU IVF**; SIFT-like data: **FAISS HNSW** below recall 0.99, **siann's GPU IVF** from 0.99 | GloVe: 1.2-1.8 times HNSW; SIFT: HNSW 1.2-1.5 times faster below 0.99, level at 0.99, siann 1.7 times at 0.997 |
 | Approximate, single queries, one core each (throughput) | GloVe-like data: **siann's Rust IVF**, two-level coarse step; SIFT-like data: **FAISS HNSW** | GloVe: 1.5-1.65 times HNSW; SIFT: HNSW 1.3-1.45 times faster |
 | Approximate, single query, lowest latency with cores to spare | **siann's Rust IVF, split over 4 threads**, except SIFT-like data below recall 0.97 | GloVe: 1.5-3.1 times HNSW; SIFT: 1.2-1.6 times from recall 0.97 |
-| Inner product on vectors of uneven length | **siann's exact search on the GPU** (an IVF fails there) | recall 1.0 at 0.88-1.36 times the speed of FAISS's HNSW at recall 0.89 |
+| Approximate search by inner product | **FAISS HNSW** (inner product); **siann's exact search on the GPU** where recall must be 1.0, or where an IVF fails (vectors of very uneven length) | Music-100: HNSW 2.6-4.5 times siann's IVF at matched recall; siann's exact GPU search 0.57 times HNSW at its recall 0.986. Raw GloVe: siann's exact search 0.88-1.36 times HNSW at its recall 0.89 |
 
 For approximate search, store the lists as bytes when every coordinate is an integer from 0 to 255
 (lossless), and otherwise as float16 for batches on the GPU (recall moves by at most 0.001) and float32
@@ -37,14 +37,14 @@ for single queries. On SIFT-like data, HNSW and the GPU cross over between 100 a
 batch below recall 0.99, and at about 100 from 0.99; on GloVe-like data, below 100.
 
 **How much faster, exact search** (the speed-up over FAISS's flat index; 1,000 queries; L-infinity on
-200,000 Gaussian vectors, inner product on raw GloVe-100):
+200,000 Gaussian vectors, inner product on raw GloVe-100 and Music-100):
 
 | Metric | siann's GPU | siann's CPU |
 | --- | ---: | ---: |
 | L-infinity | **47-49x** (random vectors only) | **7.3x** |
 | L1 | **18-25x** | **3.8-4.3x** |
 | L2 and cosine | **8x** | 1.7-3.6x |
-| Inner product | **4-18x** | level to 2.7x |
+| Inner product | **4-18x** | 0.9-2.7x |
 
 L1 and L-infinity have no matrix-multiply form, so FAISS computes them with plain loops (its L-infinity
 takes three times as long as its L1), where siann runs kernels laid out like a matrix multiply. L2,

@@ -176,11 +176,13 @@ Each of these is measured; the scripts are named in parentheses, and their outpu
   reduction it may reorder, and vectorizes the wrong loop, taking twice L1's time (an unsigned-integer
   maximum on the float bits does the same). A comparison and select keeps one running maximum per
   lane: 1.4 times L1's time.
-- **IVF for inner product on vectors of very uneven length** (`ip_reduction.py`; raw GloVe, lengths
-  0.04 to 18.7). Assigned by inner product, the lists are badly unbalanced (39% empty, 10 lists holding
-  a fifth of the data) and recall stays below 0.65; reduced to L2 by extending each vector to the same
-  length, the lists balance but recall falls below 0.35 (and FAISS's HNSW on the extended vectors fails
-  too). Exact search on the GPU is the method there.
+- **IVF for inner product** (`ivf_cpu.py --metric ip`, `ip_reduction.py`). Assigned by inner product,
+  the lists are unbalanced, since centroids pointing towards long vectors attract much of the data. On
+  Music-100 (22% of lists empty) recall still reaches 0.98, but FAISS's HNSW is 2.6-4.5 times faster at
+  matched recall; on raw GloVe (lengths 0.04 to 18.7, 39% empty) recall stays below 0.65. Reduced to L2
+  by extending each vector to the same length, the lists balance but recall falls (below 0.82 on
+  Music-100, 0.35 on raw GloVe), and FAISS's HNSW on the extended vectors does as badly. For inner
+  product, use HNSW, or exact search on the GPU where recall must be 1.0.
 - **BLAS in the CPU IVF's list-major scan** (`blas_ivf.py`): one multiply per list, its queries against
   its vectors, the products ranked in Rust. The multiplies are small (about 160 queries by 250 vectors
   at nprobe 64), so overheads dominate: 0.5-0.8 times the Rust list-major scan on batches of 10,000,

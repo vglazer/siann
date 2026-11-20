@@ -39,7 +39,7 @@ def timed(fn, repeats=3):
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset", default="sift", choices=["sift", "glove", "glove-raw"])
+    p.add_argument("--dataset", default="sift", choices=["sift", "glove", "glove-raw", "music100"])
     p.add_argument("--metric", default="l2", choices=["l2", "ip"])
     p.add_argument("--queries", type=int, default=1000)
     p.add_argument("--qtiles", default="256,1000")

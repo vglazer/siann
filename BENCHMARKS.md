@@ -39,12 +39,12 @@ comparison, and [ARCHITECTURE](ARCHITECTURE.md) explains where the speed comes f
 | --- | --- | --- |
 | Exact search, batches, GPU available | **siann's GPU kernels** (MLX) | L2 and cosine 8 times FAISS; L1 18-25 times; L-infinity 47-49 times (random vectors); inner product 4-18 times |
 | Exact search on the CPU, L1 or L-infinity | **siann's Rust kernel** | 3.8-4.3 times (L1), 7.3 times (L-infinity) |
-| Exact search on the CPU, L2, cosine or inner product | **siann's BLAS path** (NumPy's multiply, Accelerate, then siann's Rust top-k) | L2 and cosine 1.7-1.9 times on 1,000 queries, 3.0-3.6 times on 100; inner product level to 2.7 times |
+| Exact search on the CPU, L2, cosine or inner product | **siann's BLAS path** (NumPy's multiply, Accelerate, then siann's Rust top-k) | L2 and cosine 1.7-1.9 times on 1,000 queries, 3.0-3.6 times on 100; inner product 0.9-2.7 times |
 | Approximate, large batches (thousands) | **siann's GPU IVF, list-major** | GloVe: 5.0 times HNSW; SIFT: 1.2-1.3 times |
 | Approximate, batches of about 100 | GloVe-like data: **siann's GPU IVF**; SIFT-like data: **FAISS HNSW** below recall 0.99, **siann's GPU IVF** from 0.99 | GloVe: 1.2-1.8 times HNSW; SIFT: HNSW 1.2-1.5 times faster below 0.99, level at 0.99, siann 1.7 times at 0.997 |
 | Approximate, single queries, one core each (throughput) | GloVe-like data: **siann's Rust IVF**, two-level coarse step; SIFT-like data: **FAISS HNSW** | GloVe: 1.5-1.65 times HNSW; SIFT: HNSW 1.3-1.45 times faster |
 | Approximate, single query, lowest latency with cores to spare | **siann's Rust IVF, split over 4 threads**, except SIFT-like data below recall 0.97 | GloVe: 1.5-3.1 times HNSW; SIFT: 1.2-1.6 times from recall 0.97 |
-| Inner product on vectors of uneven length | **siann's exact search on the GPU** (an IVF fails there) | recall 1.0 at 0.88-1.36 times the speed of FAISS's HNSW at recall 0.89 |
+| Approximate search by inner product | **FAISS HNSW** (inner product); **siann's exact search on the GPU** where recall must be 1.0, or where an IVF fails (vectors of very uneven length) | Music-100: HNSW 2.6-4.5 times siann's IVF at matched recall; siann's exact GPU search 0.57 times HNSW at its recall 0.986. Raw GloVe: siann's exact search 0.88-1.36 times HNSW at its recall 0.89 |
 
 What decides it:
 
@@ -428,25 +428,56 @@ IVF about 15% on GloVe, so for float32 the better of padded and unpadded is used
 
 ## Inner product
 
-*Reproduce with `backends.py --dataset glove-raw --metrics ip`, `ivf_cpu.py --metric ip`,
-`ip_reduction.py`.*
+*Reproduce with `backends.py --dataset glove-raw|music100 --metrics ip`, `blas_l2.py --metric ip`,
+`ivf_cpu.py --metric ip`, `ip_reduction.py`.*
 
-On raw GloVe-100, whose vector lengths run from 0.04 to 18.7, exact search on the GPU is 4.1-17.7x
-FAISS's, but an IVF fails (`ip_ivf_glove_raw.txt`, `ip_reduction_glove_raw.txt`):
+Two datasets with vectors of uneven length: Music-100, made to be compared by inner product (lengths
+0.017 to 2.12, the longest 2.9 times the median), and raw GloVe-100, word vectors with their lengths
+kept (0.04 to 18.7, 3.4 times the median) ([DATASETS](DATASETS.md)).
 
-- **Assigned by inner product** (as FAISS's `METRIC_INNER_PRODUCT` IVF assigns), the lists are badly
-  unbalanced: centroids pointing towards long vectors attract most of the data (the largest list holds
-  35,725 vectors, the 10 largest 21% of them, and 39% of the lists are empty; by L2: 2,066, 2%, none).
-  Recall stays at 0.23-0.64 up to nprobe 128, for siann's and FAISS's IVF alike.
-- **Reduced to L2** (each base vector extended by sqrt(M^2 - |x|^2) to the longest length M, each query
-  by 0), the lists balance but recall falls to 0.03-0.34, and FAISS's HNSW on the extended vectors does
-  as badly (0.16-0.34): most vectors are far shorter than the longest, so the added coordinate
-  dominates the distances.
-- **FAISS's HNSW with inner product** reaches recall 0.888 at 14,224 queries per second in batches of
-  100 and 15,275 in batches of 10,000 (efSearch 256).
-- **Exact search on the GPU** gives recall 1.0 at about 12,500 queries per second in batches of 100
-  (0.88x HNSW) and about 20,700 in batches of 10,000 (1.36x). Vectors of similar length behave like
-  cosine, where the IVF works.
+**Exact search** against FAISS's `IndexFlatIP` (`ip_exact_*.txt`, `ip_blas_*.txt`):
+
+| Queries | Music-100: GPU | Music-100: CPU (BLAS) | Raw GloVe: GPU | Raw GloVe: CPU (BLAS) |
+| ---: | ---: | ---: | ---: | ---: |
+| 100 | **16.9x** (0.007 against 0.115 s) | **2.71x** | **17.7x** (0.008 against 0.136 s) | **2.70x** |
+| 1,000 | **6.3x** (0.039 against 0.247 s) | 0.90x | **5.9x** (0.049 against 0.287 s) | 0.94x |
+| 10,000 | **4.3x** (0.388 against 1.666 s) | | **4.1x** (0.482 against 1.985 s) | |
+
+**An IVF, assigned by inner product** (as FAISS's `METRIC_INNER_PRODUCT` IVF assigns), has unbalanced
+lists: centroids pointing towards long vectors attract much of the data (`ip_reduction_*.txt`).
+
+| | Largest list | 10 largest hold | Empty lists | Recall, nprobe 16 / 128 |
+| --- | ---: | ---: | ---: | ---: |
+| Music-100 | 20,645 | 10% | 22% | 0.887 / 0.979 |
+| Raw GloVe | 35,725 | 21% | 39% | at most 0.64 up to nprobe 128 |
+| Either, assigned by L2 | 1,402-2,066 | 1-2% | none | |
+
+On Music-100 the IVF works, but FAISS's HNSW with inner product is faster at every batch size. Queries
+per second at the nearest recall, siann's fastest path against HNSW (M = 32) (`ip_ivf_music100.txt`):
+
+| Recall: IVF / HNSW | Single, one thread: Rust IVF / HNSW | Batches of 100: GPU IVF / HNSW | 10,000: Rust list-major / HNSW |
+| --- | ---: | ---: | ---: |
+| 0.887 / 0.876 | 12,261 / 36,795 | 74,715 / 243,940 | 113,757 / 415,667 |
+| 0.935 / 0.924 | 8,460 / 22,877 | 50,476 / 180,164 | 65,803 / 292,886 |
+| 0.964 / 0.956 | 4,738 / 14,870 | 29,574 / 120,332 | 43,443 / 169,951 |
+| 0.979 / 0.976 | 2,486 / 6,560 | 15,510 / 65,612 | 20,846 / 79,725 |
+
+HNSW is 2.6-3.1x siann's IVF on single queries, 3.3-4.2x in batches of 100 and 3.7-4.5x in batches of
+10,000. With lists this uneven the GPU's list-major scan, one threadgroup per list, is slower than
+Rust's (70,845 against 113,757 at nprobe 16), likely because the largest lists set its time. Exact
+search on the GPU gives recall 1.0 at 25,773 queries per second in batches of 10,000, 0.57x HNSW at its
+recall 0.986 (44,866).
+
+On raw GloVe the IVF fails, for siann's and FAISS's alike, and FAISS's HNSW with inner product reaches
+recall 0.888 at 14,224 queries per second in batches of 100 and 15,275 in batches of 10,000 (efSearch
+256; `ip_ivf_glove_raw.txt`). Exact search on the GPU gives recall 1.0 at about 12,500 in batches of 100
+(0.88x HNSW) and about 20,700 in batches of 10,000 (1.36x).
+
+**Reduced to L2** (each base vector extended by sqrt(M^2 - |x|^2) to the longest length M, each query by
+0, so that L2 ranks as inner product), the lists balance but recall falls, for the IVF and FAISS's HNSW
+alike: on Music-100 the IVF reaches 0.24-0.81 up to nprobe 128 and HNSW 0.58-0.79 (against 0.88-0.99
+with inner product), on raw GloVe 0.03-0.34 and 0.16-0.34. Most vectors are far shorter than the
+longest, so the added coordinate dominates the distances.
 
 ## PyTorch against MLX
 

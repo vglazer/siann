@@ -18,7 +18,7 @@ from timing import throughput
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--centroids", required=True)
-    p.add_argument("--dataset", default="sift", choices=["sift", "glove", "glove-raw"])
+    p.add_argument("--dataset", default="sift", choices=["sift", "glove", "glove-raw", "music100"])
     p.add_argument("--metric", default="l2", choices=["l1", "l2", "linf", "ip"])
     p.add_argument("--queries", type=int, default=10_000)
     p.add_argument("--small", type=int, default=1000)

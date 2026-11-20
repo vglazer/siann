@@ -1,0 +1,20 @@
+music100, ip: 1,000,000 vectors, 100 dimensions, 1,000 queries, k=10; NumPy's BLAS: accelerate
+  FAISS IndexFlatIP: 0.216 s
+
+  query tile base block     time  vs FAISS  multiply   top-k agreement
+         512      8,192   0.239s     0.90x    0.156s  0.077s    1.0000
+  (sweep)
+         256     16,384   0.223s     0.97x    0.145s  0.075s    1.0000
+         256     65,536   0.339s     0.64x    0.290s  0.046s    1.0000
+         256    262,144   0.335s     0.65x    0.293s  0.037s    1.0000
+       1,000     16,384   0.334s     0.65x    0.285s  0.046s    1.0000
+       1,000     65,536   0.315s     0.69x    0.272s  0.037s    1.0000
+       1,000    262,144   0.453s     0.48x    0.434s  0.039s    1.0000
+music100, ip: 1,000,000 vectors, 100 dimensions, 100 queries, k=10; NumPy's BLAS: accelerate
+  FAISS IndexFlatIP: 0.091 s
+
+  query tile base block     time  vs FAISS  multiply   top-k agreement
+         100     32,768   0.033s     2.71x    0.023s  0.009s    1.0000
+  (sweep)
+         100     32,768   0.034s     2.68x    0.024s  0.009s    1.0000
+         100     65,536   0.029s     3.19x    0.022s  0.006s    1.0000
