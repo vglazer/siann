@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (macOS, Apple silicon)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: crates/siann-py
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/siann-py
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --release -- -D warnings
+
+  python:
+    name: Python (macOS, Apple silicon)
+    # GitHub's Mac runners may lack a usable GPU: the GPU tests skip when MLX finds none, and run
+    # locally before each release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/siann-py
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Build the package
+        run: uv sync --group dev
+      - name: Tests
+        # fail on text I/O that relies on the platform's default encoding
+        run: uv run python -X warn_default_encoding -m pytest -v -W error::EncodingWarning

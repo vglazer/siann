@@ -21,6 +21,8 @@ Repository = "https://github.com/vglazer/siann"
 torch = ["torch>=2.15.0"]
 
 [dependency-groups]
+# the tests in python/tests
+dev = ["pytest>=8", "scipy>=1.13"]
 # the benchmarks and checks in benchmarks/: FAISS as the baseline, the other frameworks, the datasets
 bench = [
     "faiss-cpu>=1.16.0",
@@ -39,3 +41,6 @@ features = ["pyo3/extension-module"]
 [tool.uv]
 # rebuild the Rust extension when its sources change
 cache-keys = [{ file = "pyproject.toml" }, { file = "crates/siann-py/Cargo.toml" }, { file = "crates/siann-py/src/**/*.rs" }]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]

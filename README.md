@@ -1,5 +1,6 @@
 # siann
 
+[![CI](https://github.com/vglazer/siann/actions/workflows/ci.yml/badge.svg)](https://github.com/vglazer/siann/actions/workflows/ci.yml)
 [![Documentation](https://img.shields.io/readthedocs/siann/latest)](https://siann.readthedocs.io)
 
 *Pronounced like "cyan".*
@@ -11,6 +12,27 @@ or the same kernels on PyTorch's MPS backend), measures every path against the s
 the same Mac, [FAISS](https://github.com/facebookresearch/faiss) on the CPU and
 [mlxvs](https://github.com/mikepapadim/mlxvs) on the GPU, and recommends the fastest for each
 workload, naming the other library where it is faster.
+
+## Use
+
+siann builds from source, with [Rust](https://rustup.rs) and [uv](https://docs.astral.sh/uv/) installed
+(`git clone https://github.com/vglazer/siann && cd siann && uv sync`). Exact search, on any of the five
+metrics:
+
+```python
+import numpy as np
+import siann
+
+xb = np.random.default_rng(0).standard_normal((100_000, 128), dtype=np.float32)
+index = siann.Index(xb, metric="cosine")     # or "l2", "l1", "linf", "ip"
+res = index.search(xb[:5], k=10)             # on the GPU where MLX finds one, otherwise the CPU
+res.indices, res.scores                      # (5, 10) each, best first: similarities for cosine
+print(index.plan)                            # what was chosen, and why
+```
+
+Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, the
+similarity for cosine and inner product. `device="cpu"` or `"gpu"` overrides the choice, for the index
+or for one search.
 
 ## Which to use, and how it compares
 
