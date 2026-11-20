@@ -169,13 +169,19 @@ def probe_lists(dist: mx.array, nprobe: int, select: str = "argpartition") -> mx
 
 
 class GpuIVF:
-    def __init__(self, xb: np.ndarray, nlist: int, metric: str, lists: str = "float32"):
+    def __init__(self, xb: np.ndarray, nlist: int, metric: str, lists: str = "float32",
+                 assign: str | None = None, probe: str | None = None):
         """``lists`` is the storage of the inverted lists: "float32"; "float16", half the memory
         traffic, distances still computed in float32 from the rounded vectors; or "uint8", a quarter,
-        for vectors whose coordinates are integers from 0 to 255 (SIFT's), so that nothing is lost."""
+        for vectors whose coordinates are integers from 0 to 255 (SIFT's), so that nothing is lost.
+        ``assign`` is the metric that puts each vector in its list and ``probe`` the one that picks a
+        query's lists (the coarse step); both default to ``metric``, which the scan always uses, except
+        that for inner product the lists are assigned by L2 (by inner product, centroids pointing
+        towards long vectors attract much of the data: BENCHMARKS.md, "Inner product")."""
         if lists == "uint8" and not np.array_equal(xb.astype(np.uint8).astype(np.float32), xb):
             raise ValueError("uint8 lists need coordinates that are integers from 0 to 255")
         self.metric = metric
+        self.probe_metric = probe or metric   # the coarse step's metric; the scan uses `metric`
         sample = xb[np.random.default_rng(0).choice(len(xb), min(len(xb), 100 * nlist), replace=False)]
         import faiss   # k-means only
 
@@ -183,7 +189,7 @@ class GpuIVF:
         km.train(sample)
         self.centroids = mx.array(km.centroids)
         self.cnorms = mx.sum(self.centroids * self.centroids, axis=1)
-        assign = np.concatenate([np.array(nearest(mx.array(xb[i:i + 4096]), self.centroids, self.cnorms, 1, metric))[:, 0]
+        assign = np.concatenate([np.array(nearest(mx.array(xb[i:i + 4096]), self.centroids, self.cnorms, 1, assign or ('l2' if metric == 'ip' else metric)))[:, 0]
                                  for i in range(0, len(xb), 4096)])
         order = np.argsort(assign, kind="stable")
         self.ids = mx.array(order.astype(np.int32))
@@ -199,7 +205,7 @@ class GpuIVF:
         fastest for this scan at every nprobe (BENCHMARKS.md, "Where a GPU call's time goes")."""
         select = "argpartition" if select == "auto" else select
         q = mx.array(xq)
-        dist = coarse_dist(q, self.centroids, self.cnorms, self.metric)
+        dist = coarse_dist(q, self.centroids, self.cnorms, self.probe_metric)
         probes = probe_lists(dist, nprobe, select)
         nq, d = q.shape
         if merge == "kernel" and threads <= 256 and threads & (threads - 1) == 0 and threads * k * 8 <= 32768:
@@ -231,7 +237,7 @@ def search_list_major(self, xq: np.ndarray, k: int, nprobe: int, select: str = "
     q = mx.array(xq)
     nq, d = q.shape
     nlist = self.offsets.shape[0] - 1
-    dist = coarse_dist(q, self.centroids, self.cnorms, self.metric)
+    dist = coarse_dist(q, self.centroids, self.cnorms, self.probe_metric)
     probes = probe_lists(dist, nprobe, select).reshape(-1)   # pair id = query * nprobe + slot
     pair_ids = mx.argsort(probes).astype(mx.int32)
     counts = mx.zeros((nlist,), dtype=mx.int32).at[probes].add(1)

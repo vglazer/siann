@@ -882,14 +882,17 @@ impl IvfIndex {
 #[pymethods]
 impl IvfIndex {
     /// Build from base vectors (n, d) and centroids (nlist, d), both C-contiguous float32. Each base
-    /// vector goes to the list of its nearest centroid in `metric`, found by exact search. The lists
+    /// vector goes to the list of its nearest centroid in `assign` (by default `metric`, except for
+    /// inner product, whose lists are assigned by L2: by inner product, centroids pointing towards long
+    /// vectors attract much of the data), found by exact search; queries probe by `metric`. The lists
     /// store `xb` itself (`storage="float32"`), or `stored`, the same vectors in a smaller type:
     /// with "float16", rounded to float16 (a C-contiguous uint16 array of their bits, such as NumPy's
     /// `xb.astype(np.float16).view(np.uint16)`), half the memory traffic; with "uint8", as bytes (a
     /// uint8 array), a quarter, which needs every coordinate of `xb` to be an integer from 0 to 255,
     /// so that nothing is lost. Distances are computed in f32 from the stored values.
     #[new]
-    #[pyo3(signature = (xb, centroids, d, metric = "l1", stored = None, storage = "float32"))]
+    #[pyo3(signature = (xb, centroids, d, metric = "l1", stored = None, storage = "float32", assign = None))]
+    #[allow(clippy::too_many_arguments)] // PyO3 takes the keyword arguments as parameters
     fn py_new(
         py: Python<'_>,
         xb: &Bound<'_, PyAny>,
@@ -898,8 +901,14 @@ impl IvfIndex {
         metric: &str,
         stored: Option<&Bound<'_, PyAny>>,
         storage: &str,
+        assign: Option<&str>,
     ) -> PyResult<Self> {
         let kind = parse_metric(metric)?;
+        let assign_kind = match assign {
+            Some(a) => parse_metric(a)?,
+            None if matches!(kind, Kind::Ip) => Kind::L2,
+            None => kind,
+        };
         let xb = read(py, xb, d)?;
         let shape_err = || PyValueError::new_err("stored must have the shape of xb");
         let copy = match (storage, stored) {
@@ -942,7 +951,7 @@ impl IvfIndex {
         Ok(py.detach(|| {
             let centroids = to_blocks(cents.chunks_exact(d), d);
             let assign =
-                with_metric!(kind, M => flat_search::<M>(&centroids, d, nlist, &xb, 1, 256));
+                with_metric!(assign_kind, M => flat_search::<M>(&centroids, d, nlist, &xb, 1, 256));
             let mut members: Vec<Vec<u32>> = vec![Vec::new(); nlist];
             for (i, &c) in assign.iter().enumerate() {
                 members[c as usize].push(i as u32);

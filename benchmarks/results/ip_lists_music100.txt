@@ -1,0 +1,25 @@
+music100, ip: 1,000,000 vectors, 4000 lists (float16); queries per second
+
+  assign ip, probe ip: largest list 20,645, 10 largest hold 10%, empty 22%
+    nprobe recall@10       100    10,000
+         4     0.721   130,035   252,931
+        16     0.887    90,318    77,575
+        32     0.935    67,010    47,989
+        64     0.963    44,629    32,853
+       128     0.979    26,479    22,823
+
+  assign l2, probe ip: largest list 1,402, 10 largest hold 1%, empty 0%
+    nprobe recall@10       100    10,000
+         4     0.757   219,372 1,040,195
+        16     0.911   168,485   652,963
+        32     0.947   135,670   374,317
+        64     0.967   100,002   275,989
+       128     0.977    68,269   191,713
+
+  assign l2, probe l2: largest list 1,402, 10 largest hold 1%, empty 0%
+    nprobe recall@10       100    10,000
+         4     0.287   202,979   155,669
+        16     0.344   143,666   125,091
+        32     0.364   103,475   102,502
+        64     0.381    75,199    76,690
+       128     0.403    49,400    63,282

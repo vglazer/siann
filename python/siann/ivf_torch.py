@@ -142,7 +142,9 @@ class TorchIVF:
         self.centroids = torch.from_numpy(np.ascontiguousarray(centroids)).to(dev)
         self.cnorms = (self.centroids * self.centroids).sum(1)
         self.nlist = len(centroids)
-        assign = np.concatenate([self._nearest(torch.from_numpy(xb[i:i + 4096]).to(dev), 1)[:, 0].cpu().numpy()
+        # lists assigned by L2 for inner product, as siann.ivf_gpu's (queries still probe by inner product)
+        by = "l2" if metric == "ip" else metric
+        assign = np.concatenate([self._nearest(torch.from_numpy(xb[i:i + 4096]).to(dev), 1, metric=by)[:, 0].cpu().numpy()
                                  for i in range(0, len(xb), 4096)])
         order = np.argsort(assign, kind="stable")
         self.ids = torch.from_numpy(order.astype(np.int64)).to(dev)
@@ -150,10 +152,11 @@ class TorchIVF:
         counts = np.bincount(assign, minlength=self.nlist)
         self.offsets = torch.from_numpy(np.concatenate([[0], np.cumsum(counts)]).astype(np.int32)).to(dev)
 
-    def _nearest(self, q: torch.Tensor, k: int, threads: int = 512) -> torch.Tensor:
-        """The k nearest centroids of each query, by the exact kernels."""
-        if self.metric != "l2":
-            return tk.select_k(tk.dist(q, self.centroids, self.metric), k, threads)
+    def _nearest(self, q: torch.Tensor, k: int, threads: int = 512, metric: str | None = None) -> torch.Tensor:
+        """The k nearest centroids of each query in `metric` (the index's by default), by the exact kernels."""
+        metric = metric or self.metric
+        if metric != "l2":
+            return tk.select_k(tk.dist(q, self.centroids, metric), k, threads)
         return tk.select_k(torch.addmm(self.cnorms[None, :], q, self.centroids.T, alpha=-2), k, threads)
 
     def probe_lists(self, q: torch.Tensor, nprobe: int, select: str = "argpartition") -> torch.Tensor:
