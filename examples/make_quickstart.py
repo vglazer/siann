@@ -43,6 +43,8 @@ siann.__version__
 
 siann searches by five measures of nearness. In two dimensions they are easy to see: below, 600 points,
 one query (the star), and each metric's 25 nearest points to it, with the boundary that encloses them.
+The L2, L1 and L-infinity panels are zoomed in on the query; the cosine and inner product panels show the
+whole cloud, since their regions run out from the origin.
 
 - [**L2**]({W}Euclidean_distance) (Euclidean) is straight-line distance; its ball is a circle. The usual
   choice for vectors whose coordinates are comparable measurements.
@@ -62,7 +64,9 @@ pts = rng.standard_normal((600, 2), dtype=np.float32)
 q = np.array([[0.9, 0.5]], dtype=np.float32)
 k = 25
 
-fig, axes = plt.subplots(1, 5, figsize=(17, 3.6))
+fig, axes = plt.subplots(2, 3, figsize=(13, 8.6))
+axes = axes.ravel()
+axes[-1].axis("off")
 for ax, metric in zip(axes, siann.METRICS):
     res = siann.Index(pts, metric, device="cpu").search(q, k)
     near, kth = res.indices[0], res.scores[0, -1]
@@ -85,7 +89,11 @@ for ax, metric in zip(axes, siann.METRICS):
         base, along = u * kth / np.linalg.norm(q[0]), np.array([-u[1], u[0]])
         ax.plot(*np.array([base - 5 * along, base + 5 * along]).T, c="tab:blue", lw=1)
     ax.set_title({"l2": "L2", "l1": "L1", "linf": "L-infinity", "cosine": "cosine", "ip": "inner product"}[metric])
-    ax.set_xlim(-3.2, 3.2); ax.set_ylim(-3.2, 3.2); ax.set_aspect("equal"); ax.set_xticks([]); ax.set_yticks([])
+    # the balls are small: zoom on the query; cosine and inner product regions run out from the origin
+    span = 2.2 * kth if metric in ("l2", "l1", "linf") else 3.2
+    cx, cy = (q[0] if metric in ("l2", "l1", "linf") else (0, 0))
+    ax.set_xlim(cx - span, cx + span); ax.set_ylim(cy - span, cy + span)
+    ax.set_aspect("equal"); ax.set_xticks([]); ax.set_yticks([])
 fig.tight_layout()
 """),
     md("""
