@@ -94,8 +94,11 @@ work.
 
 **Building.** k-means (FAISS's, 10 iterations, on a sample of 100 vectors per cluster) finds the
 cluster centers, the centroids; siann uses 4,000 for a million vectors. Each base vector then goes to
-the list of its nearest centroid in the search metric, found by exact search. k-means itself runs in
-L2, even for an L1 index: the centroids only need to spread over the data.
+the list of its nearest centroid in the search metric, found by exact search, except for inner
+product, whose lists are assigned by L2 (by inner product, centroids pointing towards long vectors
+attract much of the data and the lists fall badly out of balance). k-means itself runs in L2, even for
+an L1 index: the centroids only need to spread over the data. Queries always probe by the search
+metric. Where the probed lists hold fewer than k vectors, the missing neighbors are returned as -1.
 
 **Searching.** A query's `nprobe` nearest centroids (the coarse step) give the lists to scan; the k
 nearest vectors among those lists are the answer. Raising `nprobe` raises recall and cost: on SIFT1M
@@ -176,13 +179,15 @@ Each of these is measured; the scripts are named in parentheses, and their outpu
   reduction it may reorder, and vectorizes the wrong loop, taking twice L1's time (an unsigned-integer
   maximum on the float bits does the same). A comparison and select keeps one running maximum per
   lane: 1.4 times L1's time.
-- **IVF for inner product** (`ivf_cpu.py --metric ip`, `ip_reduction.py`). Assigned by inner product,
-  the lists are unbalanced, since centroids pointing towards long vectors attract much of the data. On
-  Music-100 (22% of lists empty) recall still reaches 0.98, but FAISS's HNSW is 2.6-4.5 times faster at
-  matched recall; on raw GloVe (lengths 0.04 to 18.7, 39% empty) recall stays below 0.65. Reduced to L2
-  by extending each vector to the same length, the lists balance but recall falls (below 0.82 on
-  Music-100, 0.35 on raw GloVe), and FAISS's HNSW on the extended vectors does as badly. For inner
-  product, use HNSW, or exact search on the GPU where recall must be 1.0.
+- **Assigning an inner-product IVF's lists by inner product** (`ip_lists.py`), as FAISS's IVF does:
+  the lists fall out of balance (22% empty on Music-100, 39% on raw GloVe, the largest holding 20,645
+  and 35,725 vectors), and at matched recall the search is 1.7-8.4 times slower than with lists
+  assigned by L2. Probing by L2 as well fails (recall at most 0.40).
+- **Reducing inner product to L2** (`ip_reduction.py`): extending each vector to the same length
+  balances the lists, but recall falls (below 0.82 on Music-100, 0.35 on raw GloVe), and FAISS's HNSW
+  on the extended vectors does as badly: the added coordinate dominates the distances.
+- **Any IVF on vectors of very uneven length** (raw GloVe, lengths 0.04 to 18.7): siann's reaches
+  recall 0.443 by nprobe 128, FAISS's 0.641; use HNSW, or exact search on the GPU for recall 1.0.
 - **BLAS in the CPU IVF's list-major scan** (`blas_ivf.py`): one multiply per list, its queries against
   its vectors, the products ranked in Rust. The multiplies are small (about 160 queries by 250 vectors
   at nprobe 64), so overheads dominate: 0.5-0.8 times the Rust list-major scan on batches of 10,000,

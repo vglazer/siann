@@ -465,6 +465,21 @@ wheels = [
 ]
 
 [[package]]
+name = "mlxvs"
+version = "0.16.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mlx" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1c/a0/d179f7a9953de3f8038738cdea19fda4129b7226991ea151c7ee3ba9552e/mlxvs-0.16.1.tar.gz", hash = "sha256:e6dd4cda6ed6383db683cf656315db1f6ce42ddb8b3187fc7014201867768b35", size = 154678, upload-time = "2026-11-13T17:01:24.889Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0f/4a/3b8b39d813ab8526efe2e4dd4f4f3dad55ecfff5a6b61c8a79f21a1ffde7/mlxvs-0.16.1-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:1b9c7e16878129b2b437970d9b47d09c547ed0fdb3539129a52c632772133476", size = 359343, upload-time = "2026-11-13T17:01:21.011Z" },
+    { url = "https://files.pythonhosted.org/packages/44/f0/234299d095adf1fc6e073e85fad1e2ede65dbaab88fdf6dd8929899e0855/mlxvs-0.16.1-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:32ffbc6e768042336783459f158de1f0bf5b3cb7ef3e8d9553a79a4492abb4d8", size = 359337, upload-time = "2026-11-13T17:01:22.388Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/ad/a55ff66f10025da1c7701ba8530a4613e40da4557d6edddcb6a65b347581/mlxvs-0.16.1-cp314-cp314-macosx_14_0_arm64.whl", hash = "sha256:8a795a2cc2eeeaf19828a2106a8a4c9aef9e10288fb32f3acf43a15b4b8b75c1", size = 359582, upload-time = "2026-11-13T17:01:23.704Z" },
+]
+
+[[package]]
 name = "mpmath"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -826,6 +841,7 @@ bench = [
     { name = "faiss-cpu" },
     { name = "h5py" },
     { name = "jax-mps" },
+    { name = "mlxvs" },
     { name = "torch" },
 ]
 
@@ -842,6 +858,7 @@ bench = [
     { name = "faiss-cpu", specifier = ">=1.16.0" },
     { name = "h5py", specifier = ">=3.16.0" },
     { name = "jax-mps", specifier = ">=0.11.1" },
+    { name = "mlxvs", specifier = ">=0.16.1" },
     { name = "torch", specifier = ">=2.15.0" },
 ]
 

@@ -1,0 +1,12 @@
+music100, ip: 1,000,000 vectors, 100 dimensions, 10,000 queries; mlxvs 0.16.1, mlx 0.32.4; queries per second
+
+IVF, 4000 lists: siann built in 13.4 s (float16 lists), mlxvs IVF-Flat in 14.9 s
+  method                                       recall@10    single       100    10,000
+  siann GPU IVF (float16), nprobe 16               0.911     3,018   188,150   632,020
+  mlxvs IVF-Flat, n_probes 16                      0.924       825    65,581   357,272
+  siann GPU IVF (float16), nprobe 32               0.947     2,361   139,191   383,114
+  mlxvs IVF-Flat, n_probes 32                      0.958       815    59,698   239,579
+  siann GPU IVF (float16), nprobe 64               0.967     1,772   100,284   286,604
+  mlxvs IVF-Flat, n_probes 64                      0.978       806    52,505   147,491
+  siann GPU IVF (float16), nprobe 128              0.977     1,191    69,098   191,041
+  mlxvs IVF-Flat, n_probes 128                     0.989       781    41,494    81,852

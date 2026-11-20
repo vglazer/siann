@@ -1,0 +1,31 @@
+music100, ip: 1,000,000 vectors, 100 dimensions, 10,000 queries; mlxvs 0.16.1, mlx 0.32.4; queries per second
+
+Exact search
+  method                                       recall@10    single       100    10,000
+  siann exact (GPU kernels)                        1.000       491    11,521    16,238
+  mlxvs brute_force_knn                            1.000        86     4,483     5,385
+
+IVF, 4000 lists: siann built in 13.4 s (float16 lists), mlxvs IVF-Flat in 19.8 s
+  method                                       recall@10    single       100    10,000
+  siann GPU IVF (float16), nprobe 16               0.887     1,955    93,594    77,372
+  mlxvs IVF-Flat, n_probes 16                      0.924       825    66,297   359,351
+  siann GPU IVF (float16), nprobe 32               0.935     1,378    66,565    47,595
+  mlxvs IVF-Flat, n_probes 32                      0.958       820    60,737   236,855
+  siann GPU IVF (float16), nprobe 64               0.963       876    44,209    32,814
+  mlxvs IVF-Flat, n_probes 64                      0.978       808    52,088   139,307
+  siann GPU IVF (float16), nprobe 128              0.979       507    26,359    22,765
+  mlxvs IVF-Flat, n_probes 128                     0.989       780    41,131    51,812
+
+mlxvs CAGRA (float32), graph degree 32: built in 6.6 s
+  method                                       recall@10    single       100    10,000
+  mlxvs CAGRA (float32), itopk_size 32             0.908     1,529   187,355   731,776
+  mlxvs CAGRA (float32), itopk_size 64             0.952     1,720   129,148   498,160
+  mlxvs CAGRA (float32), itopk_size 128            0.976     1,790    77,529   262,421
+  mlxvs CAGRA (float32), itopk_size 256            0.990     1,912    42,259    89,421
+
+mlxvs CAGRA (float16), graph degree 32: built in 6.3 s
+  method                                       recall@10    single       100    10,000
+  mlxvs CAGRA (float16), itopk_size 32             0.905     1,670   215,730   930,954
+  mlxvs CAGRA (float16), itopk_size 64             0.951     1,790   126,063   573,452
+  mlxvs CAGRA (float16), itopk_size 128            0.976     1,873    78,246   277,303
+  mlxvs CAGRA (float16), itopk_size 256            0.989     1,965    44,106   112,654

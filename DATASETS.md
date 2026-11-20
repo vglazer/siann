@@ -84,7 +84,7 @@ states no license.
   Queries run from 0.0001 to 5.0 (median 0.69). A query's length scales every inner product it takes
   by the same amount, so it does not change its ranking.
 - **An IVF's lists, assigned by inner product, are unbalanced** (22% empty), though less than raw
-  GloVe's, and an IVF still reaches recall 0.98; FAISS's HNSW is faster (see
+  GloVe's; assigned by L2 they balance, and siann's IVF reaches recall 0.98 (see
   [BENCHMARKS](BENCHMARKS.md#inner-product)).
 - **Not integers,** so uint8 lists do not apply; no zero-length vectors.
 - **100 dimensions,** as GloVe: not a multiple of the kernels' 16-dimension tiles or of the 8 FAISS's

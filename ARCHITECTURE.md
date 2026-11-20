@@ -61,10 +61,10 @@ flowchart TB
     metric -- "L2, cosine, inner product" --> cb["NumPy BLAS + Rust top-k"]
     metric -- "L1, L-infinity" --> cr["Rust blocked kernel"]
     kind -- approximate --> ip{"inner<br/>product?"}
-    ip -- yes --> hip["FAISS HNSW;<br/>GPU exact search for recall 1.0"]
+    ip -- yes --> hip["IVF up to batches of 100; mlxvs's CAGRA for thousands;<br/>very uneven lengths: FAISS HNSW, or GPU exact search for recall 1.0"]
     ip -- "no: L2, cosine, L1" --> size{"batch size?"}
-    size -- "thousands" --> gl["GPU IVF, list-major scan"]
-    size -- "about 100" --> hn["GPU IVF on GloVe-like data;<br/>on SIFT-like data, FAISS HNSW below recall 0.99,<br/>GPU IVF from 0.99"]
+    size -- "thousands" --> gl["GPU IVF, list-major scan;<br/>mlxvs's CAGRA on SIFT-like data"]
+    size -- "about 100" --> hn["GPU IVF on GloVe-like data;<br/>on SIFT-like data, mlxvs's CAGRA or FAISS HNSW"]
     size -- "one query" --> lat{"latency or<br/>throughput?"}
     lat -- "latency, cores to spare" --> sp["Rust IVF split over 4 threads<br/>(on SIFT-like data, from recall 0.97)"]
     lat -- throughput --> one["Rust IVF, two-level coarse step, on GloVe-like data;<br/>FAISS HNSW on SIFT-like data"]
@@ -174,11 +174,11 @@ wins:
   and compressing its vectors speeds it up 1.6-2.3 times, as much as it speeds up the IVF. Compressed
   HNSW leads in batches of about 100 on SIFT below recall 0.99 (1.2-1.5 times) and on single queries on
   one thread (1.3-1.45 times); with 4 threads per query siann leads from recall 0.97.
-- **HNSW for inner product.** An IVF assigned by inner product has unbalanced lists (centroids
-  pointing towards long vectors attract much of the data): on Music-100, the standard inner-product
-  benchmark, FAISS's HNSW is 2.6-4.5 times siann's IVF at matched recall, and on raw GloVe the IVF fails
-  outright. siann's exact search on the GPU, 4-18 times FAISS's exact search, is the choice where recall
-  must be 1.0.
+- **HNSW on vectors of very uneven length.** On raw GloVe (lengths 0.04 to 18.7) no IVF reaches high
+  recall, and FAISS's HNSW with inner product is the approximate method; siann's exact search on the
+  GPU, 4-18 times FAISS's exact search, is the choice where recall must be 1.0. On Music-100, the
+  standard inner-product benchmark, siann's IVF (its lists assigned by L2) is level with HNSW up to
+  batches of 100 and 2.1-2.3 times HNSW in batches of 10,000.
 - **FAISS's byte lists round the query.** For uint8 lists, FAISS rounds the query to integers and
   computes in integer arithmetic: exact for integer queries such as SIFT's, approximate for others.
   siann's integer path is level with it on one thread and applies to integer queries only, so it is
@@ -186,6 +186,16 @@ wins:
 
 GloVe-like data favors siann at every batch size, because HNSW must walk much further through its graph
 there for the same recall, while an IVF's dense scans do not care.
+
+## Where mlxvs is faster, and why
+
+mlxvs runs NVIDIA cuVS's methods on MLX, among them CAGRA, a graph index built for the GPU. siann's
+exact search is 2.6-5.7 times mlxvs's and its IVF 1.2-4.2 times mlxvs's IVF-Flat, but a graph touches
+far fewer vectors per query than an IVF, as HNSW does on the CPU, so CAGRA is faster where graphs are:
+on SIFT-like data, 1.2-1.5 times siann's GPU IVF in batches of 100 and 2.1-2.6 times in batches of
+10,000, and on inner product (Music-100) 1.45-1.5 times in batches of 10,000. On GloVe-like data the two
+are level, and CAGRA reaches recall 0.882 at most in the settings measured. mlxvs has no L1 or
+L-infinity, and on single queries siann's CPU path is 2.7-5.2 times faster than mlxvs's GPU.
 
 ## Code layout
 
