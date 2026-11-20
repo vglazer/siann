@@ -341,6 +341,15 @@ wheels = [
 ]
 
 [[package]]
+name = "hnswlib"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cf/7a/1a9b1405f2eb59515f06c3074750b03e0e96edf7fee0f6dd6df81d9c21d7/hnswlib-0.8.0.tar.gz", hash = "sha256:cb6d037eedebb34a7134e7dc78966441dfd04c9cf5ee93911be911ced951c44c", size = 36206, upload-time = "2023-12-03T04:16:17.55Z" }
+
+[[package]]
 name = "iniconfig"
 version = "2.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1517,6 +1526,7 @@ torch = [
 bench = [
     { name = "faiss-cpu" },
     { name = "h5py" },
+    { name = "hnswlib" },
     { name = "jax-mps" },
     { name = "mlxvs" },
     { name = "torch" },
@@ -1541,6 +1551,7 @@ provides-extras = ["torch"]
 bench = [
     { name = "faiss-cpu", specifier = ">=1.16.0" },
     { name = "h5py", specifier = ">=3.16.0" },
+    { name = "hnswlib", specifier = ">=0.8.0" },
     { name = "jax-mps", specifier = ">=0.11.1" },
     { name = "mlxvs", specifier = ">=0.16.1" },
     { name = "torch", specifier = ">=2.15.0" },

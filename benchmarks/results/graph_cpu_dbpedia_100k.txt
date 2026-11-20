@@ -1,0 +1,23 @@
+dbpedia, l2: 100,000 vectors, 1536 dimensions; single queries on one thread over 1,000, batch of 1,000 on 16 threads
+
+  builds: CAGRA (GPU-built), hnswlib search 3.0 s, hnswlib HNSW (M 16) 30.5 s, FAISS HNSW (M 32) 8.0 s
+
+  method                                     recall@10 median us  single/s    1,000/s
+  CAGRA (GPU-built), hnswlib search, ef 16       0.897       610     1,598     20,320
+  hnswlib HNSW (M 16), ef 16                     0.873       518     1,873     24,289
+  FAISS HNSW (M 32), efSearch 16                 0.915       119     8,191     23,424
+  CAGRA (GPU-built), hnswlib search, ef 32       0.951       926     1,083     13,693
+  hnswlib HNSW (M 16), ef 32                     0.939       850     1,166     16,085
+  FAISS HNSW (M 32), efSearch 32                 0.957       204     4,729     15,055
+  CAGRA (GPU-built), hnswlib search, ef 64       0.978      1482       689      8,716
+  hnswlib HNSW (M 16), ef 64                     0.974      1353       743      9,750
+  FAISS HNSW (M 32), efSearch 64                 0.977       325     3,061      9,304
+  CAGRA (GPU-built), hnswlib search, ef 128      0.992      2449       417      5,395
+  hnswlib HNSW (M 16), ef 128                    0.991      2336       434      5,667
+  FAISS HNSW (M 32), efSearch 128                0.990       550     1,847      5,502
+  CAGRA (GPU-built), hnswlib search, ef 256      0.996      4186       245      3,187
+  hnswlib HNSW (M 16), ef 256                    0.997      4008       253      2,823
+  FAISS HNSW (M 32), efSearch 256                0.995       961     1,048      3,204
+  CAGRA (GPU-built), hnswlib search, ef 512      0.998      7203       140      1,814
+  hnswlib HNSW (M 16), ef 512                    0.999      6805       147      1,890
+  FAISS HNSW (M 32), efSearch 512                0.997      1783       560      1,814

@@ -505,6 +505,31 @@ vectors, not the size of the gap (`mlxvs_dbpedia_100k.txt`, `ivf_dbpedia_100k.tx
   64, mlxvs's is 1.2-2.6x on single queries and in batches of 100, and the two are level in a batch of
   1,000.
 
+### A graph built on the GPU, searched on the CPU
+
+*Reproduce with `graph_cpu.py --dataset sift|glove|music100 --native` and `graph_cpu.py --dataset
+dbpedia --base 100000 --queries 1000 --native`.*
+
+mlxvs builds a CAGRA graph on the GPU and exports it in hnswlib's format (as hnswlib's bottom layer,
+entered at the medoid); hnswlib then searches it on the CPU, one query per call on one thread, against
+FAISS's HNSW (M = 32) and hnswlib's own HNSW (M = 16) (`graph_cpu_*.txt`).
+
+| Dataset | Build: GPU graph / FAISS HNSW / hnswlib HNSW | Recall at ef 32: GPU graph / hnswlib HNSW | Single query at recall about 0.98: GPU graph / FAISS HNSW |
+| --- | ---: | ---: | ---: |
+| SIFT | 6.9 / 9.7 / 37.4 s | 0.939 / 0.904 | 247 / 153 microseconds |
+| GloVe | 8.8 / 13.8 / 54.6 s | 0.641 / 0.671 | (0.83-0.85: 452 / 334) |
+| Music-100 | 7.2 / 8.1 / 26.0 s | 0.927 / 0.944 | 127 / 116 |
+| DBpedia, 100,000 | 3.0 / 8.0 / 30.5 s | 0.951 / 0.939 | 1,482 / 325 |
+
+- **The GPU builds the graph 1.1-2.7 times faster than FAISS builds its HNSW,** and 3.6-10 times faster
+  than hnswlib.
+- **Searched by the same code, the GPU-built graph is about as good as an HNSW graph:** more recall at
+  the same ef on SIFT and DBpedia, a little less on GloVe and Music-100.
+- **On the CPU, FAISS's HNSW answers single queries faster,** 1.4-1.8 times on SIFT and about 4.5 times
+  on DBpedia, but much of that is the search code: hnswlib takes 1.0-1.4 times FAISS's time at the same ef
+  (up to 256) on its own graph at 100-128 dimensions, and about 4 times at 1,536 (its hand-written SIMD is for x86).
+  These measurements compare search code as much as graphs.
+
 ## Inner product
 
 *Reproduce with `backends.py --dataset glove-raw|music100 --metrics ip`, `blas_l2.py --metric ip`,

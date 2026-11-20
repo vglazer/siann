@@ -28,6 +28,7 @@ bench = [
     "faiss-cpu>=1.16.0",
     "h5py>=3.16.0",
     "jax-mps>=0.11.1",
+    "hnswlib>=0.8.0",  # searches mlxvs's GPU-built graphs on the CPU
     "mlxvs>=0.16.1",  # the GPU baseline (cuVS methods on MLX)
     "torch>=2.15.0",
 ]
