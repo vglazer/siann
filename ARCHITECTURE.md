@@ -23,7 +23,7 @@ flowchart TB
     end
 
     subgraph cpu["CPU"]
-        rust["siann_cpu, Rust through PyO3<br/>FlatIndex: exact L1, L2, L-infinity<br/>IvfIndex: float32, float16, uint8 lists; split queries<br/>L2TopK: ranks BLAS products"]
+        rust["siann._cpu, Rust through PyO3<br/>FlatIndex: exact L1, L2, L-infinity<br/>IvfIndex: float32, float16, uint8 lists; split queries<br/>L2TopK: ranks BLAS products"]
         blas["NumPy matrix multiply<br/>Accelerate BLAS: exact L2"]
     end
 
@@ -184,20 +184,25 @@ there for the same recall, while an IVF's dense scans do not care.
 
 | File | What it holds |
 | --- | --- |
-| `proto/knn_kernels.py` | The MLX Metal kernels: the two-stage top-k, the tiled L1 and L-infinity kernel, fused L2 |
-| `proto/ivf_gpu.py` | The GPU IVF: k-means build, query-major and list-major scans, float16 and uint8 lists |
-| `proto/rust_cpu/src/lib.rs` | The Rust extension: `FlatIndex`, `IvfIndex` (storages, split queries), `L2TopK` |
-| `proto/blas_l2.py` | Exact L2 on the CPU through NumPy's BLAS and `L2TopK`, with the default tile sizes |
-| `proto/torch_kernels.py`, `proto/ivf_torch.py` | The same kernels on PyTorch MPS |
-| `proto/check_kernels.py` | Every kernel and index against NumPy's exact search |
-| `proto/backends.py`, `ivf_cpu.py`, `fp16_lists.py`, `single_query.py` | The benchmarks against FAISS |
+| `python/siann/knn_kernels.py` | The MLX Metal kernels: the two-stage top-k, the tiled L1 and L-infinity kernel, fused L2 |
+| `python/siann/exact.py` | Exact search on the GPU, a tile of queries at a time |
+| `python/siann/ivf_gpu.py` | The GPU IVF: k-means build, query-major and list-major scans, float16 and uint8 lists |
+| `python/siann/blas_l2.py` | Exact L2 and inner product on the CPU through NumPy's BLAS and `L2TopK`, with the default tile sizes |
+| `python/siann/torch_kernels.py`, `ivf_torch.py` | The same kernels on PyTorch MPS |
+| `crates/siann-py/src/lib.rs` | The Rust extension, `siann._cpu`: `FlatIndex`, `IvfIndex` (storages, split queries), `L2TopK` |
+| `benchmarks/check_kernels.py` | Every kernel and index against NumPy's exact search |
+| `benchmarks/` | The benchmarks against FAISS (`backends.py`, `ivf_cpu.py`, `fp16_lists.py`, `single_query.py` and others), their raw output in `results/` |
+
+The Python package lives in `python/siann/`, and maturin (the tool that builds Rust extensions for
+Python) compiles the Rust crate into it as `siann._cpu`; `pyproject.toml` at the top of the repository
+ties the two together.
 
 ## Rules for changing the code
 
 - **Exact search is the oracle.** Every kernel and index is checked against NumPy's exact search
   (`check_kernels.py`), and changes that should not move results are checked bit for bit against
   outputs saved before the change.
-- **Every number from a committed script,** with its raw output in `proto/results/` and its place in
+- **Every number from a committed script,** with its raw output in `benchmarks/results/` and its place in
   [BENCHMARKS](BENCHMARKS.md), including the approaches that do not pay
   ([ALGORITHMS](ALGORITHMS.md#what-does-not-pay)).
 - **A new default must be no slower than the old one on any measured case,** single queries, batches

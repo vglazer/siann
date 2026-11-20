@@ -4,7 +4,7 @@
 
 siann is measured on two standard real datasets from
 [ann-benchmarks](https://github.com/erikbern/ann-benchmarks), the usual benchmark suite for
-approximate nearest-neighbor search, and on random Gaussian vectors. `proto/datasets.py` loads the
+approximate nearest-neighbor search, and on random Gaussian vectors. `benchmarks/datasets.py` loads the
 real ones from `data/` (not committed), which holds the ann-benchmarks HDF5 files
 (`sift-128-euclidean.hdf5`, `glove-100-angular.hdf5`) as published on the ann-benchmarks site.
 
@@ -26,7 +26,7 @@ an image. It is the classic benchmark for L2 search, and siann also uses it for 
 - **The coordinates are integers** (0 to 218), so **L1 distances are integers too, and tie often.**
   Two correct searches may then return different neighbors at the k-th place. siann's recall counts
   a returned neighbor as correct when it is no farther than the true k-th nearest, so that a tie
-  broken differently is not a miss (`agreement` in `proto/backends.py`).
+  broken differently is not a miss (`agreement` in `benchmarks/backends.py`).
 - **The vectors are nearly normalized:** every length is between 506 and 512. L2 search on SIFT
   therefore ranks almost as cosine search would.
 - **128 dimensions,** a multiple of the kernels' 16-dimension tiles, and the size at which FAISS's
@@ -44,7 +44,7 @@ Word vectors: GloVe embeddings of 1.2 million words and phrases, trained on Twit
 dimensions each. Similar words point in similar directions, so the metric is cosine (ann-benchmarks
 calls it "angular").
 
-- **Normalized on loading:** `proto/datasets.py` scales every base vector and query to unit length,
+- **Normalized on loading:** `benchmarks/datasets.py` scales every base vector and query to unit length,
   so that L2 ranks as cosine and every L2 method searches cosine unchanged. The raw lengths vary
   widely (0.04 to 18.7); none is zero.
 - **A harder dataset for graph indexes:** HNSW walks much further through its graph on GloVe than on
@@ -55,7 +55,7 @@ calls it "angular").
 - **float16 lists round every coordinate,** by at most 2.4e-4 after normalizing, which moves IVF
   recall by at most 0.001. uint8 lists do not apply: the coordinates are not integers.
 - **100 dimensions,** not a multiple of the kernels' 16-dimension tiles; the kernels pad the last
-  tile, and the checks in `proto/check_kernels.py` cover such sizes.
+  tile, and the checks in `benchmarks/check_kernels.py` cover such sizes.
 - **FAISS's exact L2 is slow here by default:** below 128 dimensions, FAISS 1.16 skips BLAS unless
   `faiss.cvar.distance_compute_blas_threshold` is lowered, and takes 2.90 s instead of 0.42 s for
   1,000 queries. siann's comparisons set it to 20 (see [BACKENDS](BACKENDS.md)).
@@ -70,7 +70,7 @@ by inner product, become badly unbalanced (see [BENCHMARKS](BENCHMARKS.md#inner-
 ## Gaussian vectors
 
 Independent standard normal coordinates, from NumPy's generator with seed 0, base vectors first and
-then queries (`data` in `proto/backends.py`). Their sizes are free (`--n`, `--d`, `--q`), which
+then queries (`data` in `benchmarks/backends.py`). Their sizes are free (`--n`, `--d`, `--q`), which
 makes them the dataset for timing at sizes and dimensions the real ones lack.
 
 Random vectors are the hardest case for approximate search: in high dimensions every point is

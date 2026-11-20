@@ -5,8 +5,8 @@
 For each kind of similarity search on a Mac, which path is fastest, and by how much? Every comparison
 is against FAISS's strongest option for the case, its compressed indexes included, with exact search
 returning exactly FAISS's neighbors and approximate search compared at matched recall. Each section
-names the scripts that reproduce it; they are in [proto/](proto/), and their raw output is in
-[proto/results/](proto/results/). The [README](README.md#which-to-use-and-how-it-compares) sums up the
+names the scripts that reproduce it; they are in [benchmarks/](benchmarks/), and their raw output is in
+[benchmarks/results/](benchmarks/results/). The [README](README.md#which-to-use-and-how-it-compares) sums up the
 comparison, and [ARCHITECTURE](ARCHITECTURE.md) explains where the speed comes from.
 
 ## Setup
@@ -470,19 +470,18 @@ cost of about 0.2 ms per call.
 
 ## Reproducing
 
-From `proto/`, with the Rust extension built (`cd rust_cpu && VIRTUAL_ENV=../../.venv uvx maturin
-develop --release --uv`) and the datasets in `data/`, run each script with
-`uv run --no-sync --group proto python <script>`; `--no-sync` keeps uv from removing the locally built
-extension. For example:
+With [Rust](https://rustup.rs) and [uv](https://docs.astral.sh/uv/) installed, `uv sync --group bench`
+builds siann, Rust extension included, with the benchmarks' dependencies (FAISS, PyTorch, jax-mps,
+h5py); the datasets go in `data/` ([DATASETS](DATASETS.md)). Then, from `benchmarks/`:
 
 ```sh
-uv run --no-sync --group proto python check_kernels.py                     # every kernel against NumPy
-uv run --no-sync --group proto python backends.py --dataset sift --q 1000  # exact search, every backend
-uv run --no-sync --group proto python ivf_cpu.py --dataset glove --metric l2   # IVF and HNSW
-uv run --no-sync --group proto python fp16_lists.py --dataset sift --storages float32,float16,uint8 --faiss
-uv run --no-sync --group proto python single_query.py --dataset sift --splits 1,4 --faiss
+uv run --group bench python check_kernels.py                     # every kernel against NumPy
+uv run --group bench python backends.py --dataset sift --q 1000  # exact search, every backend
+uv run --group bench python ivf_cpu.py --dataset glove --metric l2   # IVF and HNSW
+uv run --group bench python fp16_lists.py --dataset sift --storages float32,float16,uint8 --faiss
+uv run --group bench python single_query.py --dataset sift --splits 1,4 --faiss
 ```
 
-FAISS and PyTorch cannot share a process on macOS, so the scripts that use both run each in a process
-of its own. An IVF or compressed-index run takes three to five minutes, an exact-search run on every
-backend about two.
+uv rebuilds the extension when its Rust sources change. FAISS and PyTorch cannot share a process on
+macOS, so the scripts that use both run each in a process of its own. An IVF or compressed-index run
+takes three to five minutes, an exact-search run on every backend about two.

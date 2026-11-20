@@ -1,16 +1,40 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
 [project]
 name = "siann"
-version = "0.1.0"
 description = "Fast similarity search on Apple silicon, across metrics"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Victor Glazer" }]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["numpy>=2.5.5", "mlx>=0.32.4"]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/vglazer/siann"
+Documentation = "https://siann.readthedocs.io"
+Repository = "https://github.com/vglazer/siann"
+
+[project.optional-dependencies]
+torch = ["torch>=2.15.0"]
 
 [dependency-groups]
-proto = [
+# the benchmarks and checks in benchmarks/: FAISS as the baseline, the other frameworks, the datasets
+bench = [
     "faiss-cpu>=1.16.0",
     "h5py>=3.16.0",
     "jax-mps>=0.11.1",
-    "mlx>=0.32.4",
-    "numpy>=2.5.5",
     "torch>=2.15.0",
 ]
+
+[tool.maturin]
+manifest-path = "crates/siann-py/Cargo.toml"
+python-source = "python"
+module-name = "siann._cpu"
+features = ["pyo3/extension-module"]
+
+[tool.uv]
+# rebuild the Rust extension when its sources change
+cache-keys = [{ file = "pyproject.toml" }, { file = "crates/siann-py/Cargo.toml" }, { file = "crates/siann-py/src/**/*.rs" }]

@@ -810,28 +810,38 @@ wheels = [
 
 [[package]]
 name = "siann"
-version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
+dependencies = [
+    { name = "mlx" },
+    { name = "numpy" },
+]
+
+[package.optional-dependencies]
+torch = [
+    { name = "torch" },
+]
 
 [package.dev-dependencies]
-proto = [
+bench = [
     { name = "faiss-cpu" },
     { name = "h5py" },
     { name = "jax-mps" },
-    { name = "mlx" },
-    { name = "numpy" },
     { name = "torch" },
 ]
 
 [package.metadata]
+requires-dist = [
+    { name = "mlx", specifier = ">=0.32.4" },
+    { name = "numpy", specifier = ">=2.5.5" },
+    { name = "torch", marker = "extra == 'torch'", specifier = ">=2.15.0" },
+]
+provides-extras = ["torch"]
 
 [package.metadata.requires-dev]
-proto = [
+bench = [
     { name = "faiss-cpu", specifier = ">=1.16.0" },
     { name = "h5py", specifier = ">=3.16.0" },
     { name = "jax-mps", specifier = ">=0.11.1" },
-    { name = "mlx", specifier = ">=0.32.4" },
-    { name = "numpy", specifier = ">=2.5.5" },
     { name = "torch", specifier = ">=2.15.0" },
 ]
 

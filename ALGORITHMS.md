@@ -163,7 +163,7 @@ queries. Byte lists with integer queries are faster everywhere on the CPU, throu
 ## What does not pay
 
 Each of these is measured; the scripts are named in parentheses, and their output is in
-[proto/results/](proto/results/).
+[benchmarks/results/](benchmarks/results/).
 
 - **LSH for dense vectors** (`lsh_l1.py`). Locality-sensitive hashing hashes vectors so that near ones
   tend to collide, then compares only the colliding ones. With Cauchy random projections (the standard

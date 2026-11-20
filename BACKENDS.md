@@ -5,7 +5,7 @@
 A Mac has several ways to run numerical code on its GPU and CPU. siann measures each of them on the
 same searches, with the same algorithms, and checks every result against exact search. This page
 describes what each backend offers and its pitfalls; [BENCHMARKS](BENCHMARKS.md) has the full
-measurements. The comparisons run through `proto/backends.py`, which starts each backend in its own
+measurements. The comparisons run through `benchmarks/backends.py`, which starts each backend in its own
 process.
 
 ## Summary
@@ -46,7 +46,7 @@ with sizes passed as template arguments, so each new shape compiles once.
 
 PyTorch's Metal backend, called MPS after Apple's Metal Performance Shaders.
 `torch.mps.compile_shader` (in PyTorch 2.15) compiles Metal source into callable kernels, so siann's
-kernels port with the Metal code unchanged (`proto/torch_kernels.py`, `proto/ivf_torch.py`).
+kernels port with the Metal code unchanged (`siann.torch_kernels`, `siann.ivf_torch`).
 
 - **The same kernel runs at the same speed as in MLX:** L1 0.082 against 0.081 s; the top-k kernel 3.8
   against 4.2 ms per tile. A custom kernel's speed belongs to the kernel, not the framework.
@@ -112,7 +112,7 @@ strongest CPU method for approximate search), plain and compressed.
 
 ## siann's Rust CPU code
 
-A small extension in safe Rust (`proto/rust_cpu`), exposed to Python through PyO3 (the bridge that
+A small extension in safe Rust (`crates/siann-py`, built into the package as `siann._cpu`), exposed to Python through PyO3 (the bridge that
 lets Python call Rust) and threaded with rayon (Rust's data-parallelism library): exact search and IVF
 for L1, L2, L-infinity and inner product, with the blocked layout described in
 [ALGORITHMS](ALGORITHMS.md), IVF lists stored as float32, float16 or uint8, and `L2TopK`, which ranks
