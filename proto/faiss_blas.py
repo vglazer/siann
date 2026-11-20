@@ -1,6 +1,6 @@
 """FAISS's flat L2 search by dimension, with its default BLAS threshold and with the threshold at 20,
 and the same on GloVe-100. FAISS 1.16 defaults `distance_compute_blas_threshold` to 128,000, which
-sends L2 below 128 dimensions down a path 4-7x slower than BLAS. RESULTS.md, "FAISS's BLAS threshold".
+sends L2 below 128 dimensions down a path 4-7x slower than BLAS. BENCHMARKS.md, "FAISS's BLAS threshold".
 
     uv run --no-sync --group proto python faiss_blas.py
 """

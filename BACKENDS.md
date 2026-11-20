@@ -1,13 +1,12 @@
 # Backends
 
-*Part of the siann documentation: [README](README.md), [ALGORITHMS](ALGORITHMS.md),
-[ARCHITECTURE](ARCHITECTURE.md), [BACKENDS](BACKENDS.md), [DATASETS](DATASETS.md), [BENCHMARKS](BENCHMARKS.md); measurements in
-[RESULTS](RESULTS.md).*
+*Part of the [siann documentation](README.md#documentation).*
 
 A Mac has several ways to run numerical code on its GPU and CPU. siann measures each of them on the
 same searches, with the same algorithms, and checks every result against exact search. This page
-describes what each backend offers and its pitfalls. The comparisons run through
-`proto/backends.py`, which starts each backend in its own process.
+describes what each backend offers and its pitfalls; [BENCHMARKS](BENCHMARKS.md) has the full
+measurements. The comparisons run through `proto/backends.py`, which starts each backend in its own
+process.
 
 ## Summary
 
@@ -20,22 +19,25 @@ describes what each backend offers and its pitfalls. The comparisons run through
 | siann's Rust code | CPU | (it is the kernel) | L1: 0.47 s |
 
 With only each framework's built-in operations, every GPU backend is slower than FAISS on the CPU:
-0.25-0.6 times its speed. On the GPU, the three frameworks' built-in operations are within 1.6 times
-of each other. **The GPU's advantage comes entirely from custom kernels,** so a comparison of
-backends is mostly a comparison of how well each supports them, and of the speed of its built-in
-matrix multiply.
+0.25-0.6 times its speed, the three frameworks within 1.6 times of each other. **The GPU's advantage
+comes entirely from custom kernels,** so a comparison of backends is mostly a comparison of how well
+each supports them, and of the speed of its built-in matrix multiply.
 
 ## MLX
 
-Apple's array framework for its own chips. It evaluates lazily: operations build a graph, which runs
-when a result is needed (`mx.eval`). Custom Metal kernels (Metal is Apple's GPU programming
-language) are written as source strings through `mx.fast.metal_kernel`, with sizes passed as
-template arguments, so each new shape compiles once.
+Apple's array framework for its own chips, and siann's default GPU backend. It evaluates lazily:
+operations build a graph, which runs when a result is needed (`mx.eval`). Custom Metal kernels (Metal
+is Apple's GPU programming language) are written as source strings through `mx.fast.metal_kernel`,
+with sizes passed as template arguments, so each new shape compiles once.
 
-- **The fastest matrix multiply of the three:** 6.7 ms for 256 x 1M x 128, against PyTorch's 14.2 ms.
-  Fused with the norms through `mx.addmm`, 6.9 ms. This is why MLX leads on L2.
-- **Evaluate each tile.** Left to the end, lazy evaluation kept every tile's distance matrix alive
-  and took 196 s instead of 0.9 s for 10,000 queries.
+- **The fastest matrix multiply of the three:** 6.7 ms for 256 x 1M x 128, against PyTorch's 14.2 ms;
+  fused with the norms through `mx.addmm`, 6.9 ms. This is why MLX leads on L2.
+- **Evaluate each tile.** Evaluated only at the end, a search keeps every tile's distance matrix alive:
+  196 s instead of 0.9 s for 10,000 queries.
+- **`argpartition` suits choosing a few dozen of a few thousand per row:** 0.30 ms for 100 rows of
+  4,000 at k = 64, against 1.0 ms for siann's two-stage selection kernel, whose running top-k per thread
+  does not fit in registers at that k. For the top 10 of a million, siann's kernel is the one to use
+  (4.1 against 146-152 ms per tile).
 - **`mx.compile`** (whole-function compilation) speeds up built-in L1 from 7.2 to 4.4 s, and does
   nothing for L2.
 - **Its CPU backend is not competitive:** 15 times slower than FAISS.
@@ -43,19 +45,14 @@ template arguments, so each new shape compiles once.
 ## PyTorch (MPS)
 
 PyTorch's Metal backend, called MPS after Apple's Metal Performance Shaders.
-`torch.mps.compile_shader` (in PyTorch 2.15, the version measured) compiles Metal source into callable kernels, so siann's kernels port with
-the Metal code unchanged (`proto/torch_kernels.py`).
+`torch.mps.compile_shader` (in PyTorch 2.15) compiles Metal source into callable kernels, so siann's
+kernels port with the Metal code unchanged (`proto/torch_kernels.py`, `proto/ivf_torch.py`).
 
-- **The same kernel runs at the same speed as in MLX:** L1 0.082 against 0.081 s; the top-k kernel
-  3.8 against 4.2 ms per tile. A custom kernel's speed belongs to the kernel, not the framework.
-- **IVF too:** the GPU IVF ported the same way (`proto/ivf_torch.py`), with the same probe selection,
-  threads per query and in-kernel merge, returns the same neighbors as MLX's and runs level with it on
-  batches of 10,000 (up to 1.12 times faster above nprobe 16). PyTorch's fixed cost of about 0.2 ms per
-  call makes it 0.84-0.97 times MLX's speed on batches of 100 and 0.50-0.88 times on single queries.
-- **For choosing a few dozen of a few thousand per row, MLX's `argpartition` is fast:** 0.30 ms for 100
-  rows of 4,000 at k = 64, against 1.0 ms for siann's two-stage selection kernel, whose running top-k
-  per thread does not fit in registers at that k. For the top 10 of a million, siann's kernel is the
-  one to use (4.1 against 146-152 ms per tile).
+- **The same kernel runs at the same speed as in MLX:** L1 0.082 against 0.081 s; the top-k kernel 3.8
+  against 4.2 ms per tile. A custom kernel's speed belongs to the kernel, not the framework.
+- **The GPU IVF too** returns the same neighbors as MLX's and runs level with it on batches of 10,000.
+  PyTorch's fixed cost of about 0.2 ms per call makes it 0.84-0.97 times MLX's speed on batches of 100
+  and 0.50-0.88 times on single queries.
 - **The matrix multiply is about half MLX's speed,** and is the whole L2 gap (0.10 against 0.046 s).
   `torch.addmm` still helps: 18.1 against 31.4 ms per tile written out.
 - **`torch.cdist(p=1)` builds the whole broadcast** (queries x vectors x dimensions) and fails beyond
@@ -74,10 +71,10 @@ compiler.
 - **No custom-kernel route:** Pallas, JAX's kernel language, targets CUDA and TPU, and jax-mps does
   not support it. JAX can only be compared on built-in operations.
 - **Level with the other frameworks' built-in operations** (L2 0.67 s against MLX's 0.65 s), and
-  faster than MLX's own on L1 when MLX runs op by op (4.6 against 7.2 s): JAX compiles the whole
+  faster than MLX's own on L1 when MLX runs op by op (4.6 against 7.2 s), since JAX compiles the whole
   function. Under `mx.compile`, MLX catches up (4.4 s).
 - **Make jitted functions once per process,** with arrays passed as arguments. Made anew on every
-  call, with the base vectors captured inside, every call recompiled (0.33 s instead of 0.007 s for
+  call, with the base vectors captured inside, every call recompiles (0.33 s instead of 0.007 s for
   100 queries on 20,000 vectors).
 - **It runs without trouble at full size,** though it is experimental (it prints a warning to that
   effect).
@@ -85,73 +82,46 @@ compiler.
 ## FAISS
 
 Meta's similarity-search library, the standard to beat. siann compares against its CPU indexes: the
-flat index for exact search, IVF-Flat, and HNSW (a graph index, its strongest CPU method for
-approximate search).
+flat index for exact search, IVF-Flat and IVF with scalar quantization, and HNSW (a graph index, its
+strongest CPU method for approximate search), plain and compressed.
 
 - **Its exact L2 is BLAS plus a top-k,** with Accelerate on a Mac, the same BLAS NumPy calls. siann's
   own BLAS path (NumPy's multiply and a Rust top-k) is 1.7-3.6 times as fast, mainly by choosing the
-  tile sizes for the cache (see [ALGORITHMS](ALGORITHMS.md)).
+  tile sizes for the cache.
 - **Set `faiss.cvar.distance_compute_blas_threshold = 20`** for exact L2 below 128 dimensions.
   FAISS 1.16 defaults it to 128,000, so with fewer queries it skips BLAS and runs 4-7 times slower
-  (GloVe-100: 2.90 s against 0.42 s). See `proto/faiss_blas.py`.
-- **Its Metal GPU path is not run.** FAISS 1.16's Mac builds include a Metal backend (flat and IVF
-  indexes). It is 2.6 times slower than siann on exact L2 with 1,000 queries, and with 10,000 it fails
-  and crashes the machine.
+  (GloVe-100: 2.90 s against 0.42 s).
+- **Do not run its Metal GPU path.** FAISS 1.16's Mac builds include a Metal backend (flat and IVF
+  indexes). On exact L2 with 1,000 queries it is 2.6 times slower than siann; with 10,000 it fails and
+  crashes the machine.
 - **HNSW handles L1 well,** and is the method to beat for single queries and small batches.
 - **Pad to a multiple of 8 dimensions for its compressed indexes.** Its scalar quantizer
   (`IndexIVFScalarQuantizer`, `IndexHNSWSQ`) has a fast SIMD path only for such dimensions: at 100
   (GloVe), float16 search is 6.5 times slower than at 104, and slower than float32. Zero columns leave
   L2 distances unchanged.
 - **Its compressed indexes are strong.** `QT_8bit_direct` (bytes) and `QT_fp16` lists, not by residual,
-  hold exactly the vectors siann's compressed lists do, and compression speeds up its HNSW 1.2-2.3
-  times. For bytes, FAISS also **rounds the query to integers** and computes in integer arithmetic:
-  on one thread its uint8 IVF is twice as fast as siann's Rust (and faster than its own float32), and
-  exact for integer queries like SIFT's, but only approximate for others (`proto/faiss_sq8_query.py`).
+  hold exactly the vectors siann's compressed lists do, and compression speeds up its HNSW 1.6-2.3
+  times on SIFT. For bytes, FAISS also **rounds the query to integers** and computes in integer
+  arithmetic: exact for integer queries like SIFT's, approximate for others.
 - **Its IVF can split one query over threads** (`parallel_mode = 1`), but it pays about 100
   microseconds to wake the threads, as any split on a shared pool does.
 - **Its inner product (`IndexFlatIP`) is faster than its L2** (0.29 against 0.46 s for 1,000 queries
-  on GloVe), having no norms to add, so siann's CPU BLAS path is only level with it on 1,000 queries
-  (2.7 times on 100); siann's GPU is 4.1-17.7 times.
+  on GloVe), having no norms to add.
 - **Its L-infinity (`METRIC_Linf`) is slow:** three times its own L1 time for exact search (0.97
-  against 0.33 s on 200,000 Gaussian vectors), where siann's GPU kernels take the same time for both.
+  against 0.33 s on 200,000 Gaussian vectors).
 
 ## siann's Rust CPU code
 
 A small extension in safe Rust (`proto/rust_cpu`), exposed to Python through PyO3 (the bridge that
 lets Python call Rust) and threaded with rayon (Rust's data-parallelism library): exact search and IVF
-for L1, L2 and L-infinity, with the blocked layout described in [ALGORITHMS](ALGORITHMS.md), and IVF
-lists stored as float32, float16 or uint8. It exists for the cases where FAISS and the frameworks' CPU
-backends fall short: exact L1 at 3.8 times FAISS and L-infinity at 7.3 times, and IVF for single
+for L1, L2, L-infinity and inner product, with the blocked layout described in
+[ALGORITHMS](ALGORITHMS.md), IVF lists stored as float32, float16 or uint8, and `L2TopK`, which ranks
+NumPy's BLAS products for exact L2. It exists for the cases where FAISS and the frameworks' CPU
+backends fall short: exact L1 at 3.8-4.3 times FAISS, L-infinity at 7.3 times, and IVF for single
 queries.
 
 The code relies on the compiler to turn plain loops into NEON instructions, without `unsafe` (which
-the explicit NEON intrinsics would need). Five rules keep it fast, each from a measurement:
-
-1. **Check the assembly, not just the timing.** The compiler's choice of which loop to vectorize
-   decides the speed, and it is easy to see in the emitted instructions (`fabd.4s`, `udot`) and easy
-   to miss in a timing alone.
-2. **Write a floating-point maximum as a comparison and select.** `f32::max` (and an integer maximum
-   on the float bits) is a reduction the compiler may reorder, so it vectorizes across dimensions,
-   with shuffles and a large stack frame, and L-infinity takes twice L1's time; the select keeps one
-   running maximum per lane (1.4 times L1's time).
-3. **Choose the layout for the arithmetic.** Floating-point sums may not be reordered, so the blocked
-   layout (8 vectors per block, dimension by dimension) gets one running distance per lane. Integer
-   sums may be reordered, so for byte lists the integer path reads each vector's bytes contiguously:
-   a plain loop per vector compiles to 16-byte absolute differences and the dot-product instruction
-   (`udot`), 1.8 times the float path. In the blocked layout the same integer arithmetic is no faster
-   than float, even written with explicit SIMD types (the `wide` crate).
-4. **Loop over flat slices.** Widening float16 lists over nested `[u16; 8]` blocks makes the compiler
-   load each value separately; over flat slices it is one 16-byte load per 8 values.
-5. **Give one query's parallel work a thread pool of its own.** Spreading a single query over rayon's
-   global pool (all 16 cores) wakes its sleeping threads, about 100 microseconds per query, more than
-   the split saves at low nprobe. Split queries run on a small pool (rayon's `ThreadPoolBuilder`, safe),
-   made once per size: 4 threads cut latency 1.3-2.0 times.
-
-For exact L2, the Rust code does not multiply matrices itself: calling Accelerate from Rust would need
-`unsafe` (every call into a C library is), so NumPy does the multiply and Rust only ranks the products
-(`L2TopK`). It reads NumPy's arrays in place through rust-numpy (the PyO3 project's NumPy bindings),
-whose safe API keeps the `unsafe` inside the crate, as pyo3's does; copying the products instead would
-cost about as much as FAISS's whole search.
-
-Rust has no stable float16 type (it exists only in nightly builds), so float16 lists are stored as
-their 16-bit patterns and widened in safe code (see [ALGORITHMS](ALGORITHMS.md), "List storage").
+explicit NEON intrinsics would need); the rules that keep it fast are in
+[ARCHITECTURE](ARCHITECTURE.md#rules-for-changing-the-code). Rust has no stable float16 type (it exists
+only in nightly builds), so float16 lists are stored as their 16-bit patterns and widened in safe code
+(see [ALGORITHMS](ALGORITHMS.md), "List storage").

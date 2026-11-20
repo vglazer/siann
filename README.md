@@ -36,7 +36,7 @@ for single queries. On SIFT-like data, HNSW and the GPU cross over between 100 a
 batch below recall 0.99, and at about 100 from 0.99; on GloVe-like data, below 100.
 
 **How much faster, exact search** (the speed-up over FAISS's flat index; 1,000 queries; L-infinity on
-200,000 Gaussian vectors, inner product on raw GloVe-100; see BENCHMARKS):
+200,000 Gaussian vectors, inner product on raw GloVe-100):
 
 | Metric | siann's GPU | siann's CPU |
 | --- | ---: | ---: |
@@ -51,7 +51,7 @@ cosine and inner product are matrix multiplies, which FAISS runs through BLAS to
 gains less there.
 
 **How much faster, approximate search** (siann's GPU IVF against FAISS's HNSW, queries per second, at
-the nearest recall; see BENCHMARKS):
+the nearest recall):
 
 | Dataset, batch | Against float32 HNSW | Against compressed HNSW |
 | --- | ---: | ---: |
@@ -73,5 +73,4 @@ the nearest recall; see BENCHMARKS):
 | [ALGORITHMS](ALGORITHMS.md) | How exact search and IVF work on the GPU and the CPU, and what does not pay |
 | [BACKENDS](BACKENDS.md) | MLX, PyTorch MPS, jax-mps, FAISS and siann's Rust code: what each offers, and their pitfalls |
 | [DATASETS](DATASETS.md) | SIFT1M, GloVe-100 and Gaussian vectors: sources, preparation and quirks |
-| [BENCHMARKS](BENCHMARKS.md) | Which backend to use for each workload, and the measurements behind it |
-| [RESULTS](RESULTS.md) | Every measurement, with the script that produced it |
+| [BENCHMARKS](BENCHMARKS.md) | Which path to use for each workload, and every measurement behind it, with the scripts that reproduce them |

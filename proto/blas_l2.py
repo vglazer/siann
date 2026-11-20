@@ -30,7 +30,7 @@ K = 10
 def default_tiles(nq: int) -> tuple[int, int]:
     """The default query tile and base block: up to 512 queries, and a product of about 2^22 values
     (16 MB), the block rounded down to a power of two. Products of 4-8 million values were fast on
-    SIFT and GloVe; smaller ones pay per-call overhead, larger ones fall out of cache (RESULTS.md)."""
+    SIFT and GloVe; smaller ones pay per-call overhead, larger ones fall out of cache (BENCHMARKS.md)."""
     qtile = min(nq, 512)
     return qtile, 1 << ((1 << 22) // qtile).bit_length() - 1
 

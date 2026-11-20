@@ -201,7 +201,7 @@ class GpuIVF:
                select: str = "auto", merge: str = "kernel") -> np.ndarray:
         """The query-major scan: `threads` threads per query walk its lists (128 is fastest at every
         measured nprobe). `select` chooses each query's probes (probe_lists); "auto" is argpartition,
-        fastest for this scan at every nprobe (RESULTS.md, "IVF: scans and FAISS")."""
+        fastest for this scan at every nprobe (BENCHMARKS.md, "Where a GPU call's time goes")."""
         select = "argpartition" if select == "auto" else select
         q = mx.array(xq)
         dist = coarse_dist(q, self.centroids, self.cnorms, self.metric)

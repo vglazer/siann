@@ -1,7 +1,7 @@
 """The Rust CPU exact L1 search (rust_cpu): index build time, and search time by the number of queries each
 thread takes at a time (`chunk`), against FAISS's flat L1. Also counts the vector instructions in the
 built extension, to confirm that the inner loop uses NEON (`fabd.4s`, `fadd.4s`) and has no scalar
-absolute differences. RESULTS.md, "Exact search on the CPU".
+absolute differences. BENCHMARKS.md, "Exact search on the CPU".
 
     uv run --no-sync --group proto python rust_cpu_sweep.py
 """

@@ -1,8 +1,6 @@
 # Datasets
 
-*Part of the siann documentation: [README](README.md), [ALGORITHMS](ALGORITHMS.md),
-[ARCHITECTURE](ARCHITECTURE.md), [BACKENDS](BACKENDS.md), [DATASETS](DATASETS.md), [BENCHMARKS](BENCHMARKS.md); measurements in
-[RESULTS](RESULTS.md).*
+*Part of the [siann documentation](README.md#documentation).*
 
 siann is measured on two standard real datasets from
 [ann-benchmarks](https://github.com/erikbern/ann-benchmarks), the usual benchmark suite for
@@ -67,7 +65,7 @@ calls it "angular").
 The same GloVe vectors without the normalization, for inner product. Their lengths run from 0.04 to
 18.7, so ranking by inner product differs from ranking by cosine: long vectors dominate every query's
 results. That makes it a hard case for maximum inner product search, where an IVF's lists, assigned
-by inner product, become badly unbalanced (see [ALGORITHMS](ALGORITHMS.md), "What does not pay").
+by inner product, become badly unbalanced (see [BENCHMARKS](BENCHMARKS.md#inner-product)).
 
 ## Gaussian vectors
 
@@ -78,4 +76,4 @@ makes them the dataset for timing at sizes and dimensions the real ones lack.
 Random vectors are the hardest case for approximate search: in high dimensions every point is
 nearly equally far from every other, so there is no cluster structure for IVF or a graph to
 exploit. They are used for exact search only, where structure does not matter and the timings match
-the real datasets' (see [RESULTS](RESULTS.md), "Exact search on the GPU").
+the real datasets' (see [BENCHMARKS](BENCHMARKS.md#exact-search-on-the-gpu)).
