@@ -5,7 +5,8 @@
 siann is measured on two standard real datasets from
 [ann-benchmarks](https://github.com/erikbern/ann-benchmarks), the usual benchmark suite for
 approximate nearest-neighbor search, on Music-100, the standard benchmark for maximum inner product
-search, and on random Gaussian vectors. `benchmarks/datasets.py` loads the real ones from `data/` (not
+search, on DBpedia OpenAI embeddings, modern 1,536-dimensional text embeddings, and on random Gaussian
+vectors. `benchmarks/datasets.py` loads the real ones from `data/` (not
 committed): the ann-benchmarks HDF5 files (`sift-128-euclidean.hdf5`, `glove-100-angular.hdf5`) as
 published on the ann-benchmarks site, and Music-100's raw files in `data/music-100/`. The figures below
 come from `benchmarks/dataset_stats.py`.
@@ -15,6 +16,7 @@ come from `benchmarks/dataset_stats.py`.
 | SIFT1M | 1,000,000 | 10,000 | 128 | L2 (and L1) | integers, 0 to 218 |
 | GloVe-100 | 1,183,514 | 10,000 | 100 | cosine | real numbers, -6.5 to 6.0 |
 | Music-100 | 1,000,000 | 10,000 | 100 | inner product | real numbers, -0.70 to 0.75 |
+| DBpedia OpenAI | 990,000 | 10,000 | 1,536 | cosine | real numbers, -0.69 to 0.29, unit length |
 | Gaussian | 1,000,000 by default | 1,000 by default | 128 by default | L2, L1 | standard normal |
 
 The HDF5 files (and Music-100's) also come with each query's true nearest neighbors in the dataset's
@@ -89,6 +91,23 @@ states no license.
 - **Not integers,** so uint8 lists do not apply; no zero-length vectors.
 - **100 dimensions,** as GloVe: not a multiple of the kernels' 16-dimension tiles or of the 8 FAISS's
   compressed indexes need.
+
+## DBpedia OpenAI (`dbpedia`)
+
+OpenAI's text-embedding-ada-002 embeddings of a million DBpedia entities, 1,536 dimensions, compared by
+cosine, typical of the vectors retrieval systems search. The source is the Hugging Face dataset
+[KShivendu/dbpedia-entities-openai-1M](https://huggingface.co/datasets/KShivendu/dbpedia-entities-openai-1M)
+(MIT license, 26 Parquet files, 9.5 GB), from which ann-benchmarks builds `dbpedia-openai-1000k-angular`.
+`benchmarks/prepare_dbpedia.py` builds it the same way: 10,000 queries split off by scikit-learn's
+`train_test_split` with seed 42, leaving 990,000 base vectors, written to
+`data/dbpedia-openai-1000k-angular.hdf5`.
+
+- **Already unit length** (0.9999998 to 1.0000001 as published), so cosine and L2 rank alike; the
+  loader normalizes anyway, as for GloVe.
+- **1,536 dimensions,** twelve times SIFT's: the base takes 6.1 GB as float32, and exact search is
+  dominated by its matrix multiply.
+- **Measured on a 100,000-vector subset** in these docs (see
+  [BENCHMARKS](BENCHMARKS.md#high-dimensional-text-embeddings)).
 
 ## Gaussian vectors
 

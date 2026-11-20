@@ -195,7 +195,10 @@ far fewer vectors per query than an IVF, as HNSW does on the CPU, so CAGRA is fa
 on SIFT-like data, 1.2-1.5 times siann's GPU IVF in batches of 100 and 2.1-2.6 times in batches of
 10,000, and on inner product (Music-100) 1.45-1.5 times in batches of 10,000. On GloVe-like data the two
 are level, and CAGRA reaches recall 0.882 at most in the settings measured. mlxvs has no L1 or
-L-infinity, and on single queries siann's CPU path is 2.7-5.2 times faster than mlxvs's GPU.
+L-infinity, and on single queries siann's CPU path is 2.7-5.2 times faster than mlxvs's GPU. On
+1,536-dimensional text embeddings (measured on 100,000 vectors) the matrix multiply, the same in both,
+dominates exact search, so siann's lead there shrinks to 1.1-1.2 times, and CAGRA is 1.9-2.8 times
+siann's GPU IVF.
 
 ## Code layout
 

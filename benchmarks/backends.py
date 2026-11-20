@@ -277,7 +277,7 @@ def main() -> None:
     p.add_argument("--k", type=int, default=10)
     p.add_argument("--threads", type=int, default=16)
     p.add_argument("--metrics", default="l2,l1", help="any of l2, l1, linf, ip (inner product)")
-    p.add_argument("--dataset", default="gaussian", choices=["gaussian", "sift", "glove", "glove-raw", "music100"],
+    p.add_argument("--dataset", default="gaussian", choices=["gaussian", "sift", "glove", "glove-raw", "music100", "dbpedia"],
                    help="glove is normalized, so L2 ranks as cosine")
     p.add_argument("--repeats", type=int, default=3, help="timed runs after a warm-up; the median is reported")
     p.add_argument("--backends", default=",".join(BACKENDS))

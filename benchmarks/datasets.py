@@ -1,14 +1,15 @@
 """Datasets in ../data: from ann-benchmarks, SIFT1M (sift) and GloVe-100 (glove, cosine distance,
 served normalized so that L2 ranks like cosine; glove-raw, the same vectors unnormalized, for inner
-product, where their lengths, 0.04 to 18.7, matter); and Music-100 (music100, inner product), from
-Morozov and Babenko's ip-nsw, in data/music-100/ as raw float32."""
+product, where their lengths, 0.04 to 18.7, matter); Music-100 (music100, inner product), from
+Morozov and Babenko's ip-nsw, in data/music-100/ as raw float32; and DBpedia OpenAI 1M (dbpedia,
+1,536-dimensional text embeddings, cosine, served normalized), built by prepare_dbpedia.py."""
 from pathlib import Path
 
 import h5py
 import numpy as np
 
 FILES = {"sift": "sift-128-euclidean.hdf5", "glove": "glove-100-angular.hdf5",
-         "glove-raw": "glove-100-angular.hdf5"}
+         "glove-raw": "glove-100-angular.hdf5", "dbpedia": "dbpedia-openai-1000k-angular.hdf5"}
 
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -21,7 +22,7 @@ def load(name: str, queries: int) -> tuple[np.ndarray, np.ndarray]:
         return xb, np.ascontiguousarray(xq[:queries])
     f = h5py.File(DATA / FILES[name], "r")
     xb, xq = f["train"][:].astype(np.float32), f["test"][:queries].astype(np.float32)
-    if name == "glove":
+    if name in ("glove", "dbpedia"):   # cosine: served normalized, so that L2 ranks like cosine
         xb /= np.linalg.norm(xb, axis=1, keepdims=True) + 1e-12
         xq /= np.linalg.norm(xq, axis=1, keepdims=True) + 1e-12
     return xb, xq

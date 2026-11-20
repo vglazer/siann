@@ -31,10 +31,11 @@ K = 10
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset", default="sift", choices=["sift", "glove", "glove-raw", "music100"])
+    p.add_argument("--dataset", default="sift", choices=["sift", "glove", "glove-raw", "music100", "dbpedia"])
     p.add_argument("--metric", default="l2", choices=["l1", "l2", "linf", "ip"])
     p.add_argument("--nlist", type=int, default=4000)
     p.add_argument("--queries", type=int, default=10_000, help="for the full batch")
+    p.add_argument("--base", type=int, default=0, help="use only the first N base vectors (0: all)")
     p.add_argument("--small", type=int, default=1000, help="queries for single queries and batches of 100")
     p.add_argument("--nprobes", default="4,16,32,64,128")
     p.add_argument("--efs", default="16,32,64,128,256")
@@ -44,6 +45,8 @@ def main() -> None:
     faiss.omp_set_num_threads(a.threads)
     faiss.cvar.distance_compute_blas_threshold = 20   # see faiss_blas.py
     xb, xq = load(a.dataset, a.queries)
+    if a.base:
+        xb = np.ascontiguousarray(xb[:a.base])
     d = xb.shape[1]
     fm = FAISS_METRIC[a.metric]
     print(f"{a.dataset}, {a.metric}: {len(xb):,} vectors, {d} dimensions; {a.nlist} lists; "

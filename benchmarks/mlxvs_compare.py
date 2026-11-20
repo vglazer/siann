@@ -31,7 +31,7 @@ from datasets import load
 from timing import throughput
 
 K = 10
-METRIC = {"sift": "l2", "glove": "l2", "music100": "ip"}          # glove is normalized: l2 ranks as cosine
+METRIC = {"sift": "l2", "glove": "l2", "music100": "ip", "dbpedia": "l2"}   # glove, dbpedia normalized: l2 ranks as cosine
 MLXVS_METRIC = {"l2": "l2", "ip": "inner_product"}
 
 

@@ -56,7 +56,7 @@ def latency(search, xq: np.ndarray) -> tuple[float, float, np.ndarray]:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset", default="sift", choices=["sift", "glove"])
+    p.add_argument("--dataset", default="sift", choices=["sift", "glove", "dbpedia"])
     p.add_argument("--metric", default="l2", choices=["l1", "l2", "linf"])
     p.add_argument("--nlist", type=int, default=4000)
     p.add_argument("--queries", type=int, default=1000)

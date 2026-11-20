@@ -1,0 +1,33 @@
+dbpedia, l2: 100,000 vectors, 1536 dimensions; 1000 lists; 16 CPU threads; batches: 1 and 100 over 200 queries, 1,000 at once
+exact neighbors (Rust flat): 1.0 s
+GPU IVF built in 2.3 s
+Rust IVF built in 0.8 s (from the same centroids)
+FAISS IVF built in 0.2 s (from the same centroids)
+FAISS HNSW (M=32) built in 8.1 s
+
+  method                   recall@10  q/s, single   q/s, 100  q/s, full
+  Rust IVF, nprobe 4           0.770        6,779     32,717     37,168
+  Rust IVF list-major, 4       0.770        1,503     18,546     58,503
+  FAISS IVF, nprobe 4          0.770        4,552     22,850     42,696
+  GPU IVF, nprobe 4            0.770        1,876     44,388    136,712
+  Rust IVF, nprobe 16          0.902        3,629     10,267     10,421
+  Rust IVF list-major, 16      0.902        1,379     12,900     36,289
+  FAISS IVF, nprobe 16         0.902        1,893      9,450     11,854
+  GPU IVF, nprobe 16           0.902          832     30,107    104,725
+  Rust IVF, nprobe 32          0.943        2,232      5,532      5,427
+  Rust IVF list-major, 32      0.943        1,250     11,151     23,290
+  FAISS IVF, nprobe 32         0.943        1,415      5,490      6,156
+  GPU IVF, nprobe 32           0.943          487     16,498     67,575
+  Rust IVF, nprobe 64          0.969        1,262      2,852      2,847
+  Rust IVF list-major, 64      0.969          999      8,796     13,956
+  FAISS IVF, nprobe 64         0.969          914      2,884      3,133
+  GPU IVF, nprobe 64           0.969          267      8,728     38,588
+  Rust IVF, nprobe 128         0.987          680      1,499      1,473
+  Rust IVF list-major, 128     0.987          721      5,789      7,495
+  FAISS IVF, nprobe 128        0.987          527      1,536      1,581
+  GPU IVF, nprobe 128          0.987          140      4,485     21,097
+  FAISS HNSW, efSearch 16      0.915        8,041     21,933     22,932
+  FAISS HNSW, efSearch 32      0.957        5,272     14,406     14,934
+  FAISS HNSW, efSearch 64      0.977        3,193      8,967      9,202
+  FAISS HNSW, efSearch 128     0.990        1,836      5,316      5,480
+  FAISS HNSW, efSearch 256     0.995        1,016      3,057      3,158

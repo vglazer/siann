@@ -12,7 +12,7 @@ from datasets import load
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--datasets", default="sift,glove,glove-raw,music100")
+    p.add_argument("--datasets", default="sift,glove,glove-raw,music100,dbpedia")
     a = p.parse_args()
     for name in a.datasets.split(","):
         xb, xq = load(name, 10_000)

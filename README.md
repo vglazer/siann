@@ -19,12 +19,13 @@ case: FAISS 1.16 on the CPU (its compressed indexes included) and mlxvs 0.16.1 o
 cuVS's methods on MLX: exact search, IVF and CAGRA graphs), with exact search returning exactly the same
 neighbors and approximate search compared at matched recall. "SIFT-like" and "GloVe-like" refer to the
 real datasets measured, SIFT1M (image descriptors) and GloVe-100 (word embeddings), which favor
-different methods; Music-100 is the inner-product dataset ([DATASETS](DATASETS.md)). FAISS's Metal
+different methods; Music-100 is the inner-product dataset, and DBpedia OpenAI embeddings (1,536
+dimensions) the high-dimensional one ([DATASETS](DATASETS.md)). FAISS's Metal
 backend is not part of these comparisons.
 
 | Workload | Use | Against the strongest alternative |
 | --- | --- | --- |
-| Exact search, batches, GPU available | **siann's GPU kernels** (MLX) | L2 and cosine 8 times FAISS; L1 18-25 times; L-infinity 47-49 times (random vectors); inner product 4-18 times; 2.6-5.7 times mlxvs, which has no L1 or L-infinity |
+| Exact search, batches, GPU available | **siann's GPU kernels** (MLX) | L2 and cosine 8 times FAISS; L1 18-25 times; L-infinity 47-49 times (random vectors); inner product 4-18 times; 2.6-5.7 times mlxvs at 100-128 dimensions, 1.1-1.2 times at 1,536 (100,000 vectors); mlxvs has no L1 or L-infinity |
 | Exact search on the CPU, L1 or L-infinity | **siann's Rust kernel** | 3.8-4.3 times FAISS (L1), 7.3 times (L-infinity) |
 | Exact search on the CPU, L2, cosine or inner product | **siann's BLAS path** (NumPy's multiply, Accelerate, then siann's Rust top-k) | L2 and cosine 1.7-1.9 times FAISS on 1,000 queries, 3.0-3.6 times on 100; inner product 0.9-2.7 times |
 | Approximate, large batches (thousands) | GloVe-like data, L1 and L-infinity: **siann's GPU IVF, list-major**; SIFT-like data: **mlxvs's CAGRA** | GloVe: 5.0 times FAISS's HNSW, level with CAGRA; SIFT: CAGRA 2.1-2.6 times siann's GPU IVF, which is 1.2-1.3 times HNSW |
@@ -69,11 +70,13 @@ the nearest recall):
 
 | Comparison | siann against mlxvs |
 | --- | ---: |
-| Exact search, every batch size | **2.6-5.7x** |
+| Exact search, every batch size, 100-128 dimensions | **2.6-5.7x** |
+| Exact search, 1,536 dimensions (100,000 vectors) | 1.1-1.2x |
 | siann's GPU IVF against mlxvs's IVF-Flat | **1.2-4.2x** |
 | siann's GPU IVF against CAGRA, GloVe | level (0.9-1.1x) |
 | siann's GPU IVF against CAGRA, Music-100 (inner product) | level in batches of 100, 0.67-0.69x in batches of 10,000 |
 | siann's GPU IVF against CAGRA, SIFT | 0.38-0.83x (CAGRA faster) |
+| siann's GPU IVF against CAGRA, 1,536-dimensional embeddings (100,000 vectors) | 0.35-0.53x (CAGRA faster) |
 | L1 and L-infinity | mlxvs has neither |
 
 [BENCHMARKS](BENCHMARKS.md) has the measurements behind each row and how to rerun them, and
@@ -86,5 +89,5 @@ the nearest recall):
 | [ARCHITECTURE](ARCHITECTURE.md) | Why siann is faster than FAISS (and where it is not), with diagrams of how the pieces fit and which path a search takes |
 | [ALGORITHMS](ALGORITHMS.md) | How exact search and IVF work on the GPU and the CPU, and what does not pay |
 | [BACKENDS](BACKENDS.md) | MLX, PyTorch MPS, FAISS and siann's Rust code: what each offers, and their pitfalls |
-| [DATASETS](DATASETS.md) | SIFT1M, GloVe-100, Music-100 and Gaussian vectors: sources, preparation and quirks |
+| [DATASETS](DATASETS.md) | SIFT1M, GloVe-100, Music-100, DBpedia OpenAI and Gaussian vectors: sources, preparation and quirks |
 | [BENCHMARKS](BENCHMARKS.md) | Which path to use for each workload, and every measurement behind it, with the scripts that reproduce them |

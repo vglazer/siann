@@ -37,7 +37,7 @@ comparison, and [ARCHITECTURE](ARCHITECTURE.md) explains where the speed comes f
 
 | Workload | Use | Against the strongest alternative |
 | --- | --- | --- |
-| Exact search, batches, GPU available | **siann's GPU kernels** (MLX) | L2 and cosine 8 times FAISS; L1 18-25 times; L-infinity 47-49 times (random vectors); inner product 4-18 times; 2.6-5.7 times mlxvs, which has no L1 or L-infinity |
+| Exact search, batches, GPU available | **siann's GPU kernels** (MLX) | L2 and cosine 8 times FAISS; L1 18-25 times; L-infinity 47-49 times (random vectors); inner product 4-18 times; 2.6-5.7 times mlxvs at 100-128 dimensions, 1.1-1.2 times at 1,536 (100,000 vectors); mlxvs has no L1 or L-infinity |
 | Exact search on the CPU, L1 or L-infinity | **siann's Rust kernel** | 3.8-4.3 times FAISS (L1), 7.3 times (L-infinity) |
 | Exact search on the CPU, L2, cosine or inner product | **siann's BLAS path** (NumPy's multiply, Accelerate, then siann's Rust top-k) | L2 and cosine 1.7-1.9 times FAISS on 1,000 queries, 3.0-3.6 times on 100; inner product 0.9-2.7 times |
 | Approximate, large batches (thousands) | GloVe-like data, L1 and L-infinity: **siann's GPU IVF, list-major**; SIFT-like data: **mlxvs's CAGRA** | GloVe: 5.0 times FAISS's HNSW, level with CAGRA; SIFT: CAGRA 2.1-2.6 times siann's GPU IVF, which is 1.2-1.3 times HNSW |
@@ -475,6 +475,35 @@ batches of 10,000.
   the GPU (about 0.5-0.7 ms each), siann's Rust IVF on one thread 4,453 on SIFT at recall 0.973 (6,254
   with uint8 lists) and 5,057 on GloVe at 0.839.
 - **L1 and L-infinity** are siann's alone: mlxvs supports L2, cosine and inner product.
+
+## High-dimensional text embeddings
+
+*Reproduce with `mlxvs_compare.py --dataset dbpedia --base 100000 --queries 1000 --small 200 --nlist
+1000` and `ivf_cpu.py --dataset dbpedia --metric l2 --base 100000 --queries 1000 --small 200 --nlist
+1000 --no-torch`.*
+
+DBpedia OpenAI embeddings (1,536 dimensions, cosine; [DATASETS](DATASETS.md)), measured on the first
+100,000 base vectors, with 1,000 queries and 1,000 lists, so batches go up to 1,000 queries. A graph
+index's lead over an IVF usually grows with the collection, so these give the direction for a million
+vectors, not the size of the gap (`mlxvs_dbpedia_100k.txt`, `ivf_dbpedia_100k.txt`).
+
+- **Exact search on the GPU:** siann's is 1.1-1.2x mlxvs's (26,744 against 21,912 queries per second in
+  a batch of 1,000), against 2.6-5.7x at 100-128 dimensions: at 1,536 dimensions the matrix multiply,
+  the same in both, is most of the time. It gives recall 1.0 faster than FAISS's HNSW gives any recall
+  in a batch of 1,000 (HNSW: 22,932 at recall 0.915), and within 1.7x of CAGRA at recall 0.99.
+- **mlxvs's CAGRA is 1.9-2.8x siann's GPU IVF** at the nearest recall, in batches of 100 and of 1,000:
+
+  | Recall: siann / CAGRA | Batches of 100: siann / CAGRA | Batch of 1,000 |
+  | --- | ---: | ---: |
+  | 0.943 / 0.952 | 30,450 / 63,912 | 74,872 / 142,080 |
+  | 0.969 / 0.976 | 16,831 / 38,855 | 41,151 / 81,354 |
+  | 0.986 / 0.990 | 8,829 / 24,999 | 22,889 / 46,195 |
+
+- **Against FAISS's HNSW on the CPU,** siann's GPU IVF (float16 lists) is 1.7-2.1x in batches of 100
+  and 4.2-5.0x in batches of 1,000; on single queries HNSW is 2.4-2.7x siann's Rust IVF.
+- **Against mlxvs's IVF-Flat,** siann's GPU IVF is 1.1-1.8x up to nprobe 32 (recall 0.94); from nprobe
+  64, mlxvs's is 1.2-2.6x on single queries and in batches of 100, and the two are level in a batch of
+  1,000.
 
 ## Inner product
 
