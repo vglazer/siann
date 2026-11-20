@@ -22,7 +22,7 @@ torch = ["torch>=2.15.0"]
 
 [dependency-groups]
 # the tests in python/tests
-dev = ["pytest>=8", "scipy>=1.13", "nbformat>=5", "nbclient>=0.10", "ipykernel>=6"]
+dev = ["pytest>=8", "scipy>=1.13", "nbformat>=5", "nbclient>=0.10", "ipykernel>=6", "matplotlib>=3.8"]
 # the benchmarks and checks in benchmarks/: FAISS as the baseline, the other frameworks, the datasets
 bench = [
     "faiss-cpu>=1.16.0",
