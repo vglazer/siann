@@ -69,7 +69,8 @@ third-party plugin, translates JAX programs into MLX operations. On the CPU, JAX
 compiler.
 
 - **No custom-kernel route:** Pallas, JAX's kernel language, targets CUDA and TPU, and jax-mps does
-  not support it. JAX can only be compared on built-in operations.
+  not support it. JAX can only be compared on built-in operations, which lose to FAISS on the CPU, so
+  siann does not run on JAX: it is measured here as a framework a user might reach for.
 - **Level with the other frameworks' built-in operations** (L2 0.67 s against MLX's 0.65 s), and
   faster than MLX's own on L1 when MLX runs op by op (4.6 against 7.2 s), since JAX compiles the whole
   function. Under `mx.compile`, MLX catches up (4.4 s).
