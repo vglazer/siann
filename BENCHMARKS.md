@@ -164,8 +164,11 @@ broadcast absolute difference (MLX, JAX) or `torch.cdist` (PyTorch), then the fr
 | JAX built-in (XLA, CPU) | 1.34 s | 0.29x | 3.95 s | 0.46x |
 | MLX built-in (CPU) | 6.8 s | 0.06x | 32.5 s | 0.06x |
 
-The ratios hold on SIFT1M and GloVe-100 (0.34-0.65x on the GPU). Built-in operations lose to FAISS's
-CPU everywhere, on the GPU too: the GPU's advantage comes entirely from custom kernels.
+JAX runs on the Mac's GPU through [jax-mps](https://github.com/tillahoffmann/jax-mps), a third-party
+plugin that translates JAX programs into MLX operations; it has no route to custom kernels (Pallas,
+JAX's kernel language, targets CUDA and TPU), so built-in operations are all it offers there. The
+ratios hold on SIFT1M and GloVe-100 (0.34-0.65x on the GPU). Built-in operations lose to FAISS's CPU
+everywhere, on the GPU too: the GPU's advantage comes entirely from custom kernels.
 
 ## Approximate search: batches
 

@@ -7,8 +7,7 @@
 **si**licon **a**pproximate **n**earest **n**eighbors: fast similarity search on Apple silicon, for
 dense NumPy vectors (sparse vectors, such as TF-IDF or SPLADE, are not in scope), across metrics (L1,
 L2, L-infinity, cosine, inner product), and a benchmark of how much each Mac compute backend buys for
-it: on the GPU, [MLX](https://github.com/ml-explore/mlx), PyTorch's MPS backend and
-[jax-mps](https://github.com/tillahoffmann/jax-mps); on the CPU, [FAISS](https://github.com/facebookresearch/faiss),
+it: on the GPU, [MLX](https://github.com/ml-explore/mlx) and PyTorch's MPS backend; on the CPU, [FAISS](https://github.com/facebookresearch/faiss),
 the frameworks' CPU backends and siann's own Rust code.
 
 ## Which to use, and how it compares
@@ -73,6 +72,6 @@ the nearest recall):
 | --- | --- |
 | [ARCHITECTURE](ARCHITECTURE.md) | Why siann is faster than FAISS (and where it is not), with diagrams of how the pieces fit and which path a search takes |
 | [ALGORITHMS](ALGORITHMS.md) | How exact search and IVF work on the GPU and the CPU, and what does not pay |
-| [BACKENDS](BACKENDS.md) | MLX, PyTorch MPS, jax-mps, FAISS and siann's Rust code: what each offers, and their pitfalls |
+| [BACKENDS](BACKENDS.md) | MLX, PyTorch MPS, FAISS and siann's Rust code: what each offers, and their pitfalls |
 | [DATASETS](DATASETS.md) | SIFT1M, GloVe-100 and Gaussian vectors: sources, preparation and quirks |
 | [BENCHMARKS](BENCHMARKS.md) | Which path to use for each workload, and every measurement behind it, with the scripts that reproduce them |

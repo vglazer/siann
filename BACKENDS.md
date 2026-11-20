@@ -15,11 +15,10 @@ process.
 | FAISS 1.16 | CPU | no (it is a library of indexes) | 0.39 s / 1.8 s |
 | MLX 0.32 | GPU (Metal), CPU | yes: `mx.fast.metal_kernel` | 0.046 s / 0.081 s with siann's kernels |
 | PyTorch 2.15, MPS backend | GPU (Metal), CPU | yes: `torch.mps.compile_shader` | 0.10 s / 0.082 s with siann's kernels |
-| JAX 0.11 with jax-mps 0.11 | GPU (through MLX), CPU (XLA) | no | built-in operations only |
 | siann's Rust code | CPU | (it is the kernel) | L1: 0.47 s |
 
 With only each framework's built-in operations, every GPU backend is slower than FAISS on the CPU:
-0.25-0.6 times its speed, the three frameworks within 1.6 times of each other. **The GPU's advantage
+0.25-0.6 times its speed, the frameworks within 1.6 times of each other. **The GPU's advantage
 comes entirely from custom kernels,** so a comparison of backends is mostly a comparison of how well
 each supports them, and of the speed of its built-in matrix multiply.
 
@@ -61,24 +60,6 @@ kernels port with the Metal code unchanged (`siann.torch_kernels`, `siann.ivf_to
 - **FAISS and PyTorch cannot share a process on macOS:** each loads its own copy of the OpenMP
   runtime (the library both use for CPU threads), and the second aborts ("libomp.dylib already
   initialized"). Run them in separate processes.
-
-## JAX (jax-mps)
-
-JAX has no official Mac GPU support. [jax-mps](https://github.com/tillahoffmann/jax-mps), a
-third-party plugin, translates JAX programs into MLX operations. On the CPU, JAX uses its XLA
-compiler.
-
-- **No custom-kernel route:** Pallas, JAX's kernel language, targets CUDA and TPU, and jax-mps does
-  not support it. JAX can only be compared on built-in operations, which lose to FAISS on the CPU, so
-  siann does not run on JAX: it is measured here as a framework a user might reach for.
-- **Level with the other frameworks' built-in operations** (L2 0.67 s against MLX's 0.65 s), and
-  faster than MLX's own on L1 when MLX runs op by op (4.6 against 7.2 s), since JAX compiles the whole
-  function. Under `mx.compile`, MLX catches up (4.4 s).
-- **Make jitted functions once per process,** with arrays passed as arguments. Made anew on every
-  call, with the base vectors captured inside, every call recompiles (0.33 s instead of 0.007 s for
-  100 queries on 20,000 vectors).
-- **It runs without trouble at full size,** though it is experimental (it prints a warning to that
-  effect).
 
 ## FAISS
 
