@@ -32,7 +32,8 @@ print(index.plan)                            # what was chosen, and why
 
 Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, the
 similarity for cosine and inner product. `device="cpu"` or `"gpu"` overrides the choice, for the index
-or for one search.
+or for one search. The [quickstart notebook](examples/quickstart.ipynb) walks through every metric, the
+scores, the plan and the devices; `examples/make_quickstart.py` rebuilds it.
 
 ## Which to use, and how it compares
 

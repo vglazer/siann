@@ -7,6 +7,9 @@ Rust kernels); ``index.plan`` says what was chosen and why. The kernels themselv
 PyTorch's MPS backend in ``siann.torch_kernels`` and ``siann.ivf_torch``), and the Rust ones in
 ``siann._cpu``.
 """
+from importlib.metadata import version as _version
+
 from ._index import METRICS, Index, Plan, SearchResult
 
-__all__ = ["METRICS", "Index", "Plan", "SearchResult"]
+__version__ = _version("siann")
+__all__ = ["METRICS", "Index", "Plan", "SearchResult", "__version__"]
