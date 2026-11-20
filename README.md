@@ -5,10 +5,10 @@
 *Pronounced like "cyan".*
 
 **si**licon **a**pproximate **n**earest **n**eighbors: fast similarity search on Apple silicon, for
-dense NumPy vectors (sparse vectors, such as TF-IDF or SPLADE, are not in scope), across metrics (L1,
-L2, L-infinity, cosine, inner product), and a benchmark of how much each Mac compute backend buys for
-it: on the GPU, [MLX](https://github.com/ml-explore/mlx) and PyTorch's MPS backend; on the CPU, [FAISS](https://github.com/facebookresearch/faiss),
-the frameworks' CPU backends and siann's own Rust code.
+dense NumPy vectors, across metrics (L1, L2, L-infinity, cosine, inner product), and a benchmark of
+how much each Mac compute backend buys for it: on the GPU, [MLX](https://github.com/ml-explore/mlx)
+and PyTorch's MPS backend; on the CPU, [FAISS](https://github.com/facebookresearch/faiss), the
+frameworks' CPU backends and siann's own Rust code.
 
 ## Which to use, and how it compares
 
