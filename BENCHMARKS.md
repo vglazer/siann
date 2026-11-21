@@ -507,28 +507,30 @@ vectors, not the size of the gap (`mlxvs_dbpedia_100k.txt`, `ivf_dbpedia_100k.tx
 
 ### A graph built on the GPU, searched on the CPU
 
-*Reproduce with `graph_cpu.py --dataset sift|glove|music100 --native` and `graph_cpu.py --dataset
-dbpedia --base 100000 --queries 1000 --native`.*
+*Reproduce with `graph_faiss.py --dataset sift|glove|music100` and `graph_faiss.py --dataset dbpedia
+--base 100000 --queries 1000`; the hnswlib comparison with `graph_cpu.py` (same options, plus
+`--native`).*
 
-mlxvs builds a CAGRA graph on the GPU and exports it in hnswlib's format (as hnswlib's bottom layer,
-entered at the medoid); hnswlib then searches it on the CPU, one query per call on one thread, against
-FAISS's HNSW (M = 32) and hnswlib's own HNSW (M = 16) (`graph_cpu_*.txt`).
+mlxvs builds a CAGRA graph on the GPU (32 links per vector). Loaded into a FAISS HNSW index as its only
+layer, entered at the vector nearest the mean, it is searched by FAISS's own code, against FAISS's own
+HNSW (M = 32, 64 links per vector at its bottom layer): graph against graph, same search code. Single
+queries on one thread, median microseconds at the nearest recall (`graph_faiss_*.txt`):
 
-| Dataset | Build: GPU graph / FAISS HNSW / hnswlib HNSW | Recall at ef 32: GPU graph / hnswlib HNSW | Single query at recall about 0.98: GPU graph / FAISS HNSW |
+| Dataset | Build: GPU graph / FAISS HNSW | Single query: GPU graph / FAISS HNSW (recall) | GPU graph faster |
 | --- | ---: | ---: | ---: |
-| SIFT | 6.9 / 9.7 / 37.4 s | 0.939 / 0.904 | 247 / 153 microseconds |
-| GloVe | 8.8 / 13.8 / 54.6 s | 0.641 / 0.671 | (0.83-0.85: 452 / 334) |
-| Music-100 | 7.2 / 8.1 / 26.0 s | 0.927 / 0.944 | 127 / 116 |
-| DBpedia, 100,000 | 3.0 / 8.0 / 30.5 s | 0.951 / 0.939 | 1,482 / 325 |
+| SIFT | 4.4 / 9.5 s | 73 / 86 (0.94); 130 / 152 (0.98); 236 / 285 (0.99) | 1.15-1.2x |
+| GloVe | 6.5 / 14.6 s | 281 / about 290 (0.83-0.85); 520 / about 590 (0.88-0.89) | level to 1.2x |
+| Music-100 (inner product) | 5.1 / 8.0 s | 53 / 60 (0.96); 94 / 112 (0.98) | 1.15-1.2x |
+| DBpedia, 100,000 | 1.8 / 8.0 s | 172 / 185 (0.95); 281 / 315 (0.98); 485 / 542 (0.99) | 1.1x |
 
-- **The GPU builds the graph 1.1-2.7 times faster than FAISS builds its HNSW,** and 3.6-10 times faster
-  than hnswlib.
-- **Searched by the same code, the GPU-built graph is about as good as an HNSW graph:** more recall at
-  the same ef on SIFT and DBpedia, a little less on GloVe and Music-100.
-- **On the CPU, FAISS's HNSW answers single queries faster,** 1.4-1.8 times on SIFT and about 4.5 times
-  on DBpedia, but much of that is the search code: hnswlib takes 1.0-1.4 times FAISS's time at the same ef
-  (up to 256) on its own graph at 100-128 dimensions, and about 4 times at 1,536 (its hand-written SIMD is for x86).
-  These measurements compare search code as much as graphs.
+- **A graph built on the GPU searches as well as FAISS's HNSW, or a little faster,** on the CPU: level to
+  1.2 times at matched recall, with the same gains for batches on every thread. At the same 32 links per
+  vector, FAISS's HNSW (M = 16) reaches far less recall.
+- **The GPU builds it 1.6-4.4 times faster** than FAISS builds its HNSW on 16 threads.
+- **The loaded graph behaves as exported:** searched by hnswlib, the same graph reaches the same recall at
+  every ef. **hnswlib's search is slow on Apple silicon** (its hand-written SIMD is for x86): on its own
+  HNSW graph it takes 1.0-1.4 times FAISS's time at the same ef at 100-128 dimensions and about 4 times at
+  1,536 (`graph_cpu_*.txt`).
 
 ## Inner product
 

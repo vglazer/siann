@@ -1,0 +1,29 @@
+dbpedia, l2: 100,000 vectors, 1536 dimensions; single queries on one thread over 1,000, batch of 1,000 on 16 threads
+
+  builds: CAGRA graph on the GPU 1.8 s, FAISS HNSW M 32 8.0 s, M 16 5.0 s
+
+  method                                 recall@10 median us  single/s    1,000/s
+  CAGRA graph, FAISS search, ef 16           0.898       109     8,828     25,461
+  CAGRA graph, hnswlib search, ef 16         0.898       606     1,587     20,971
+  FAISS HNSW (M 32), ef 16                   0.915       118     8,284     23,563
+  FAISS HNSW (M 16), ef 16                   0.833        76    12,543     38,143
+  CAGRA graph, FAISS search, ef 32           0.954       172     5,772     16,901
+  CAGRA graph, hnswlib search, ef 32         0.954       930     1,076     14,128
+  FAISS HNSW (M 32), ef 32                   0.957       185     5,369     15,272
+  FAISS HNSW (M 16), ef 32                   0.905       122     8,067     24,597
+  CAGRA graph, FAISS search, ef 64           0.980       281     3,596     10,624
+  CAGRA graph, hnswlib search, ef 64         0.980      1481       689      9,052
+  FAISS HNSW (M 32), ef 64                   0.977       315     3,184      9,392
+  FAISS HNSW (M 16), ef 64                   0.948       203     4,940     15,191
+  CAGRA graph, FAISS search, ef 128          0.991       485     2,107      6,322
+  CAGRA graph, hnswlib search, ef 128        0.991      2441       419      5,485
+  FAISS HNSW (M 32), ef 128                  0.990       542     1,858      5,532
+  FAISS HNSW (M 16), ef 128                  0.972       357     2,837      9,031
+  CAGRA graph, FAISS search, ef 256          0.997       863     1,177      3,648
+  CAGRA graph, hnswlib search, ef 256        0.997      4148       246      3,191
+  FAISS HNSW (M 32), ef 256                  0.995       957     1,055      3,205
+  FAISS HNSW (M 16), ef 256                  0.984       655     1,556      5,171
+  CAGRA graph, FAISS search, ef 512          0.998      1606       625      2,071
+  CAGRA graph, hnswlib search, ef 512        0.998      7172       140      1,810
+  FAISS HNSW (M 32), ef 512                  0.997      1777       560      1,817
+  FAISS HNSW (M 16), ef 512                  0.992      1247       806      2,888
