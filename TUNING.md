@@ -104,6 +104,25 @@ faster from 8 (1,606 against 1,276). A threshold moves only where the other devi
 faster, so the default keeps both metrics on the GPU; on smaller collections the CPU wins more batch
 sizes by a clear margin, and tuning finds them.
 
+## NumPy's BLAS on Linux and Windows
+
+On Linux and Windows, NumPy's BLAS is OpenBLAS, whose threads keep spinning for a while after each call.
+siann's CPU searches by L2, cosine and inner product run a BLAS multiply and then Rust code on the same
+cores, so spinning threads slow the Rust code down: exact search and an IVF batch whose coarse step goes
+through BLAS ([On Linux](BENCHMARKS.md#on-linux)). OpenBLAS's `OPENBLAS_THREAD_TIMEOUT` puts its threads
+to sleep sooner, but it is read only once, when NumPy loads. siann sets it to 4 (the shortest wait) unless
+it is already set, which takes effect when siann is imported before NumPy:
+
+```python
+import siann            # first: OpenBLAS loads with the short timeout
+import numpy as np
+```
+
+Where NumPy came first, `index.plan` says so. Setting the variable before Python starts works whatever
+the order (`export OPENBLAS_THREAD_TIMEOUT=4`). Other code in the same process that calls OpenBLAS many
+times in a row may run slightly slower with it, as its threads wake for each call. On a Mac, NumPy uses
+Apple's Accelerate, which does not spin, and none of this applies.
+
 ## How to tune
 
 ```python

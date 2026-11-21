@@ -106,6 +106,9 @@ def main() -> None:
     ours = [rate(lambda q: index.search(q, K), xq, b) for b in BATCHES]
     nlist = index._ivf.nlist
     print(f"  siann IVF ({nlist:,} lists, nprobe {index.nprobe}, built in {built:.1f} s): recall {ours_recall:.3f}")
+    for line in index.plan.reasons:
+        if line.startswith(("routing", "NumPy's OpenBLAS")):
+            print(f"  {line}")
     print("  " + "".join(f"{b:>10,}" for b in BATCHES))
     print("  " + "".join(f"{r:10,.0f}" for r in ours), flush=True)
     if a.siann_only:

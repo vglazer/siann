@@ -4,8 +4,10 @@ name: CPU benchmark on Linux
 # recall target against FAISS's IVF-Flat and HNSW at matched recall) on GitHub's Linux runners. On x86-64 it
 # builds siann twice and runs both on the same machine: for x86-64-v3 (AVX2 and FMA), as the published
 # wheels are built, against FAISS; and for baseline x86-64, siann alone, to show what the newer
-# instructions add. The ARM runner runs the published build. Results go in the run's summary and as an
-# artifact. Run it by hand (Actions > CPU benchmark on Linux > Run workflow).
+# instructions add. The ARM runner runs the published build. Every run sets OPENBLAS_THREAD_TIMEOUT=4, as
+# siann does when imported before NumPy (x86_cpu.py imports NumPy first), and the published build runs once
+# more with OpenBLAS's default (28), to show what its spinning threads cost. Results go in the run's summary
+# and as an artifact. Run it by hand (Actions > CPU benchmark on Linux > Run workflow).
 
 on:
   workflow_dispatch:
@@ -16,6 +18,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  OPENBLAS_THREAD_TIMEOUT: "4"
 
 jobs:
   bench:
@@ -51,6 +56,13 @@ jobs:
         run: |
           ../published/bin/python x86_cpu.py --n ${{ inputs.n }} | tee ../published.txt
           { echo '### ${{ matrix.os }}, published build'; echo '```'; cat ../published.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Benchmark the published build with OpenBLAS's default thread timeout
+        working-directory: benchmarks
+        env:
+          OPENBLAS_THREAD_TIMEOUT: "28"
+        run: |
+          ../published/bin/python x86_cpu.py --n ${{ inputs.n }} --siann-only | tee ../published_openblas_default.txt
+          { echo '### ${{ matrix.os }}, published build, OpenBLAS default timeout'; echo '```'; cat ../published_openblas_default.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Benchmark the baseline x86-64 build
         if: matrix.x86
         working-directory: benchmarks

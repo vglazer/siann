@@ -28,3 +28,20 @@ def test_x86_without_them_says_why():
 def test_numpy_reports_these_names():
     from numpy._core._multiarray_umath import __cpu_features__
     assert all(f in __cpu_features__ for f in V3)
+
+
+def test_openblas_timeout_set_unless_given():
+    import os
+    assert os.environ.get("OPENBLAS_THREAD_TIMEOUT")
+
+
+def test_plan_says_when_openblas_spins(monkeypatch):
+    import numpy as np
+
+    import siann
+    x = np.random.default_rng(0).standard_normal((2_000, 8), dtype=np.float32)
+    monkeypatch.setattr(_build, "openblas_spins", lambda: True)
+    assert "OPENBLAS_THREAD_TIMEOUT" in str(siann.Index(x, "l2", device="cpu").plan)
+    assert "OPENBLAS_THREAD_TIMEOUT" not in str(siann.Index(x, "l1", device="cpu").plan)
+    monkeypatch.setattr(_build, "openblas_spins", lambda: False)
+    assert "OPENBLAS_THREAD_TIMEOUT" not in str(siann.Index(x, "l2", device="cpu").plan)

@@ -182,6 +182,11 @@ class Index:
             reasons.append(f"on the CPU: {cpu_path}")
         if metric == "cosine":
             reasons.append("cosine: vectors normalized to unit length and ranked by inner product")
+        from . import _build
+        if self._device != "gpu" and self._kernel_metric in ("l2", "ip") and _build.openblas_spins():
+            reasons.append("NumPy's OpenBLAS was loaded before siann, so its threads spin after each call and "
+                           "slow siann's CPU searches: import siann before NumPy, or set "
+                           "OPENBLAS_THREAD_TIMEOUT=4 before starting Python (TUNING.md)")
         self.plan = Plan(len(self._x), self._x.shape[1], metric, "ivf" if self._ivf else "exact", self._device,
                          tuple(reasons))
 
