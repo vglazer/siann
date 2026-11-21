@@ -24,7 +24,7 @@ the recall wanted. siann takes the recall target, not the settings, and measures
 | How many lists a query scans (nprobe) | the smallest that reaches the target on a sample of queries | on queries like the real ones: the target kept on SIFT1M (0.955, where its own vectors give 0.940), and Music-100's index 2.0-2.8 times faster than when calibrated on its own vectors |
 | CPU or GPU, and which scan, by batch size | each scan timed on 1 to 4,096 queries when the index is built | 1.2-6.3 times fixed thresholds at 2-64 queries, 1.2-1.9 times at larger batches where they differ; one loss (0.77 times, Music-100 at 512 queries), timed on the index's own vectors rather than on queries |
 | How the lists are stored | the data | bytes where lossless (a quarter of float32's memory traffic), float16 for GPU batches |
-| CPU or GPU for exact search | a profile, measured by `siann.tune` | single L2 queries on the CPU (155 against 142 per second on SIFT1M); at 200,000 vectors the CPU is faster up to 16 queries |
+| CPU or GPU for exact search | a profile, measured by `siann.tune` | single L2 queries on the CPU (153 against 143 per second on SIFT1M, 177 against 140 on DBpedia); at 200,000 vectors the CPU is faster up to 16 queries |
 
 The choices interact, which is why they are measured together rather than set from rules of thumb: where
 the CPU and the GPU cross depends on how many lists a query scans, so on SIFT1M at nprobe 46 the CPU wins
@@ -304,7 +304,10 @@ multiplies on the chip's matrix units).
   floating-point additions. (Floating-point addition is not associative, so a compiler may not vectorize
   a single running sum by splitting it; 32 separate sums sidestep the issue.) About 270 G per second.
 - **Cache tiles and threads.** Each thread takes 32 queries and scans the base in tiles of 1,024 vectors
-  (512 KB), comparing each tile with all of its queries while the tile is in cache. Each query keeps its
+  (512 KB), comparing each tile with all of its queries while the tile is in cache. A batch too small to
+  occupy every thread this way (below 512 queries on 16 threads) also divides the base among threads, by
+  ranges of tiles, and merges each query's best k from the ranges in order of distance, then index, the
+  order one thread keeps, so the neighbors are the same: 1.6-10.5 times faster on small batches. Each query keeps its
   best k in a small sorted list. The last block is padded with vectors of infinity, whose distances never
   enter a top-k (for inner product, where infinity would be the best score, padding slots are skipped by
   index). The same kernel computes L2 by squaring the differences and L-infinity with a running maximum,

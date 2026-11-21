@@ -1,8 +1,8 @@
 """siann's default profile: where exact search is faster on the CPU than on the GPU, by batch size and
 metric, measured with siann.tune on SIFT1M (L2, L1, L-infinity), GloVe-100 (cosine, inner product) and
-DBpedia OpenAI (cosine, L2; the first 100,000 vectors), k = 10. For each metric, the default threshold is
-the smallest crossover across the datasets that measure it, so that the CPU takes only batch sizes where it
-was faster on every one, and no measured case is slower than sending every batch to the GPU.
+DBpedia OpenAI (cosine, L2; the first 100,000 vectors), k = 10. Each dataset's threshold moves from
+siann's default only where the other device was at least 10% faster; the default is the smallest across
+the datasets, so that the CPU takes only batch sizes where it was faster on every one.
 
     uv run --group bench python exact_routing.py
 """

@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 import siann
-from siann._profile import crossover
+from siann._profile import threshold_with_margin
 
 gpu_only = pytest.mark.skipif(not siann.gpu_available(), reason="no GPU available")
 XB = np.random.default_rng(0).standard_normal((2000, 16), dtype=np.float32)
@@ -59,18 +59,23 @@ def test_use_profile():
         siann.use_profile({"l2": 3})
 
 
-def test_crossover():
-    assert crossover({1: 10, 8: 10, 64: 10}, {1: 5, 8: 12, 64: 20}) == 8
-    assert crossover({1: 10, 8: 10}, {1: 11, 8: 12}) == 1
-    assert crossover({1: 10, 8: 10}, {1: 5, 8: 9}) is None
-    assert crossover({1: 10, 8: 10, 64: 10}, {1: 12, 8: 9, 64: 20}) == 64   # must hold for every larger batch
+def test_threshold_with_margin():
+    # the default (GPU from 1) holds unless the CPU is at least 10% faster
+    assert threshold_with_margin({1: 10, 8: 10, 64: 10}, {1: 5, 8: 12, 64: 20}, 1) == 2
+    assert threshold_with_margin({1: 10, 8: 10}, {1: 9.5, 8: 9.5}, 1) == 1          # 5%: noise
+    assert threshold_with_margin({1: 10, 8: 10}, {1: 5, 8: 8}, 1) == 9               # the default past 8
+    assert threshold_with_margin({1: 10, 8: 10}, {1: 5, 8: 8}, None) is None         # default: always the CPU
+    # a default of 2 (single queries on the CPU) moves only if the GPU is 10% faster at one query
+    assert threshold_with_margin({1: 10, 2: 10, 8: 10}, {1: 10.5, 2: 20, 8: 20}, 2) == 2
+    assert threshold_with_margin({1: 10, 2: 10, 8: 10}, {1: 12, 2: 20, 8: 20}, 2) == 1
 
 
 def test_tune():
     p = siann.tune(XB, metrics=("l2", "l1"), batches=(1, 8, 64), budget=5)
     assert set(p.cpu_below) == {"l2", "l1"} and "2,000 x 16" in p.source or "no GPU" in p.source
     for m in ("l2", "l1"):
-        assert p.threshold(m) in (None, 1, 8, 64)
+        t = p.threshold(m)
+        assert t is None or t in (1, 2, 9, 65)            # a measured size, or just past one
     if siann.gpu_available():
         assert len(p.rates) == 2 * 3 * 2
     assert "queries per second" in str(p) or not p.rates

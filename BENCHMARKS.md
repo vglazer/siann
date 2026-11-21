@@ -112,7 +112,8 @@ What decides it:
 
 ## Exact search on the CPU
 
-*Reproduce with `backends.py --backends faiss-cpu,siann-rust-cpu`, `blas_l2.py`, `rust_cpu_sweep.py`.*
+*Reproduce with `backends.py --backends faiss-cpu,siann-rust-cpu`, `blas_l2.py`, `rust_cpu_sweep.py`,
+`cpu_small_batch.py`.*
 
 **L1 and L-infinity: siann's Rust kernel.**
 
@@ -124,6 +125,22 @@ What decides it:
 FAISS's L1 does about 70 G absolute differences per second, siann's about 270 G. Queries per thread task
 (8 to 64) make no measurable difference; the default is 32. Building the blocked layout takes 0.10-0.13
 s for 1M x 128.
+
+**Small batches.** A batch of fewer than 512 queries (16 threads, 32 queries each) also divides the base
+among threads, by ranges of cache tiles, and merges each query's best k from the ranges in order of
+distance, then index: the order one thread keeps, so the neighbors are the same, ties included. SIFT1M,
+queries per second, one thread per 32 queries against divided, in the same process, alternating
+(`cpu_small_batch_ab.txt`; outputs identical at every batch size, `cpu_small_batch_after.txt`):
+
+| Queries | 1 | 8 | 32 | 128 | 256 | 512 | 1,024 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| L1 | 36 / 212 | 155 / 1,185 | 163 / 1,632 | 640 / 1,934 | 1,269 / 2,021 | 2,058 / 2,061 | 2,102 / 2,090 |
+| L-infinity | 28 / 191 | 117 / 1,012 | 121 / 1,235 | 469 / 1,481 | 932 / 1,521 | 1,479 / 1,526 | 1,468 / 1,480 |
+
+Dividing the base is 1.6-10.5 times faster below 512 queries and level from 512. On a million vectors the
+CPU is then level with the GPU from 1 to 4 queries (L1 at one query: 202 against 204 per second;
+`exact_routing.txt`) and slower from 8, so siann keeps L1 and L-infinity on the GPU where there is one;
+the CPU path gains most without a GPU, and on smaller collections.
 
 **L2, cosine and inner product: NumPy's BLAS and a Rust top-k** (`blas_l2_*.txt`,
 `ip_blas_glove_raw.txt`):

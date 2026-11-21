@@ -38,6 +38,7 @@ The README's "Which to use" table and BENCHMARKS.md's main sections.
 | `kmeans_check.py` | siann's k-means against FAISS's, as the IVF's centroids | The IVF's k-means |
 | `ip_lists.py` | Inner-product lists assigned by L2 rather than by inner product | Inner product |
 | `coarse_step.py` | The coarse step's share of a single query, and the two-level coarse step | The coarse step |
+| `cpu_small_batch.py` | The Rust exact kernel on small batches, dividing the base among threads or not, with outputs checked bit for bit | Exact search on the CPU |
 | `compile_cost.py` | What a new batch size costs the GPU kernels (sizes passed at run time) | What a new batch size costs |
 | `gpu_select_ab.py` | The GPU IVF's probe selection and threads per query, before and after | Where a GPU call's time goes |
 

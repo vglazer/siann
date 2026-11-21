@@ -81,24 +81,26 @@ depends on the metric, the hardware and the size of the collection.
 **The default** comes from `siann.tune` on an Apple M3 Max (12 performance and 4 efficiency cores, 40-core
 GPU) with collections of about a million vectors: SIFT1M for L2, L1 and L-infinity, GloVe-100 for cosine and
 inner product, and the first 100,000 DBpedia OpenAI vectors (1,536 dimensions) for cosine and L2. For each
-metric it takes the smallest crossover across those datasets, so the CPU gets only batch sizes where it
-is faster on every one (`benchmarks/exact_routing.py`, `benchmarks/results/exact_routing.txt`):
+metric it takes the smallest threshold across those datasets, so the CPU gets only batch sizes where it
+is clearly faster on every one (`benchmarks/exact_routing.py`, `benchmarks/results/exact_routing.txt`):
 
 | Metric | Default | Queries per second at one query: CPU / GPU |
 | --- | --- | --- |
-| L2 | CPU for single queries, GPU from 2 | SIFT 155 / 142, DBpedia 175 / 142 |
-| L1, L-infinity | GPU always | SIFT 41 / 288 (L1), 30 / 295 (L-infinity) |
-| Cosine | GPU always | GloVe 96 / 367, DBpedia 179 / 345 |
-| Inner product | GPU always | GloVe 95 / 429 |
+| L2 | CPU for single queries, GPU from 2 | SIFT 153 / 143, DBpedia 177 / 140 |
+| L1, L-infinity | GPU always | SIFT 202 / 204 (L1), 184 / 201 (L-infinity) |
+| Cosine | GPU always | GloVe 96 / 361, DBpedia 176 / 354 |
+| Inner product | GPU always | GloVe 96 / 355 |
 
 **Smaller collections favor the CPU for small batches.** On 200,000 vectors of 128 dimensions (the
 quickstart notebook's), the CPU is faster for L2 up to 16 queries per batch, where the default sends every
 batch from 2 to the GPU. If your collection is far from a million vectors, or your Mac is not an M3 Max,
 tune.
 
-**L1 and L-infinity on the CPU** run a batch of up to 32 queries on one thread (siann's Rust kernel
-divides its work among threads 32 queries at a time), so their CPU throughput stays flat from 4 to 32
-queries (169 and 121 per second on SIFT1M), and the GPU wins every batch size.
+**L1 and L-infinity stay on the GPU.** On SIFT1M the two devices are level from 1 to 4 queries (L1 at one
+query: 202 per second on the CPU, 204 on the GPU), within the spread of repeated runs, and the GPU is
+faster from 8 (1,606 against 1,276). A threshold moves only where the other device is at least 10%
+faster, so the default keeps both metrics on the GPU; on smaller collections the CPU wins more batch
+sizes by a clear margin, and tuning finds them.
 
 ## How to tune
 
@@ -121,9 +123,10 @@ profile.save("profile.json")                            # and siann.Profile.load
 - **Time:** `budget=60` seconds in all. Each batch size is timed on each device as the median of three
   calls after a warm-up call, which also compiles the GPU kernels for that shape; a tight budget cuts the
   repeats, not the batch sizes.
-- **The threshold** for a metric is the smallest measured batch size from which the GPU is at least as fast
-  as the CPU at every larger measured size. Repeated runs differ by up to 15%, so near a crossover the
-  threshold can move by a step; a larger budget steadies it.
+- **The threshold** for a metric moves from siann's default only where the other device was at least 10%
+  faster: the GPU takes every batch from the smallest measured size from which it wins at every larger
+  one, the CPU winning a size only by that margin, and between the sizes measured the default holds.
+  Repeated runs differ by up to 15%, so a smaller difference is not acted on.
 - **A latency budget:** `print(profile)` lists the measured queries per second of every path at each batch
   size, so you can see which batch sizes fit.
 - **Applying it:** a profile takes effect only where you pass it, with `profile=` or

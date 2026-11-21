@@ -98,10 +98,11 @@ class Profile:
 
 
 # Tuned by benchmarks/exact_routing.py on an Apple M3 Max (results/exact_routing.txt): for each metric,
-# the smallest crossover across SIFT1M, GloVe-100 and DBpedia OpenAI (100,000 vectors), so that no
-# measured case is slower than with the GPU for every batch. Only single L2 queries were faster on the
-# CPU (155 against 142 per second on SIFT1M). Crossovers move with the collection's size: on smaller
-# ones the CPU wins more small batches, which siann.tune measures (TUNING.md).
+# the smallest threshold across SIFT1M, GloVe-100 and DBpedia OpenAI (100,000 vectors), each moving from
+# this default only where the other device was at least 10% faster. Single L2 queries go to the CPU;
+# L1 and L-infinity are level on the two devices at 1-4 queries on a million vectors and stay on the GPU.
+# Crossovers move with the collection's size: on smaller ones the CPU wins more small batches, which
+# siann.tune measures (TUNING.md).
 DEFAULT = Profile(
     cpu_below={"l2": 2, "l1": 1, "linf": 1, "cosine": 1, "ip": 1},
     source="siann's default, tuned on an Apple M3 Max with about a million vectors",
@@ -135,14 +136,14 @@ def _rate(index, q: np.ndarray, k: int, device: str, deadline: float) -> float:
     return len(q) / sorted(times)[len(times) // 2]
 
 
-def crossover(cpu: dict[int, float], gpu: dict[int, float]) -> int | None:
-    """The smallest measured batch from which the GPU is at least as fast as the CPU at every larger
-    measured batch; ``None`` if the GPU never is."""
-    batches = sorted(cpu)
-    for i, b in enumerate(batches):
-        if all(gpu[c] >= cpu[c] for c in batches[i:]):
-            return b
-    return None
+def threshold_with_margin(cpu: dict[int, float], gpu: dict[int, float], default: int | None) -> int | None:
+    """The batch size from which exact search goes to the GPU, from measured rates: it moves from
+    ``default`` (siann's default threshold for the metric; ``None``, always the CPU) only where the other
+    device was at least 10% faster, as approximate search's routes do (``siann._ivf.MARGIN``). Between the
+    batch sizes measured, and past the largest, the default holds; ``None`` means always the CPU."""
+    from ._ivf import NEVER, crossover_with_margin
+    t = crossover_with_margin(cpu, gpu, NEVER if default is None else default)
+    return None if t >= NEVER else t
 
 
 def _tune_ivf(xb, xq, given_xq: bool, metric: str, recall: float, k: int):
@@ -164,7 +165,8 @@ def tune(xb, xq=None, metrics=None, batches=BATCHES, k: int = 10, budget: float 
     ``xb`` is the user's base vectors (all of them: the crossover depends on the collection's size);
     ``xq`` the queries to time with, by default a sample of ``xb``. ``metrics`` defaults to all five.
     Each metric and batch size is timed on both devices (median of three after a warm-up that also
-    compiles the GPU kernels for that shape), within about ``budget`` seconds in all. With ``recall``,
+    compiles the GPU kernels for that shape), within about ``budget`` seconds in all. A threshold moves
+    from siann's default only where the other device was at least 10% faster, about the timings' spread. With ``recall``,
     approximate search's thresholds are measured too: an IVF over ``xb`` (by the first metric) calibrated to
     that recall, on ``xq`` if given, its paths timed at batch sizes from 1 to 4,096. Returns a Profile;
     pass it to ``siann.Index(..., profile=p)`` or ``siann.use_profile(p)``.
@@ -200,7 +202,7 @@ def tune(xb, xq=None, metrics=None, batches=BATCHES, k: int = 10, budget: float 
             cpu[b] = _rate(index, q, k, "cpu", stop)
             gpu[b] = _rate(index, q, k, "gpu", stop)
             rates += [(m, "cpu", b, cpu[b]), (m, "gpu", b, gpu[b])]
-        cpu_below[m] = crossover(cpu, gpu)
+        cpu_below[m] = threshold_with_margin(cpu, gpu, DEFAULT.threshold(m))
     ivf = None
     if recall is not None:
         ivf, ivf_rates = _tune_ivf(xb, np.asarray(xq), given_xq, metrics[0], recall, k)

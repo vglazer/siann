@@ -425,15 +425,16 @@ fn to_blocks<'a, T: Elem + 'a>(
     blocks
 }
 
-/// Exact k nearest neighbors of a chunk of queries among `blocks`, written to `out` (m * k).
-fn flat_chunk<M: Metric>(
+/// Each query of a chunk's k nearest among blocks `b0..b1` of `blocks` (one `TopK` per query).
+fn flat_range<M: Metric>(
     blocks: &[[f32; L]],
     d: usize,
     n: usize,
     qc: &[f32],
     k: usize,
-    out: &mut [u32],
-) {
+    b0: usize,
+    b1: usize,
+) -> Vec<TopK> {
     let m = qc.len() / d;
     let groups = m.div_ceil(QB);
     // The queries, interleaved by groups of QB; padding queries are zero and their results dropped.
@@ -445,9 +446,8 @@ fn flat_chunk<M: Metric>(
         }
     }
     let mut tops: Vec<TopK> = (0..groups * QB).map(|_| TopK::new(k)).collect();
-    let nb = blocks.len() / d;
-    for t0 in (0..nb).step_by(TILE) {
-        let t1 = (t0 + TILE).min(nb);
+    for t0 in (b0..b1).step_by(TILE) {
+        let t1 = (t0 + TILE).min(b1);
         for (g, qg) in qq.chunks_exact(d).enumerate() {
             let tg = &mut tops[g * QB..(g + 1) * QB];
             for b in t0..t1 {
@@ -466,12 +466,26 @@ fn flat_chunk<M: Metric>(
             }
         }
     }
-    for (o, top) in out.chunks_exact_mut(k).zip(&tops) {
-        o.copy_from_slice(&top.idx);
+    tops.truncate(m);
+    tops
+}
+
+/// The k smallest of several `TopK`s of one query, by distance then index: the order one `TopK` keeps
+/// when it sees every vector in index order, so that splitting the base among threads changes nothing.
+fn merge_tops(parts: &[&TopK], k: usize, out: &mut [u32]) {
+    let mut all: Vec<(f32, u32)> = parts
+        .iter()
+        .flat_map(|t| t.dist.iter().copied().zip(t.idx.iter().copied()))
+        .collect();
+    all.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    for (o, (_, i)) in out.iter_mut().zip(all.iter().take(k)) {
+        *o = *i;
     }
 }
 
-/// Exact search of `n` vectors held in `blocks`.
+/// Exact search of `n` vectors held in `blocks`. Each thread takes `chunk` queries at a time; when there
+/// are fewer chunks than threads (small batches), each chunk's scan of the base is also divided among
+/// threads, by ranges of blocks, and each query's best k from the ranges merged.
 fn flat_search<M: Metric>(
     blocks: &[[f32; L]],
     d: usize,
@@ -479,12 +493,52 @@ fn flat_search<M: Metric>(
     xq: &[f32],
     k: usize,
     chunk: usize,
+    split: bool,
 ) -> Vec<u32> {
     let nq = xq.len() / d;
+    let nb = blocks.len() / d;
+    let chunks = nq.div_ceil(chunk);
+    let threads = rayon::current_num_threads();
+    // ranges per chunk: enough to occupy every thread, each at least one cache tile of the base
+    let parts = if split {
+        (threads / chunks.max(1)).clamp(1, nb.div_ceil(TILE).max(1))
+    } else {
+        1
+    };
     let mut out = vec![0u32; nq * k];
+    if parts == 1 {
+        out.par_chunks_mut(chunk * k)
+            .zip(xq.par_chunks(chunk * d))
+            .for_each(|(o, qc)| {
+                let tops = flat_range::<M>(blocks, d, n, qc, k, 0, nb);
+                for (o, top) in o.chunks_exact_mut(k).zip(&tops) {
+                    o.copy_from_slice(&top.idx);
+                }
+            });
+        return out;
+    }
+    let step = nb.div_ceil(parts).div_ceil(TILE) * TILE;
+    let ranges: Vec<(usize, usize)> = (0..nb)
+        .step_by(step)
+        .map(|b0| (b0, (b0 + step).min(nb)))
+        .collect();
+    let qcs: Vec<&[f32]> = xq.chunks(chunk * d).collect();
+    let tops: Vec<Vec<TopK>> = (0..qcs.len() * ranges.len())
+        .into_par_iter()
+        .map(|j| {
+            let (c, (b0, b1)) = (j / ranges.len(), ranges[j % ranges.len()]);
+            flat_range::<M>(blocks, d, n, qcs[c], k, b0, b1)
+        })
+        .collect();
     out.par_chunks_mut(chunk * k)
-        .zip(xq.par_chunks(chunk * d))
-        .for_each(|(o, qc)| flat_chunk::<M>(blocks, d, n, qc, k, o));
+        .enumerate()
+        .for_each(|(c, o)| {
+            let mine = &tops[c * ranges.len()..(c + 1) * ranges.len()];
+            for (i, oq) in o.chunks_exact_mut(k).enumerate() {
+                let parts: Vec<&TopK> = mine.iter().map(|r| &r[i]).collect();
+                merge_tops(&parts, k, oq);
+            }
+        });
     out
 }
 
@@ -539,21 +593,23 @@ impl FlatIndex {
     }
 
     /// The indices of the k nearest base vectors to each query, flattened (nq * k), nearest first.
-    /// Each thread takes `chunk` queries at a time.
-    #[pyo3(signature = (xq, k, chunk = 32))]
+    /// Each thread takes `chunk` queries at a time; with `split`, a batch of fewer chunks than threads
+    /// also divides the base among threads (the same results).
+    #[pyo3(signature = (xq, k, chunk = 32, split = true))]
     fn search(
         &self,
         py: Python<'_>,
         xq: &Bound<'_, PyAny>,
         k: usize,
         chunk: usize,
+        split: bool,
     ) -> PyResult<Vec<u32>> {
         if k == 0 || k > self.n || chunk == 0 {
             return Err(PyValueError::new_err("need 0 < k <= n and chunk > 0"));
         }
         let v = read(py, xq, self.d)?;
         Ok(py.detach(
-            || with_metric!(self.metric, M => flat_search::<M>(&self.blocks, self.d, self.n, &v, k, chunk)),
+            || with_metric!(self.metric, M => flat_search::<M>(&self.blocks, self.d, self.n, &v, k, chunk, split)),
         ))
     }
 }
@@ -851,7 +907,7 @@ impl IvfIndex {
         let nq = xq.len() / d;
         let nprobe = nprobe.min(self.nlist);
         // Each query's nearest nprobe centroids, by exact search over the centroids.
-        let probes = flat_search::<M>(&self.centroids, d, self.nlist, xq, nprobe, 32);
+        let probes = flat_search::<M>(&self.centroids, d, self.nlist, xq, nprobe, 32, false);
         // For each list, the queries that probe it.
         let mut members: Vec<Vec<u32>> = vec![Vec::new(); self.nlist];
         for (qi, ps) in probes.chunks_exact(nprobe).enumerate() {
@@ -968,7 +1024,7 @@ impl IvfIndex {
         Ok(py.detach(|| {
             let centroids = to_blocks(cents.chunks_exact(d), d);
             let assign = given.unwrap_or_else(|| {
-                with_metric!(assign_kind, M => flat_search::<M>(&centroids, d, nlist, &xb, 1, 256))
+                with_metric!(assign_kind, M => flat_search::<M>(&centroids, d, nlist, &xb, 1, 256, false))
             });
             let mut members: Vec<Vec<u32>> = vec![Vec::new(); nlist];
             for (i, &c) in assign.iter().enumerate() {
