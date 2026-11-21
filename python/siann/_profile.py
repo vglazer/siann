@@ -12,6 +12,11 @@ from pathlib import Path
 import numpy as np
 
 BATCHES = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024)
+# Approximate search's routing (see Profile.ivf). Single queries on the CPU: on SIFT1M at recall 0.925 a
+# single query takes siann's Rust IVF on one thread 0.14 ms (7,228 per second) against the GPU's 0.49 ms
+# (2,055); the GPU leads in batches of 100 (BENCHMARKS.md). List-major scans from 1,000 queries, where the GPU IVF
+# switches in every measurement. Where between 1 and 100 the devices cross is measured by siann.tune.
+IVF_DEFAULTS = {"cpu_below": 2, "list_major_from": 1000}
 
 
 @dataclass(frozen=True)
@@ -20,12 +25,16 @@ class Profile:
 
     ``cpu_below[metric]`` is the batch size below which exact search by that metric runs on the CPU
     when a GPU is available: 1 means always the GPU, ``None`` always the CPU. ``rates`` holds the
-    measured queries per second, as ``(metric, device, batch, rate)``.
+    measured queries per second, as ``(metric, device, batch, rate)``. ``ivf`` holds approximate
+    search's thresholds: ``cpu_below``, the batch size below which an IVF search runs on the CPU (a single
+    query split over 4 threads), and ``list_major_from``, the batch size from which a scan reads each list
+    once for all the queries that probe it (on either device).
     """
     cpu_below: dict[str, int | None]
     source: str
     rates: tuple[tuple[str, str, int, float], ...] = ()
     meta: dict = field(default_factory=dict)
+    ivf: dict = field(default_factory=lambda: dict(IVF_DEFAULTS))
 
     def threshold(self, metric: str) -> int | None:
         """The batch size below which ``metric`` runs on the CPU (``None``: always the CPU)."""
@@ -39,9 +48,16 @@ class Profile:
             return "always on the GPU"
         return f"on the CPU below {t} queries per batch, on the GPU from {t}"
 
+    def describe_ivf(self) -> str:
+        c, lm = self.ivf.get("cpu_below", 2), self.ivf.get("list_major_from", 1000)
+        cpu = "single queries" if c <= 2 else f"batches below {c:,}"
+        return (f"{cpu} on the CPU (one query split over 4 threads), the GPU above; "
+                f"list-major scans from {lm:,} queries")
+
     def __str__(self) -> str:
         lines = [f"siann.Profile ({self.source})"]
         lines += [f"  {m:7s} exact search {self.describe(m)}" for m in self.cpu_below]
+        lines.append(f"  approximate search (IVF): {self.describe_ivf()}")
         if self.rates:
             batches = sorted({b for _, _, b, _ in self.rates})
             rate = {(m, dev, b): r for m, dev, b, r in self.rates}
@@ -55,14 +71,15 @@ class Profile:
 
     def save(self, path) -> None:
         data = {"source": self.source, "cpu_below": self.cpu_below, "meta": self.meta,
-                "rates": [list(r) for r in self.rates]}
+                "rates": [list(r) for r in self.rates], "ivf": self.ivf}
         Path(path).write_text(json.dumps(data, indent=1), encoding="utf-8")
 
     @classmethod
     def load(cls, path) -> Profile:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         return cls(dict(data["cpu_below"]), data["source"],
-                   tuple((m, d, int(b), float(r)) for m, d, b, r in data.get("rates", [])), data.get("meta", {}))
+                   tuple((m, d, int(b), float(r)) for m, d, b, r in data.get("rates", [])), data.get("meta", {}),
+                   dict(data.get("ivf", IVF_DEFAULTS)))
 
 
 # Tuned by benchmarks/exact_routing.py on an Apple M3 Max (results/exact_routing.txt): for each metric,

@@ -3,6 +3,7 @@ siann's Rust kernels), with natural scores and a plan that says what was chosen 
 from __future__ import annotations
 
 import functools
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -82,7 +83,14 @@ class Index:
     """An index over base vectors ``xb`` (n, d), searched by ``metric``: "l2", "l1", "linf", "cosine"
     or "ip" (inner product).
 
-    Search is exact: the results are the true k nearest neighbors. ``device`` is "auto" (where a GPU is
+    Without ``recall``, search is exact: the results are the true k nearest neighbors. With a target such as
+    ``recall=0.95``, siann builds an IVF (``kind="auto"``), calibrates how many lists each query probes
+    (nprobe) so that a sample of the index's own vectors reaches that recall@10, times it against exact
+    search on that sample, and keeps whichever is faster; ``kind="exact"`` or ``"ivf"`` overrides the
+    choice, ``nlist`` the number of lists and ``storage`` ("float32", "float16", "uint8") the lists'
+    type, and ``search(..., nprobe=)`` the calibrated nprobe. The target holds for queries like the
+    calibration sample: pass ``calibration_queries`` (representative queries, up to 1,000 used) when the
+    queries differ from the base vectors, as they often do. ``device`` is "auto" (where a GPU is
     available, each search goes to the GPU or the CPU by its batch size, from ``profile``'s threshold for the
     metric; otherwise the CPU), "gpu" or "cpu". ``profile`` is a ``siann.Profile`` (from ``siann.tune``),
     by default the one set by ``siann.use_profile`` or siann's own; it is fixed when the index is built.
@@ -91,12 +99,18 @@ class Index:
     """
 
     def __init__(self, xb, metric: str = "l2", recall: float | None = None, *, device: str = "auto",
-                 profile=None):
+                 profile=None, kind: str = "auto", nlist: int | None = None, storage: str = "auto",
+                 calibration_queries=None):
         if metric not in METRICS:
             raise ValueError(f"metric must be one of {', '.join(METRICS)}, not {metric!r}")
-        if recall is not None:
-            raise NotImplementedError("recall targets (approximate search) are not supported in this "
-                                      "version: use recall=None for exact search")
+        if recall is not None and not 0 < recall <= 1:
+            raise ValueError(f"recall must be a target between 0 and 1, not {recall!r}")
+        if kind not in ("auto", "exact", "ivf"):
+            raise ValueError(f"kind must be 'auto', 'exact' or 'ivf', not {kind!r}")
+        if kind == "ivf" and recall is None:
+            raise ValueError("kind='ivf' needs a recall target, such as recall=0.95")
+        if storage not in ("auto", "float32", "float16", "uint8"):
+            raise ValueError(f"storage must be 'auto', 'float32', 'float16' or 'uint8', not {storage!r}")
         if device not in ("auto", "gpu", "cpu"):
             raise ValueError(f"device must be 'auto', 'gpu' or 'cpu', not {device!r}")
         x = _as_matrix(xb, "xb")
@@ -115,20 +129,122 @@ class Index:
         self._profile = profile if profile is not None else current_profile()
         self._device = device if device != "auto" else ("auto" if gpu else "cpu")
         self._layouts: dict[str, object] = {}
-        reasons = ["exact search (no recall target): the results are the true nearest neighbors"]
+        self.recall = recall
+        self._ivf = None
+        self._nprobe = None
+        reasons = []
+        if recall is None or kind == "exact":
+            reasons.append("exact search (no recall target): the results are the true nearest neighbors"
+                           if recall is None else "exact search (kind='exact' given)")
+        else:
+            reasons += self._build_ivf(recall, kind, nlist, storage, gpu, calibration_queries)
         if device != "auto":
             reasons.append(f"device={device!r} given")
+        elif gpu and self._ivf is not None:
+            reasons.append(f"GPU found: {self._profile.describe_ivf()} (profile: {self._profile.source})")
         elif gpu:
             reasons.append(f"GPU found: {self._profile.describe(metric)} "
                            f"(profile: {self._profile.source})")
         else:
             reasons.append("no GPU found: exact search on the CPU")
-        cpu_path = ("siann's Rust kernel" if self._kernel_metric in ("l1", "linf")
-                    else "a BLAS matrix multiply through NumPy and siann's Rust top-k")
-        reasons.append(f"on the CPU: {cpu_path}")
+        if self._ivf is None:
+            cpu_path = ("siann's Rust kernel" if self._kernel_metric in ("l1", "linf")
+                        else "a BLAS matrix multiply through NumPy and siann's Rust top-k")
+            reasons.append(f"on the CPU: {cpu_path}")
         if metric == "cosine":
             reasons.append("cosine: vectors normalized to unit length and ranked by inner product")
-        self.plan = Plan(len(self._x), self._x.shape[1], metric, "exact", self._device, tuple(reasons))
+        self.plan = Plan(len(self._x), self._x.shape[1], metric, "ivf" if self._ivf else "exact", self._device,
+                         tuple(reasons))
+
+    def _build_ivf(self, recall: float, kind: str, nlist: int | None, storage: str, gpu: bool,
+                   calibration_queries=None) -> list[str]:
+        """Builds the IVF, calibrates nprobe and, with kind "auto", keeps it only if it is faster than exact
+        search on the calibration sample. Returns the plan's lines."""
+        from ._ivf import CALIBRATION_K, CALIBRATION_SAMPLE, IVF, calibrate, default_nlist, default_storage
+        n = self.n
+        ivf_metric = "l2" if self.metric == "cosine" else self.metric      # cosine: L2 on unit vectors
+        nlist = int(nlist) if nlist else default_nlist(n)
+        if not 1 <= nlist <= n:
+            raise ValueError(f"nlist must be between 1 and the number of vectors ({n:,}), not {nlist}")
+        st = default_storage(self._x) if storage == "auto" else storage
+        if st == "uint8" and default_storage(self._x) != "uint8":
+            raise ValueError("storage='uint8' needs every coordinate to be an integer from 0 to 255")
+        lines = []
+        build_device = "gpu" if gpu and self._device != "cpu" else "cpu"
+        ivf = IVF(self._x, ivf_metric, nlist, "uint8" if st == "uint8" else "float", build_device)
+        lines.append(f"approximate search: an IVF of {ivf.nlist:,} lists"
+                     + (" (about 4 sqrt(n))" if not nlist or nlist == default_nlist(n) else "")
+                     + f", built in {ivf.build_seconds:.1f} s (siann's k-means, 10 iterations)")
+        lines.append("lists stored as bytes (every coordinate an integer 0-255: lossless)" if st == "uint8" else
+                     "lists stored as float16 on the GPU (recall moves by at most about 0.001) and float32 on the CPU")
+        # calibration: the given queries, or a sample of the index's own vectors (each one's own match
+        # left out)
+        rng = np.random.default_rng(0)
+        if calibration_queries is not None:
+            cq = _as_matrix(calibration_queries, "calibration_queries")
+            if cq.shape[1] != self.d or len(cq) == 0:
+                raise ValueError(f"calibration_queries must be a non-empty (m, {self.d}) array")
+            cq = cq[np.sort(rng.choice(len(cq), size=min(len(cq), CALIBRATION_SAMPLE), replace=False))]
+            q, ids = (_normalized(cq, "calibration_queries") if self.metric == "cosine" else cq), None
+            k1 = min(CALIBRATION_K, n)
+            source = f"{len(q):,} of the given calibration queries"
+        else:
+            ids = np.sort(rng.choice(n, size=min(n, CALIBRATION_SAMPLE), replace=False))
+            q = self._x[ids]
+            k1 = min(CALIBRATION_K + 1, n)
+            source = (f"{len(q):,} of its own vectors (the target holds for queries like them; pass "
+                      "calibration_queries= for others)")
+        dev = "gpu" if build_device == "gpu" else "cpu"
+        exact_search = self._search_gpu if dev == "gpu" else self._search_cpu
+        exact = exact_search(q, k1)                                       # the truth, and a warm-up
+        t = time.perf_counter()
+        exact_search(q, k1)
+        exact_seconds = time.perf_counter() - t
+        if ids is not None:
+            rows = [r[r != own][:CALIBRATION_K] for r, own in zip(exact, ids)]
+            truth = np.array([np.concatenate([r, np.full(CALIBRATION_K - len(r), -1)]) for r in rows], dtype=np.int64)
+        else:
+            truth = exact
+        larger = self.metric in ("cosine", "ip")
+        tscores = self._scores(q, truth)
+        kth = tscores.min(axis=1) if larger else tscores.max(axis=1)
+        path = "gpu-list" if dev == "gpu" else "cpu-list"
+        nprobe, reached = calibrate(lambda p: ivf.search(q, k1, p, path), lambda f: self._scores(q, f), kth, ids,
+                                    recall, ivf.nlist, larger)
+        ivf.search(q, k1, nprobe, path)                                   # warm the path before timing it
+        t = time.perf_counter()
+        ivf.search(q, k1, nprobe, path)
+        ivf_seconds = time.perf_counter() - t
+        lines.append(f"calibrated: nprobe {nprobe} reaches recall@{CALIBRATION_K} {reached:.3f} (target {recall}) "
+                     f"on {source}")
+        sample = f"{len(q):,} calibration queries on the {dev.upper()}"
+        if kind == "auto" and ivf_seconds >= exact_seconds:
+            lines.append(f"kept exact search: the IVF took {ivf_seconds * 1e3:.1f} ms for {sample}, exact search "
+                         f"{exact_seconds * 1e3:.1f} ms, with recall 1.0")
+            return lines
+        lines.append(f"IVF chosen: {ivf_seconds * 1e3:.1f} ms for {sample}, against {exact_seconds * 1e3:.1f} ms "
+                     "for exact search" + (" (kind='ivf' given)" if kind == "ivf" else ""))
+        self._ivf, self._nprobe = ivf, nprobe
+        return lines
+
+    def _ivf_path(self, batch: int, device: str | None) -> str:
+        """The IVF path a batch takes: by the device (given, or chosen by the profile) and the batch size."""
+        lm = self._profile.ivf.get("list_major_from", 1000)
+        dev = device or (self._device if self._device != "auto" else
+                         ("cpu" if batch < self._profile.ivf.get("cpu_below", 2) else "gpu"))
+        if dev == "gpu":
+            return "gpu-list" if batch >= lm else "gpu-query"
+        return "cpu-split" if batch == 1 else ("cpu-list" if batch >= lm else "cpu-query")
+
+    @property
+    def kind(self) -> str:
+        """"exact" or "ivf": what the index searches with."""
+        return "ivf" if self._ivf is not None else "exact"
+
+    @property
+    def nprobe(self) -> int | None:
+        """The calibrated number of lists each query probes (None for exact search)."""
+        return self._nprobe
 
     @property
     def n(self) -> int:
@@ -145,6 +261,8 @@ class Index:
 
     def route(self, batch: int) -> str:
         """The device ("gpu" or "cpu") a search of ``batch`` queries goes to."""
+        if self._ivf is not None:
+            return self._ivf_path(batch, None).split("-")[0]
         if self._device != "auto":
             return self._device
         t = self._profile.threshold(self.metric)
@@ -153,9 +271,10 @@ class Index:
     def __repr__(self) -> str:
         return f"siann.Index({self.n:,} vectors, {self.d} dimensions, metric={self.metric!r}, device={self._device!r})"
 
-    def search(self, xq, k: int = 10, *, device: str | None = None) -> SearchResult:
+    def search(self, xq, k: int = 10, *, device: str | None = None, nprobe: int | None = None) -> SearchResult:
         """The k nearest base vectors to each query in ``xq`` (m, d), or to a single query (d,),
-        returned as a batch of one. ``device`` ("gpu" or "cpu") overrides the index's device."""
+        returned as a batch of one. ``device`` ("gpu" or "cpu") overrides the index's device; ``nprobe``
+        overrides the calibrated number of lists an IVF search probes."""
         q = np.asarray(xq)
         if q.ndim == 1:
             q = q[None, :]
@@ -164,6 +283,8 @@ class Index:
             raise ValueError(f"xq has {q.shape[1]} dimensions, the index {self.d}")
         if not isinstance(k, (int, np.integer)) or k < 1:
             raise ValueError(f"k must be a positive integer, not {k!r}")
+        if nprobe is not None and (not isinstance(nprobe, (int, np.integer)) or nprobe < 1):
+            raise ValueError(f"nprobe must be a positive integer, not {nprobe!r}")
         dev = device or self.route(len(q))
         if dev not in ("gpu", "cpu"):
             raise ValueError(f"device must be 'gpu' or 'cpu', not {dev!r}")
@@ -174,6 +295,8 @@ class Index:
         kk = min(int(k), self.n)
         if len(q) == 0:
             idx = np.empty((0, kk), dtype=np.int64)
+        elif self._ivf is not None:
+            idx = self._ivf.search(q, kk, int(nprobe or self._nprobe), self._ivf_path(len(q), device))
         else:
             idx = (self._search_gpu if dev == "gpu" else self._search_cpu)(q, kk)
         if kk < k:

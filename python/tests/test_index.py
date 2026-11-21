@@ -82,8 +82,6 @@ def test_errors():
     xb = np.zeros((4, 3), dtype=np.float32) + 1
     with pytest.raises(ValueError, match="metric"):
         siann.Index(xb, "hamming")
-    with pytest.raises(NotImplementedError, match="recall"):
-        siann.Index(xb, "l2", recall=0.9)
     with pytest.raises(ValueError, match="dimensions"):
         siann.Index(xb, "l2", device="cpu").search(np.ones((1, 5)), 1)
     with pytest.raises(ValueError, match="zero vector"):

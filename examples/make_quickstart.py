@@ -255,17 +255,15 @@ small.search(xq[:1], k=5)
 ## What siann refuses
 
 siann searches dense vectors, so a sparse matrix is refused with an explanation rather than converted
-silently; so is a recall target, which asks for approximate search.
+silently.
 """),
     code("""
 import scipy.sparse
 
-for attempt in (lambda: siann.Index(scipy.sparse.random(100, 20, density=0.1, format="csr"), "ip"),
-                lambda: siann.Index(xb, "l2", recall=0.95)):
-    try:
-        attempt()
-    except NotImplementedError as e:
-        print("NotImplementedError:", e)
+try:
+    siann.Index(scipy.sparse.random(100, 20, density=0.1, format="csr"), "ip")
+except NotImplementedError as e:
+    print("NotImplementedError:", e)
 """),
 ]
 
