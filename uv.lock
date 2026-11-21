@@ -1834,7 +1834,7 @@ wheels = [
 name = "siann"
 source = { editable = "." }
 dependencies = [
-    { name = "mlx" },
+    { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "numpy" },
 ]
 
@@ -1865,7 +1865,7 @@ lint = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mlx", specifier = ">=0.32.4" },
+    { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=0.32.4" },
     { name = "numpy", specifier = ">=2.5.5" },
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.15.0" },
 ]

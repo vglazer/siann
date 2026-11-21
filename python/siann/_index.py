@@ -175,7 +175,7 @@ class Index:
             reasons.append(f"GPU found: {self._profile.describe(metric)} "
                            f"(profile: {self._profile.source})")
         else:
-            reasons.append("no GPU found: exact search on the CPU")
+            reasons.append("no GPU found: every search on the CPU")
         if self._ivf is None:
             cpu_path = ("siann's Rust kernel" if self._kernel_metric in ("l1", "linf")
                         else "a BLAS matrix multiply through NumPy and siann's Rust top-k")
@@ -213,7 +213,8 @@ class Index:
                      + (" (about 4 sqrt(n))" if not nlist or nlist == default_nlist(n) else "")
                      + f", built in {ivf.build_seconds:.1f} s (siann's k-means, 10 iterations)")
         lines.append("lists stored as bytes (every coordinate an integer 0-255: lossless)" if st == "uint8" else
-                     "lists stored as float16 on the GPU (recall moves by at most about 0.001) and float32 on the CPU")
+                     "lists stored as float16 on the GPU (recall moves by at most about 0.001) and float32 on the CPU"
+                     if build_device == "gpu" else "lists stored as float32")
         # calibration: the given queries, or a sample of the index's own vectors (each one's own match
         # left out)
         rng = np.random.default_rng(0)

@@ -9,7 +9,8 @@ readme = "README.md"
 license = "MIT"
 authors = [{ name = "Victor Glazer" }]
 requires-python = ">=3.12"
-dependencies = ["numpy>=2.5.5", "mlx>=0.32.4"]
+# MLX, siann's GPU backend, runs only on Apple silicon; elsewhere siann searches on the CPU
+dependencies = ["numpy>=2.5.5", "mlx>=0.32.4; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 dynamic = ["version"]
 
 [project.urls]
