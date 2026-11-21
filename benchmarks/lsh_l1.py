@@ -9,7 +9,6 @@ must reach high recall while re-ranking a small share.
 """
 import itertools
 import time
-
 from pathlib import Path
 
 import h5py

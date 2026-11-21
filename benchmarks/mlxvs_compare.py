@@ -22,13 +22,13 @@ import time
 import mlx.core as mx
 import mlxvs
 import numpy as np
-from siann._cpu import FlatIndex
-from siann.exact import mlx_knn
-from siann.ivf_gpu import GpuIVF
-
 from backends import agreement
 from datasets import load
 from timing import throughput
+
+from siann._cpu import FlatIndex
+from siann.exact import mlx_knn
+from siann.ivf_gpu import GpuIVF
 
 K = 10
 METRIC = {"sift": "l2", "glove": "l2", "music100": "ip", "dbpedia": "l2"}   # glove, dbpedia normalized: l2 ranks as cosine

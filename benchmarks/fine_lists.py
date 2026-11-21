@@ -17,13 +17,13 @@ import argparse
 import faiss
 import mlx.core as mx
 import numpy as np
-from siann._cpu import FlatIndex, IvfIndex
-
 from backends import agreement
 from datasets import load
-from siann.ivf_gpu import GpuIVF
 from single_query import pad8
 from timing import throughput
+
+from siann._cpu import FlatIndex, IvfIndex
+from siann.ivf_gpu import GpuIVF
 
 K = 10
 NPROBES = {4000: (16, 32, 64, 128), 8000: (32, 64, 128, 256), 16000: (32, 64, 128, 256, 512)}
@@ -51,7 +51,7 @@ def main() -> None:
     print(f"\n  {'method':44s} {'recall@10':>9s} {'q/s, single':>12s} {'q/s, 100':>10s} {'q/s, full':>10s}")
 
     def row(name, f1, f100, ffull, queries=(small, full), recall_from="full"):
-        qps1, found1 = throughput(f1, queries[0], 1, repeats=1) if f1 else (float("nan"), None)
+        qps1, _ = throughput(f1, queries[0], 1, repeats=1) if f1 else (float("nan"), None)
         qps100, found100 = throughput(f100, queries[0], 100)
         qps_full, found = throughput(ffull, queries[1], len(queries[1]))
         r = agreement(xb, xq, found, truth, "l2")

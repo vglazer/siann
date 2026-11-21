@@ -20,11 +20,11 @@ import sys
 import tempfile
 
 import numpy as np
-from siann._cpu import FlatIndex
-
 from backends import agreement
 from datasets import load
 from timing import throughput
+
+from siann._cpu import FlatIndex
 
 K = 10
 

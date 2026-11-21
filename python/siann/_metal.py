@@ -47,8 +47,8 @@ POSITIONS = {
              "uint2 pos [[thread_position_in_grid]]",
              "    uint t = pos.x, i = pos.y;\n"),
     # 2-D threadgroups of 16 x 16 threads over a tiled matrix
-    "tile": ("    uint tx = thread_position_in_threadgroup.x, ty = thread_position_in_threadgroup.y;\n"
-             "    uint gx = threadgroup_position_in_grid.x, gy = threadgroup_position_in_grid.y;\n",
+    "tile": (("    uint tx = thread_position_in_threadgroup.x, ty = thread_position_in_threadgroup.y;\n"
+              "    uint gx = threadgroup_position_in_grid.x, gy = threadgroup_position_in_grid.y;\n"),
              "uint2 tpos [[thread_position_in_threadgroup]], uint2 gpos [[threadgroup_position_in_grid]]",
              "    uint tx = tpos.x, ty = tpos.y, gx = gpos.x, gy = gpos.y;\n"),
     # 1-D threadgroups: l the group, tid the thread within it

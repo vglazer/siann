@@ -23,12 +23,12 @@ import argparse
 
 import faiss
 import numpy as np
-from siann._cpu import FlatIndex, IvfIndex
-
 from backends import agreement
 from datasets import load
-from siann.ivf_gpu import GpuIVF
 from single_query import latency
+
+from siann._cpu import FlatIndex, IvfIndex
+from siann.ivf_gpu import GpuIVF
 
 K = 10
 
@@ -53,7 +53,7 @@ def main() -> None:
     print(f"{a.dataset}, l2: {len(xb):,} vectors, {d} dimensions, {a.queries:,} single queries; "
           f"latency in microseconds (median)")
     for split in map(int, a.splits.split(",")):
-        med, _, _ = latency(lambda q, s=split: np.array(tiny.search(q, K if K <= 8 else 8, 1, split=s)), xq)
+        med, _, _ = latency(lambda q, s=split: np.array(tiny.search(q, min(K, 8), 1, split=s)), xq)
         print(f"  call overhead (8 vectors, 1 centroid), split={split}: {med:.0f}")
 
     for nlist in [int(n) for n in a.nlists.split(",") if n]:

@@ -28,10 +28,10 @@ import time
 import faiss
 import mlx.core as mx
 import numpy as np
-from siann._cpu import FlatIndex
-
 from backends import agreement
 from datasets import load
+
+from siann._cpu import FlatIndex
 
 K = 10
 

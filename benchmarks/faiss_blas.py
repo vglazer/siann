@@ -9,7 +9,6 @@ import time
 
 import faiss
 import numpy as np
-
 from datasets import load
 
 

@@ -20,12 +20,12 @@ import argparse
 
 import faiss
 import numpy as np
-from siann._cpu import FlatIndex, IvfIndex
-
 from backends import agreement
 from datasets import load
-from siann.ivf_gpu import GpuIVF
 from timing import throughput
+
+from siann._cpu import FlatIndex, IvfIndex
+from siann.ivf_gpu import GpuIVF
 
 K = 10
 

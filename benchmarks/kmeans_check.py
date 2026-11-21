@@ -10,12 +10,12 @@ import time
 
 import faiss
 import numpy as np
+from backends import agreement
+from datasets import load
+
 from siann._cpu import FlatIndex
 from siann.ivf_gpu import GpuIVF
 from siann.kmeans import kmeans
-
-from backends import agreement
-from datasets import load
 
 K = 10
 METRIC = {"sift": "l2", "glove": "l2", "music100": "ip", "dbpedia": "l2"}

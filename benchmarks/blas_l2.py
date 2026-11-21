@@ -19,11 +19,11 @@ import time
 
 import faiss
 import numpy as np
-from siann._cpu import L2TopK
-from siann.blas_l2 import default_tiles, siann_l2
-
 from backends import agreement
 from datasets import load
+
+from siann._cpu import L2TopK
+from siann.blas_l2 import default_tiles, siann_l2
 
 K = 10
 

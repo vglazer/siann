@@ -1,9 +1,9 @@
 """siann's k-means and the IVF's shared lists: the same lists for every backend."""
 import numpy as np
 import pytest
-from siann._cpu import IvfIndex
 
 import siann
+from siann._cpu import IvfIndex
 from siann.ivf_build import assign_metric, build_lists, nearest
 from siann.kmeans import kmeans
 

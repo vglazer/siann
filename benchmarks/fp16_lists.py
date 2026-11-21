@@ -20,12 +20,12 @@ import copy
 import faiss
 import mlx.core as mx
 import numpy as np
-from siann._cpu import FlatIndex, IvfIndex
-
 from backends import agreement
 from datasets import load
-from siann.ivf_gpu import GpuIVF
 from timing import throughput
+
+from siann._cpu import FlatIndex, IvfIndex
+from siann.ivf_gpu import GpuIVF
 
 K = 10
 
@@ -113,7 +113,7 @@ def main() -> None:
     for nprobe in map(int, a.nprobes.split(",")):
         for lists in storages:
             r = rust[lists]
-            qps1, found1 = throughput(lambda q: np.array(r.search(q, K, nprobe), dtype=np.int64).reshape(-1, K),
+            qps1, _ = throughput(lambda q: np.array(r.search(q, K, nprobe), dtype=np.int64).reshape(-1, K),
                                       small, 1, repeats=1)
             qps100, _ = throughput(lambda q: np.array(r.search(q, K, nprobe), dtype=np.int64).reshape(-1, K),
                                    small, 100)

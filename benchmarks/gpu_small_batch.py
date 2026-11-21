@@ -15,8 +15,8 @@ import time
 
 import mlx.core as mx
 import numpy as np
-
 from datasets import load
+
 from siann.ivf_gpu import SCANS, GpuIVF, coarse_dist
 from siann.knn_kernels import _finish, select_k, sz
 
@@ -129,8 +129,9 @@ def main() -> None:
 
     # both changes in one call (one evaluation, as ivf.search does): the probes chosen by argpartition
     # (the scan needs them in no order) and more threads per query; recall against exact search
-    from siann._cpu import FlatIndex
     from backends import agreement
+
+    from siann._cpu import FlatIndex
     truth = np.array(FlatIndex(xb, d, "l2").search(xq, K), dtype=np.int64).reshape(-1, K)
 
     def fast(b, st):

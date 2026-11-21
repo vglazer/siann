@@ -18,8 +18,10 @@ def main() -> None:
     p.add_argument("--inclusive", default="search_one,coarse,scan_one,select_nth,TopK,int_dist,par_chunks",
                    help="substrings of function names to total inclusively")
     a = p.parse_args()
-    prof = json.load(gzip.open(a.profile))
-    syms = json.load(open(a.profile.removesuffix(".gz").removesuffix(".json") + ".json.syms.json"))
+    with gzip.open(a.profile) as f:
+        prof = json.load(f)
+    with open(a.profile.removesuffix(".gz").removesuffix(".json") + ".json.syms.json", encoding="utf-8") as f:
+        syms = json.load(f)
     strings = syms["string_table"]
     tables = {}
     for lib in syms["data"]:
@@ -41,10 +43,11 @@ def main() -> None:
     incl = collections.Counter()
     total = 0
     wanted = [w for w in a.inclusive.split(",") if w]
+    names = {}                                          # (thread, frame) -> function name
     for t in prof["threads"]:
         ft, fun, res, stk = t["frameTable"], t["funcTable"], t["resourceTable"], t["stackTable"]
 
-        def frame_name(f, cache={}):
+        def frame_name(f, cache=names):
             key = (id(t), f)
             if key not in cache:
                 r = fun["resource"][ft["func"][f]]

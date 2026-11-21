@@ -10,9 +10,9 @@ import time
 
 import faiss
 import numpy as np
-from siann._cpu import IvfIndex
-
 from datasets import load
+
+from siann._cpu import IvfIndex
 from siann.ivf_gpu import GpuIVF
 
 p = argparse.ArgumentParser()

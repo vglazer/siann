@@ -10,8 +10,8 @@ import time
 import faiss
 import mlx.core as mx
 import numpy as np
-
 from datasets import load
+
 from siann.knn_kernels import knn_tiled, l2_knn
 
 
@@ -37,7 +37,7 @@ for metric in ("l2", "l1"):
     cpu.add(xb)
     try:
         gpu = faiss.index_cpu_to_gpu(res, 0, cpu)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 (report whatever FAISS's GPU path raises)
         print(f"exact {metric}: FAISS GPU unavailable: {str(e).splitlines()[0][:120]}", flush=True)
         continue
     for nq in (1000, 10000):
@@ -81,5 +81,5 @@ try:
         (found, how), t = timed(ivf_search)
         rec = np.mean([len(set(a) & set(b)) / 10 for a, b in zip(found, truth)])
         print(f"SIFT1M L2, FAISS GPU IVF ({how}) nprobe {nprobe:3d}: recall@10 {rec:.3f}, {len(xq) / t:,.0f} queries/s", flush=True)
-except Exception as e:
+except Exception as e:  # noqa: BLE001 (report whatever FAISS's GPU path raises)
     print(f"FAISS GPU IVF unavailable: {str(e).splitlines()[0][:160]}")

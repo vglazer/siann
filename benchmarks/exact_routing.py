@@ -9,9 +9,9 @@ was faster on every one, and no measured case is slower than sending every batch
 import argparse
 
 import numpy as np
-import siann
-
 from datasets import load
+
+import siann
 
 PLAN = (("sift", 0, ("l2", "l1", "linf")), ("glove", 0, ("cosine", "ip")), ("dbpedia", 100_000, ("cosine", "l2")))
 

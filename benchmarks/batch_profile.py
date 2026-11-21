@@ -17,11 +17,10 @@ import time
 
 import faiss
 import numpy as np
-from siann._cpu import IvfIndex
-
 from backends import agreement
 from datasets import load
-from siann._cpu import FlatIndex
+
+from siann._cpu import FlatIndex, IvfIndex
 from siann.ivf_gpu import GpuIVF
 
 K = 10

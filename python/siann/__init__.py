@@ -16,5 +16,15 @@ from ._profile import DEFAULT as DEFAULT_PROFILE
 from ._profile import Profile, tune, use_profile
 
 __version__ = _version("siann")
-__all__ = ["DEFAULT_PROFILE", "METRICS", "Index", "Plan", "Profile", "SearchResult", "gpu_available",
-           "tune", "use_profile", "__version__"]
+__all__ = [
+           "DEFAULT_PROFILE",
+           "METRICS",
+           "Index",
+           "Plan",
+           "Profile",
+           "SearchResult",
+           "__version__",
+           "gpu_available",
+           "tune",
+           "use_profile",
+]

@@ -18,13 +18,13 @@ from pathlib import Path
 
 import faiss
 import numpy as np
-from siann._cpu import FlatIndex, IvfIndex
-
 from backends import agreement
 from datasets import load
 from exact import FAISS_METRIC
-from siann.ivf_gpu import GpuIVF
 from timing import throughput
+
+from siann._cpu import FlatIndex, IvfIndex
+from siann.ivf_gpu import GpuIVF
 
 K = 10
 

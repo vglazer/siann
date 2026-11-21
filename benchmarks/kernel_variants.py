@@ -5,6 +5,7 @@ distance matrix: it reads the whole base once per query and is limited by memory
 the tiled kernel's speed (ALGORITHMS.md, "What does not pay").
 """
 import mlx.core as mx
+
 from siann.knn_kernels import _INSERT, _KEEP_BEST, _WRITE, COMBINE, _finish
 
 _FUSED_SELECT = """

@@ -9,8 +9,8 @@ import time
 import faiss
 import mlx.core as mx
 import numpy as np
-
 from datasets import load
+
 from siann.knn_kernels import knn_tiled, l2_knn
 
 p = argparse.ArgumentParser()

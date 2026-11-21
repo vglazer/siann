@@ -13,12 +13,11 @@ from pathlib import Path
 import mlx.core as mx
 import numpy as np
 import torch
+from kernel_variants import knn_fused
 
 import siann.torch_kernels as tk
 from siann.ivf_torch import TorchIVF
 from siann.knn_kernels import dist, ip_knn, knn_tiled, l2_knn, select_k
-
-from kernel_variants import knn_fused
 
 try:
     from siann._cpu import FlatIndex, IvfIndex, widen_f16
@@ -150,5 +149,5 @@ for n, d, nq, k in ((5000, 32, 9, 10), (20011, 128, 33, 1), (3000, 7, 5, 32), (3
     print(f"n={n} d={d} q={nq} k={k}: " + ", ".join(f"{name} {r}" for name, r in results.items())
           + "; tiled distance error " + ", ".join(f"{name} {e:.1e}" for name, e in errs.items()), flush=True)
 # MLX's IVF (ivf_gpu.py --check), in its own process.
-ok &= subprocess.run([sys.executable, str(Path(__file__).with_name("ivf_gpu.py")), "--check"]).returncode == 0
+ok &= subprocess.run([sys.executable, str(Path(__file__).with_name("ivf_gpu.py")), "--check"], check=False).returncode == 0
 sys.exit(0 if ok else 1)

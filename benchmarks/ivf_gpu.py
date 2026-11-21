@@ -11,10 +11,10 @@ import time
 
 import mlx.core as mx
 import numpy as np
+from datasets import load
+
 from siann.exact import knn as nearest
 from siann.ivf_gpu import METRICS, GpuIVF
-
-from datasets import load
 
 
 def check() -> bool:
