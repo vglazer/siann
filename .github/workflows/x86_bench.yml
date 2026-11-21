@@ -1,0 +1,64 @@
+name: CPU benchmark on Linux
+
+# Runs benchmarks/x86_cpu.py (siann's CPU path against FAISS: exact search by four metrics, and the IVF at a
+# recall target against FAISS's IVF-Flat and HNSW at matched recall) on GitHub's Linux runners. On x86-64 it
+# builds siann twice and runs both on the same machine: as the published wheels are built (baseline
+# x86-64), and for x86-64-v3 (AVX2 and FMA), to show what the newer instructions would add. The ARM runner
+# runs the published build only. Results go in the run's summary and as an artifact. Run it by hand
+# (Actions > CPU benchmark on Linux > Run workflow).
+
+on:
+  workflow_dispatch:
+    inputs:
+      n:
+        description: base vectors
+        default: "200000"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: Benchmark (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, v3: true }
+          - { os: ubuntu-24.04-arm, v3: false }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Build siann as the published wheels are built
+        run: |
+          python -m pip install maturin
+          maturin build --release --out dist-base
+          python -m venv base && base/bin/pip install dist-base/*.whl faiss-cpu
+      - name: Build siann for x86-64-v3 (AVX2, FMA)
+        if: matrix.v3
+        env:
+          RUSTFLAGS: -C target-cpu=x86-64-v3
+        run: |
+          maturin build --release --out dist-v3
+          python -m venv v3 && v3/bin/pip install dist-v3/*.whl faiss-cpu
+          mkdir so && cd so && python -m zipfile -e ../dist-v3/*.whl . && \
+            echo "256-bit (AVX) instructions in the x86-64-v3 build: $(objdump -d $(find . -name '_cpu*.so') | grep -c ymm || true)"
+      - name: Benchmark the published build
+        working-directory: benchmarks
+        run: |
+          ../base/bin/python x86_cpu.py --n ${{ inputs.n }} | tee ../published.txt
+          { echo '### ${{ matrix.os }}, published build'; echo '```'; cat ../published.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Benchmark the x86-64-v3 build
+        if: matrix.v3
+        working-directory: benchmarks
+        run: |
+          ../v3/bin/python x86_cpu.py --n ${{ inputs.n }} --siann-only | tee ../v3.txt
+          { echo '### ${{ matrix.os }}, x86-64-v3 build'; echo '```'; cat ../v3.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cpu-bench-${{ matrix.os }}
+          path: "*.txt"
