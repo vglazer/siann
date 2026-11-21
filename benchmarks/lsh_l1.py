@@ -8,7 +8,6 @@ must reach high recall while re-ranking a small share.
     uv run --group bench python lsh_l1.py
 """
 import itertools
-import sys
 import time
 
 from pathlib import Path
@@ -17,7 +16,7 @@ import h5py
 import mlx.core as mx
 import numpy as np
 
-from siann.knn_kernels import l1_knn_tiled, l1_dist
+from siann.knn_kernels import dist, knn_tiled
 
 K, QUERIES = 10, 500
 f = h5py.File(Path(__file__).resolve().parent.parent / "data" / "sift-128-euclidean.hdf5", "r")
@@ -27,7 +26,7 @@ xb_mx = mx.array(xb)
 mx.eval(xb_mx)
 
 start = time.perf_counter()
-truth = np.concatenate([np.array(l1_knn_tiled(mx.array(xq[i:i + 256]), xb_mx, K)) for i in range(0, QUERIES, 256)])
+truth = np.concatenate([np.array(knn_tiled(mx.array(xq[i:i + 256]), xb_mx, K, "l1")) for i in range(0, QUERIES, 256)])
 t_exact = time.perf_counter() - start
 r10 = float(np.median([np.abs(xb[t[-1]] - q).sum() for t, q in zip(truth, xq)]))
 print(f"SIFT1M: {n:,} vectors, {d} dimensions; {QUERIES} queries; exact L1 on the GPU {t_exact:.2f} s "

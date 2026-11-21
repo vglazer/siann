@@ -11,7 +11,8 @@ import time
 
 import mlx.core as mx
 import numpy as np
-from siann.ivf_gpu import METRICS, GpuIVF, nearest
+from siann.exact import knn as nearest
+from siann.ivf_gpu import METRICS, GpuIVF
 
 from datasets import load
 

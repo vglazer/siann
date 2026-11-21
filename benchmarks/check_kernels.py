@@ -16,7 +16,9 @@ import torch
 
 import siann.torch_kernels as tk
 from siann.ivf_torch import TorchIVF
-from siann.knn_kernels import dist, ip_knn, knn_fused, knn_tiled, l2_knn, select_k
+from siann.knn_kernels import dist, ip_knn, knn_tiled, l2_knn, select_k
+
+from kernel_variants import knn_fused
 
 try:
     from siann._cpu import FlatIndex, IvfIndex, widen_f16

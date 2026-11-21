@@ -117,16 +117,6 @@ def knn_tiled(q: torch.Tensor, x: torch.Tensor, k: int, metric: str, threads: in
     return select_k(dist(q, x, metric), k, threads)
 
 
-def l1_dist(q: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-    """The L1 distance matrix between the rows of q and of x, tiled."""
-    return dist(q, x, "l1")
-
-
-def l1_knn_tiled(q: torch.Tensor, x: torch.Tensor, k: int, threads: int = 512) -> torch.Tensor:
-    """The k nearest rows of x to each row of q in L1 distance: the tiled distance matrix, then select_k."""
-    return knn_tiled(q, x, k, "l1", threads)
-
-
 def l2_knn(q: torch.Tensor, x: torch.Tensor, norms: torch.Tensor, k: int, threads: int = 512) -> torch.Tensor:
     """The k nearest rows of x to each row of q in L2 distance: a matrix multiply, then select_k.
     ``norms`` holds the squared norms of the rows of x."""

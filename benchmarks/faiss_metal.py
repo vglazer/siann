@@ -12,7 +12,7 @@ import mlx.core as mx
 import numpy as np
 
 from datasets import load
-from siann.knn_kernels import l1_knn_tiled, l2_knn
+from siann.knn_kernels import knn_tiled, l2_knn
 
 
 def timed(fn, reps=3):
@@ -52,7 +52,7 @@ for metric in ("l2", "l1"):
             out = []
             for i in range(0, nq, 256):
                 q = mx.array(xq[i:i + 256])
-                r = l2_knn(q, xb_mx, norms, 10) if metric == "l2" else l1_knn_tiled(q, xb_mx, 10)
+                r = l2_knn(q, xb_mx, norms, 10) if metric == "l2" else knn_tiled(q, xb_mx, 10, "l1")
                 mx.eval(r); out.append(np.array(r))
             return np.concatenate(out)
         mine, t_ours = timed(ours)

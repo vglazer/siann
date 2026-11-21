@@ -19,12 +19,29 @@ import time
 
 import faiss
 import numpy as np
+from siann._cpu import L2TopK
 from siann.blas_l2 import default_tiles, siann_l2
 
 from backends import agreement
 from datasets import load
 
 K = 10
+
+
+def split_times(xb, norms, xq, k, qtile, block):
+    """siann_l2's loop, timing the multiplies and the top-k updates separately (seconds)."""
+    mult = top_t = 0.0
+    for s in range(0, len(xq), qtile):
+        q = xq[s:s + qtile]
+        top = L2TopK(len(q), k)
+        for b in range(0, len(xb), block):
+            t = time.perf_counter()
+            prod = q @ xb[b:b + block].T
+            mult += time.perf_counter() - t
+            t = time.perf_counter()
+            top.push_l2(prod, norms[b:b + block], b)
+            top_t += time.perf_counter() - t
+    return mult, top_t
 
 
 def timed(fn, repeats=3):
@@ -65,8 +82,7 @@ def main() -> None:
         if i == 1:
             print("  (sweep)")
         t, found = timed(lambda: siann_l2(xb, norms, xq, K, qtile, block))
-        split = [0.0, 0.0]
-        siann_l2(xb, norms, xq, K, qtile, block, split)
+        split = split_times(xb, norms, xq, K, qtile, block)
         agree = agreement(xb, xq, found, ref, a.metric)
         print(f"  {qtile:10,d} {block:10,d} {t:7.3f}s {t_faiss / t:8.2f}x {split[0]:8.3f}s {split[1]:6.3f}s "
               f"{agree:9.4f}", flush=True)

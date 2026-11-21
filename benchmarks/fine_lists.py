@@ -78,7 +78,7 @@ def main() -> None:
                 return np.array(rust.search_list_major(q, K, n), dtype=np.int64).reshape(-1, K)
             row(f"Rust IVF, {nlist} lists, nprobe {nprobe}", rq, rq, rl)
             row(f"GPU IVF, {nlist} lists, nprobe {nprobe}", None,
-                lambda q, n=nprobe: gpu.search(q, K, n), lambda q, n=nprobe: gpu.search_list_major(q, K, n))
+                lambda q, n=nprobe, ivf=gpu: ivf.search(q, K, n), lambda q, n=nprobe, ivf=gpu: ivf.search_list_major(q, K, n))
         del gpu
         mx.clear_cache()
 

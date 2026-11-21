@@ -2,8 +2,7 @@
 
 Selection is two-stage. Each of T threads per query keeps the best k of a strided slice of the
 row in registers (neighbouring threads read neighbouring elements); a small argpartition over the
-T * k survivors then gives the final k. For L1 the distance is computed inside the same kernel, so
-no distance matrix is ever written.
+T * k survivors then gives the final k.
 
 L1 and L-infinity (the largest coordinate difference) share their kernels: each distance is built up
 one coordinate pair (q, x) at a time by `combine` (COMBINE below), a sum of |q - x| for L1 and a
@@ -54,23 +53,6 @@ _select = mx.fast.metal_kernel(
 """ + _INSERT + """
     }
 """ + _WRITE)
-
-_FUSED_SELECT = """
-    uint t = thread_position_in_grid.x;
-    uint i = thread_position_in_grid.y;
-    if (t >= T || i >= Q) return;
-""" + _KEEP_BEST + """
-    for (uint j = t; j < N; j += T) {
-        float v = 0.0f;
-        for (uint d = 0; d < D; ++d) { v = combine(v, q[i * D + d], x[j * D + d]); }
-""" + _INSERT + """
-    }
-""" + _WRITE
-_fused_select = {m: mx.fast.metal_kernel(name=f"{m}_select_k", input_names=["q", "x"],
-                                         output_names=["out_val", "out_idx"], source=_FUSED_SELECT,
-                                         header=COMBINE[m])
-                 for m in ("l1", "linf")}
-
 
 # A tiled L1 (or L-infinity) distance matrix, like a matrix multiply: each threadgroup of 16 x 16
 # threads computes a 64 x 64 block of distances (4 x 4 per thread, in registers), staging 16 dimensions
@@ -126,16 +108,6 @@ def knn_tiled(q: mx.array, x: mx.array, k: int, metric: str, threads: int = 512)
     return select_k(dist(q, x, metric), k, threads)
 
 
-def l1_dist(q: mx.array, x: mx.array) -> mx.array:
-    """The L1 distance matrix between the rows of q and of x, tiled."""
-    return dist(q, x, "l1")
-
-
-def l1_knn_tiled(q: mx.array, x: mx.array, k: int, threads: int = 512) -> mx.array:
-    """The k nearest rows of x to each row of q in L1 distance: the tiled distance matrix, then select_k."""
-    return knn_tiled(q, x, k, "l1", threads)
-
-
 def _finish(vals: mx.array, idx: mx.array, q: int, k: int) -> mx.array:
     vals, idx = vals.reshape(q, -1), idx.reshape(q, -1)
     part = mx.argpartition(vals, kth=k - 1, axis=1)[:, :k]
@@ -150,21 +122,6 @@ def select_k(dist: mx.array, k: int, threads: int = 512) -> mx.array:
                         grid=(threads, q, 1), threadgroup=(256, 1, 1),
                         output_shapes=[(q * threads * k,), (q * threads * k,)], output_dtypes=[mx.float32, mx.int32])
     return _finish(vals, idx, q, k)
-
-
-def knn_fused(q: mx.array, x: mx.array, k: int, metric: str, threads: int = 256) -> mx.array:
-    """The k nearest rows of x to each row of q in L1 or L-infinity distance, fused: no distance matrix."""
-    nq, d = q.shape
-    n = x.shape[0]
-    vals, idx = _fused_select[metric](inputs=[q, x], template=[("N", n), ("Q", nq), ("D", d), ("T", threads), ("K", k)],
-                           grid=(threads, nq, 1), threadgroup=(256, 1, 1),
-                           output_shapes=[(nq * threads * k,), (nq * threads * k,)], output_dtypes=[mx.float32, mx.int32])
-    return _finish(vals, idx, nq, k)
-
-
-def l1_knn(q: mx.array, x: mx.array, k: int, threads: int = 256) -> mx.array:
-    """The k nearest rows of x to each row of q in L1 distance, fused: no distance matrix."""
-    return knn_fused(q, x, k, "l1", threads)
 
 
 def ip_knn(q: mx.array, x: mx.array, k: int, threads: int = 512) -> mx.array:

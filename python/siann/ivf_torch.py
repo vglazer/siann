@@ -152,6 +152,10 @@ class TorchIVF:
         counts = np.bincount(assign, minlength=self.nlist)
         self.offsets = torch.from_numpy(np.concatenate([[0], np.cumsum(counts)]).astype(np.int32)).to(dev)
 
+    def _to_ids(self, local: torch.Tensor) -> np.ndarray:
+        """Positions in the lists to base ids; -1 (fewer than k found) stays -1."""
+        return torch.where(local >= 0, self.ids[local.clamp(min=0).long()], -1).cpu().numpy()
+
     def _nearest(self, q: torch.Tensor, k: int, threads: int = 512, metric: str | None = None) -> torch.Tensor:
         """The k nearest centroids of each query in `metric` (the index's by default), by the exact kernels."""
         metric = metric or self.metric
@@ -186,14 +190,14 @@ class TorchIVF:
             _lib(SCAN_MERGED, self.metric, Q=nq, D=d, P=nprobe, T=threads, K=k).ivf_scan_merged(
                 q, self.x, self.offsets, probes, vals, idx, threads=[threads, nq], group_size=[threads, 1])
             local = idx.view(nq, k)
-            return torch.where(local >= 0, self.ids[local.clamp(min=0).long()], -1).cpu().numpy()   # -1: fewer than k found
+            return self._to_ids(local)
         vals = torch.empty(nq * threads * k, device="mps")
         idx = torch.empty(nq * threads * k, device="mps", dtype=torch.int32)
         _lib(SCAN, self.metric, Q=nq, D=d, P=nprobe, T=threads, K=k).ivf_scan(
             q, self.x, self.offsets, probes, vals, idx, threads=[threads, nq], group_size=[min(threads, 256), 1])
         best = torch.topk(vals.view(nq, -1), k, dim=1, largest=False, sorted=True).indices
         local = torch.gather(idx.view(nq, -1), 1, best)
-        return torch.where(local >= 0, self.ids[local.clamp(min=0).long()], -1).cpu().numpy()   # -1: fewer than k found
+        return self._to_ids(local)
 
     def search_list_major(self, xq: np.ndarray, k: int, nprobe: int, select: str = "auto") -> np.ndarray:
         """The list-major scan: queries grouped by list on the GPU, one threadgroup per list. select "auto" is
@@ -215,4 +219,4 @@ class TorchIVF:
         pick = tk.select_k(vals.view(nq, -1), k, threads=64)
         pick = pick.long()   # -1 where fewer than k candidates were found
         local = torch.where(pick >= 0, torch.gather(idx.view(nq, -1), 1, pick.clamp(min=0)), -1)
-        return torch.where(local >= 0, self.ids[local.clamp(min=0).long()], -1).cpu().numpy()   # -1: fewer than k found
+        return self._to_ids(local)

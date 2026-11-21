@@ -2,6 +2,7 @@
 siann's Rust kernels), with natural scores and a plan that says what was chosen and why."""
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 
 import numpy as np
@@ -36,7 +37,9 @@ class Plan:
         return "\n".join(lines)
 
 
+@functools.cache
 def _gpu_available() -> bool:
+    """Whether siann's GPU backend finds a GPU (checked once per process)."""
     try:
         import mlx.core as mx
         return bool(mx.metal.is_available())

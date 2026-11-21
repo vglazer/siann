@@ -89,7 +89,7 @@ def main() -> None:
     fh.add(xb)
     t_faiss = time.perf_counter() - t
 
-    print(f"\n  builds: " + ", ".join(f"{name} {s:.1f} s" for name, (_, s) in graphs.items())
+    print("\n  builds: " + ", ".join(f"{name} {s:.1f} s" for name, (_, s) in graphs.items())
           + f", FAISS HNSW (M 32) {t_faiss:.1f} s")
     print(f"\n  {'method':42s} {'recall@10':>9s} {'median us':>9s} {'single/s':>9s} {f'{len(xq):,}/s':>10s}")
     for ef in map(int, a.efs.split(",")):

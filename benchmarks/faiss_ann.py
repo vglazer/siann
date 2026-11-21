@@ -11,7 +11,7 @@ import mlx.core as mx
 import numpy as np
 
 from datasets import load
-from siann.knn_kernels import l1_knn_tiled, l2_knn
+from siann.knn_kernels import knn_tiled, l2_knn
 
 p = argparse.ArgumentParser()
 p.add_argument("--dataset", default="sift")
@@ -24,7 +24,7 @@ faiss.cvar.distance_compute_blas_threshold = 20
 xb, xq = load(a.dataset, a.queries)
 xb_mx = mx.array(xb)
 norms = mx.sum(xb_mx * xb_mx, axis=1)
-exact = (lambda q: l1_knn_tiled(q, xb_mx, K)) if a.metric == "l1" else (lambda q: l2_knn(q, xb_mx, norms, K))
+exact = (lambda q: knn_tiled(q, xb_mx, K, "l1")) if a.metric == "l1" else (lambda q: l2_knn(q, xb_mx, norms, K))
 truth = np.concatenate([np.array(exact(mx.array(xq[i:i + 256]))) for i in range(0, len(xq), 256)])
 metric = faiss.METRIC_L1 if a.metric == "l1" else faiss.METRIC_L2
 

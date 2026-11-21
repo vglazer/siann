@@ -9,7 +9,8 @@ threads per query walk its lists and merge their best k inside the kernel) or th
 import mlx.core as mx
 import numpy as np
 
-from .knn_kernels import COMBINE, _finish, dist, ip_knn, knn_tiled, l2_knn, select_k
+from .exact import knn
+from .knn_kernels import COMBINE, _finish, dist, select_k
 
 SCAN = """
     uint t = thread_position_in_grid.x;
@@ -139,14 +140,6 @@ LIST_SCANS = {m: mx.fast.metal_kernel(
     for m in METRICS}
 
 
-def nearest(q, x, norms, k, metric):
-    if metric == "l2":
-        return l2_knn(q, x, norms, k)
-    if metric == "ip":
-        return ip_knn(q, x, k)
-    return knn_tiled(q, x, k, metric)
-
-
 def coarse_dist(q, centroids, cnorms, metric):
     """The distances (squared for L2; the negated inner product for "ip") from each query to every
     centroid."""
@@ -189,7 +182,7 @@ class GpuIVF:
         km.train(sample)
         self.centroids = mx.array(km.centroids)
         self.cnorms = mx.sum(self.centroids * self.centroids, axis=1)
-        assign = np.concatenate([np.array(nearest(mx.array(xb[i:i + 4096]), self.centroids, self.cnorms, 1, assign or ('l2' if metric == 'ip' else metric)))[:, 0]
+        assign = np.concatenate([np.array(knn(mx.array(xb[i:i + 4096]), self.centroids, self.cnorms, 1, assign or ('l2' if metric == 'ip' else metric)))[:, 0]
                                  for i in range(0, len(xb), 4096)])
         order = np.argsort(assign, kind="stable")
         self.ids = mx.array(order.astype(np.int32))
@@ -223,37 +216,35 @@ class GpuIVF:
                 grid=(threads, nq, 1), threadgroup=(min(threads, 256), 1, 1),
                 output_shapes=[(nq * threads * k,), (nq * threads * k,)], output_dtypes=[mx.float32, mx.int32])
             local = _finish(vals, idx, nq, k)
-        result = mx.where(local >= 0, mx.take(self.ids, mx.maximum(local, 0)), -1)   # -1: fewer than k found
+        return self._to_ids(local)
+
+    def search_list_major(self, xq: np.ndarray, k: int, nprobe: int, select: str = "auto") -> np.ndarray:
+        """The same search with the list-major scan, grouped by list on the GPU. `select` "auto" uses
+        select_k up to nprobe 16 and argpartition above: for batches of thousands select_k is faster at
+        small nprobe (938,000 against 581,000 queries per second at nprobe 8 on SIFT), argpartition from 32."""
+        if select == "auto":
+            select = "select_k" if nprobe <= 16 else "argpartition"
+        q = mx.array(xq)
+        nq, d = q.shape
+        nlist = self.offsets.shape[0] - 1
+        dist = coarse_dist(q, self.centroids, self.cnorms, self.probe_metric)
+        probes = probe_lists(dist, nprobe, select).reshape(-1)   # pair id = query * nprobe + slot
+        pair_ids = mx.argsort(probes).astype(mx.int32)
+        counts = mx.zeros((nlist,), dtype=mx.int32).at[probes].add(1)
+        first = (mx.cumsum(counts) - counts).astype(mx.int32)
+        lanes = 16
+        vals, idx = LIST_SCANS[self.metric](
+            inputs=[q, self.x, self.offsets, pair_ids, first, counts],
+            template=[("D", d), ("P", nprobe), ("K", k)],
+            grid=(256 * nlist, 1, 1), threadgroup=(256, 1, 1),
+            output_shapes=[(nq * nprobe * lanes * k,), (nq * nprobe * lanes * k,)], output_dtypes=[mx.float32, mx.int32])
+        pick = select_k(vals.reshape(nq, -1), k, threads=64)
+        # pick is -1 where fewer than k candidates were found; take_along_axis would read it as the last column
+        local = mx.where(pick >= 0, mx.take_along_axis(idx.reshape(nq, -1), mx.maximum(pick, 0), axis=1), -1)
+        return self._to_ids(local)
+
+    def _to_ids(self, local: mx.array) -> np.ndarray:
+        """Positions in the lists to base ids; -1 (fewer than k found) stays -1."""
+        result = mx.where(local >= 0, mx.take(self.ids, mx.maximum(local, 0)), -1)
         mx.eval(result)
         return np.array(result)
-
-
-def search_list_major(self, xq: np.ndarray, k: int, nprobe: int, select: str = "auto") -> np.ndarray:
-    """The same search with the list-major scan, grouped by list on the GPU. `select` "auto" uses
-    select_k up to nprobe 16 and argpartition above: for batches of thousands select_k is faster at
-    small nprobe (938,000 against 581,000 queries per second at nprobe 8 on SIFT), argpartition from 32."""
-    if select == "auto":
-        select = "select_k" if nprobe <= 16 else "argpartition"
-    q = mx.array(xq)
-    nq, d = q.shape
-    nlist = self.offsets.shape[0] - 1
-    dist = coarse_dist(q, self.centroids, self.cnorms, self.probe_metric)
-    probes = probe_lists(dist, nprobe, select).reshape(-1)   # pair id = query * nprobe + slot
-    pair_ids = mx.argsort(probes).astype(mx.int32)
-    counts = mx.zeros((nlist,), dtype=mx.int32).at[probes].add(1)
-    first = (mx.cumsum(counts) - counts).astype(mx.int32)
-    lanes = 16
-    vals, idx = LIST_SCANS[self.metric](
-        inputs=[q, self.x, self.offsets, pair_ids, first, counts],
-        template=[("D", d), ("P", nprobe), ("K", k)],
-        grid=(256 * nlist, 1, 1), threadgroup=(256, 1, 1),
-        output_shapes=[(nq * nprobe * lanes * k,), (nq * nprobe * lanes * k,)], output_dtypes=[mx.float32, mx.int32])
-    pick = select_k(vals.reshape(nq, -1), k, threads=64)
-    # pick is -1 where fewer than k candidates were found; take_along_axis would read it as the last column
-    local = mx.where(pick >= 0, mx.take_along_axis(idx.reshape(nq, -1), mx.maximum(pick, 0), axis=1), -1)
-    result = mx.where(local >= 0, mx.take(self.ids, mx.maximum(local, 0)), -1)   # -1: fewer than k found
-    mx.eval(result)
-    return np.array(result)
-
-
-GpuIVF.search_list_major = search_list_major
