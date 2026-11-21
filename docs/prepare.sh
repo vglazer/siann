@@ -10,3 +10,4 @@ cp README.md IMPLEMENTATION.md BACKENDS.md DATASETS.md BENCHMARKS.md TUNING.md D
 # Links to the benchmark folders point at GitHub, which shows them; the docs site has only the pages.
 perl -pi -e 's#\]\(benchmarks/(results/)?\)#](https://github.com/vglazer/siann/tree/main/benchmarks/$1)#g' docs/src/*.md
 perl -pi -e 's#\]\(examples/([^)]*)\)#](https://github.com/vglazer/siann/blob/main/examples/$1)#g' docs/src/*.md
+perl -pi -e 's#\]\(benchmarks/([^)]+\.md)\)#](https://github.com/vglazer/siann/blob/main/benchmarks/$1)#g' docs/src/*.md
