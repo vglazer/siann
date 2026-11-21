@@ -362,6 +362,26 @@ and lands within 0.005 of the target. The same queries time the routing too: tim
 batches of 512 to a scan that runs at 0.77 times the speed of the other on real queries.
 """),
     md("""
+## Saving and loading an index
+
+`index.save(path)` writes everything the index built: the vectors, the IVF's lists, the calibration and
+its sample, the routes and the profile. `siann.Index.load(path)` reads it back without rebuilding, and
+returns the same neighbors. On another machine it keeps the calibration, which depends only on the data,
+and re-measures the routes, which depend on the machine; the plan says which it did.
+"""),
+    code("""
+import os
+import tempfile
+
+path = os.path.join(tempfile.mkdtemp(), "approx.siann")
+start = time.perf_counter()
+approx.save(path)
+loaded = siann.Index.load(path)
+print(f"saved and loaded in {time.perf_counter() - start:.2f} s ({os.path.getsize(path) / 1e6:.0f} MB)")
+print(loaded.plan)
+assert (loaded.search(rest, 10).indices == approx.search(rest, 10).indices).all()
+"""),
+    md("""
 ## When fewer than k exist
 
 Asking for more neighbors than there are vectors returns all of them, then `-1` in the missing slots, with

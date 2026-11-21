@@ -55,6 +55,8 @@ default (single queries on the CPU, the GPU's query-major scan below 1,000 queri
 from 1,000) only where it was at least 10% faster. Like calibration, the timing is only as representative
 as the queries: on its own vectors, Music-100's index sends batches of 512 to the list-major scan, which
 runs at 0.77 times the speed of the default on real queries. Passing `calibration_queries=` fixes both.
+An index loaded on another machine re-measures its routes on the same saved sample
+([IMPLEMENTATION](IMPLEMENTATION.md#saving-and-loading)).
 
 To fix the thresholds instead, give a profile thresholds of its own: `siann.tune(xb, xq, recall=0.95)`
 measures them on your data, or set them by hand:

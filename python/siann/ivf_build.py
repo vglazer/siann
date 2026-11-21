@@ -60,6 +60,15 @@ def nearest(x: np.ndarray, c: np.ndarray, metric: str, device: str = "auto", til
     return siann_l2(c, norms, x, 1, qtile, min(block, len(c)))[:, 0]
 
 
+def lists_from_assign(centroids: np.ndarray, assign: np.ndarray) -> Lists:
+    """The lists given each base vector's list: the base ids sorted by list (stably), and the offsets."""
+    a = np.asarray(assign, dtype=np.int64)
+    order = np.argsort(a, kind="stable")
+    counts = np.bincount(a, minlength=len(centroids))
+    offsets = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
+    return Lists(np.ascontiguousarray(centroids, dtype=np.float32), a, order.astype(np.int64), offsets)
+
+
 def build_lists(xb: np.ndarray, nlist: int, metric: str, centroids: np.ndarray | None = None,
                 assign: str | None = None, seed: int = 1, sample_per_list: int = 100,
                 device: str = "auto") -> Lists:
@@ -73,8 +82,4 @@ def build_lists(xb: np.ndarray, nlist: int, metric: str, centroids: np.ndarray |
         sample = xb[rng.choice(len(xb), min(len(xb), sample_per_list * nlist), replace=False)]
         centroids = kmeans(sample, nlist, niter=10, seed=seed, device=device)
     centroids = np.ascontiguousarray(centroids, dtype=np.float32)
-    a = nearest(xb, centroids, assign or assign_metric(metric), device)
-    order = np.argsort(a, kind="stable")
-    counts = np.bincount(a, minlength=len(centroids))
-    offsets = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
-    return Lists(centroids, a, order.astype(np.int64), offsets)
+    return lists_from_assign(centroids, nearest(xb, centroids, assign or assign_metric(metric), device))

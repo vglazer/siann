@@ -116,6 +116,18 @@ Every choice can be overridden: `kind="exact"` or `"ivf"`, `nlist=`, `storage=`,
 `"gpu"` (for the index or for one search), `search(..., nprobe=)` for one search, and a profile with
 thresholds of its own for both exact and approximate routing ([TUNING](TUNING.md)).
 
+### Saving and loading
+
+`index.save(path)` writes one NumPy `.npz` file, read back with pickling disabled: the base vectors (as
+bytes where every coordinate is an integer from 0 to 255), the IVF's centroids and each vector's list,
+the calibration sample, and a JSON header with the metric, the recall target, the calibrated nprobe, the
+storage, the routes, the profile and the plan, with the machine the routes were measured on.
+`siann.Index.load(path)` rebuilds each device's copy of the lists from them the first time a search needs
+it, as when the index was built, so the file assumes no device. What the index decided from the data, its
+lists and nprobe, and its choice between the IVF and exact search, are kept, so a loaded index returns the
+same neighbors anywhere. What it decided from the machine, its routes and profile, is kept on the same
+machine and re-measured on another (`remeasure=` forces either). A file of a later format is refused.
+
 ## Distances
 
 - **L2** (Euclidean): the square root of the sum of squared differences. Searches compare squared

@@ -63,6 +63,7 @@ profile = siann.tune(xb)                     # measure the GPU/CPU choice on you
 approx = siann.Index(xb, metric="cosine", recall=0.95)   # approximate: an IVF, calibrated to the target
 approx.search(xq, k=10)
 approx = siann.Index(xb, metric="cosine", recall=0.95, calibration_queries=xq[:1000])  # optional: on your queries
+approx.save("approx.siann")                  # and siann.Index.load("approx.siann"), on any machine
 ```
 
 Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, the

@@ -78,17 +78,23 @@ class Profile:
                                                        for b in batches))
         return "\n".join(lines)
 
-    def save(self, path) -> None:
-        data = {"source": self.source, "cpu_below": self.cpu_below, "meta": self.meta,
+    def to_dict(self) -> dict:
+        """The profile as plain data (what ``save`` writes, as JSON)."""
+        return {"source": self.source, "cpu_below": self.cpu_below, "meta": self.meta,
                 "rates": [list(r) for r in self.rates], "ivf": self.ivf}
-        Path(path).write_text(json.dumps(data, indent=1), encoding="utf-8")
 
     @classmethod
-    def load(cls, path) -> Profile:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    def from_dict(cls, data: dict) -> Profile:
         return cls(dict(data["cpu_below"]), data["source"],
                    tuple((m, d, int(b), float(r)) for m, d, b, r in data.get("rates", [])), data.get("meta", {}),
                    data.get("ivf"))
+
+    def save(self, path) -> None:
+        Path(path).write_text(json.dumps(self.to_dict(), indent=1), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path) -> Profile:
+        return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
 # Tuned by benchmarks/exact_routing.py on an Apple M3 Max (results/exact_routing.txt): for each metric,

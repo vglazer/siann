@@ -26,11 +26,13 @@ class IVF:
     """The lists and each device's copy of them. ``metric`` is the IVF's: "l1", "l2", "linf" or "ip"
     (cosine arrives as "l2" on unit vectors)."""
 
-    def __init__(self, x: np.ndarray, metric: str, nlist: int, storage: str, device_for_build: str):
+    def __init__(self, x: np.ndarray, metric: str, nlist: int, storage: str, device_for_build: str,
+                 built=None):
+        """Builds the lists, or takes them from ``built`` (a ``siann.ivf_build.Lists``, as when loading)."""
         from .ivf_build import build_lists
         self.x, self.metric, self.storage = x, metric, storage
         t = time.perf_counter()
-        self.built = build_lists(x, nlist, metric, device=device_for_build)
+        self.built = built if built is not None else build_lists(x, nlist, metric, device=device_for_build)
         self.build_seconds = time.perf_counter() - t
         self._gpu = self._cpu = None
 

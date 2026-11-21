@@ -3,13 +3,19 @@ siann's Rust kernels), with natural scores and a plan that says what was chosen 
 from __future__ import annotations
 
 import functools
+import json
+import platform
+import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
 METRICS = ("l2", "l1", "linf", "cosine", "ip")
 DISTANCES = ("l2", "l1", "linf")          # smaller is nearer; cosine and ip are similarities
+FORMAT = "siann-index"
+FORMAT_VERSION = 1                        # files of a later version are refused
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,20 @@ def _gpu_available() -> bool:
         return bool(mx.metal.is_available())
     except Exception:  # noqa: BLE001 (any failure to load or query MLX means no usable GPU)
         return False
+
+
+@functools.cache
+def _machine() -> str:
+    """This machine, as routing depends on it: the processor's name, its architecture and the OS (not its
+    version, so that routes survive an OS update)."""
+    name = platform.processor() or "unknown processor"
+    if platform.system() == "Darwin":
+        try:
+            name = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], check=True, capture_output=True,
+                                  text=True, encoding="utf-8").stdout.strip() or name
+        except (OSError, subprocess.CalledProcessError):
+            pass
+    return f"{name} ({platform.machine()}, {platform.system()})"
 
 
 def _is_sparse(x) -> bool:
@@ -133,12 +153,20 @@ class Index:
         self._ivf = None
         self._nprobe = None
         self._routes = {}
+        self._storage = None
+        self._cal_q = self._cal_ids = None
         reasons = []
         if recall is None or kind == "exact":
             reasons.append("exact search (no recall target): the results are the true nearest neighbors"
                            if recall is None else "exact search (kind='exact' given)")
         else:
             reasons += self._build_ivf(recall, kind, nlist, storage, gpu, calibration_queries)
+        self._build_reasons = tuple(reasons)
+        self._finish_plan(list(reasons), device, gpu)
+
+    def _finish_plan(self, reasons: list[str], device: str, gpu: bool) -> None:
+        """The plan: the build's reasons, then the device's."""
+        metric = self.metric
         if device != "auto":
             reasons.append(f"device={device!r} given")
         elif gpu and self._ivf is not None:
@@ -177,6 +205,7 @@ class Index:
         st = default_storage(self._x) if storage == "auto" else storage
         if st == "uint8" and default_storage(self._x) != "uint8":
             raise ValueError("storage='uint8' needs every coordinate to be an integer from 0 to 255")
+        self._storage = st
         lines = []
         build_device = "gpu" if gpu and self._device != "cpu" else "cpu"
         ivf = IVF(self._x, ivf_metric, nlist, "uint8" if st == "uint8" else "float", build_device)
@@ -233,20 +262,117 @@ class Index:
         lines.append(f"IVF chosen: {ivf_seconds * 1e3:.1f} ms for {sample}, against {exact_seconds * 1e3:.1f} ms "
                      "for exact search" + (" (kind='ivf' given)" if kind == "ivf" else ""))
         self._ivf, self._nprobe = ivf, nprobe
+        self._cal_q, self._cal_ids = q, ids
+        lines.append(self._route())
+        return lines
+
+    def _route(self) -> str:
+        """Sets the IVF's routes, from the profile or measured on the calibration sample; returns the plan's line."""
         from ._ivf import ROUTE_BATCHES, describe_routes, measure_routes
-        on_gpu = gpu and self._device != "cpu"
+        on_gpu = _gpu_available() and self._device != "cpu"
         if self._profile.ivf:
             self._routes = dict(self._profile.ivf)
-            lines.append(f"routing from the profile: {describe_routes(self._routes, on_gpu)}")
-        else:
-            # the calibration queries, topped up with distinct base vectors to the largest batch timed
-            want = min(n, max(ROUTE_BATCHES))
-            extra = self._x[np.sort(rng.choice(n, size=max(0, want - len(q)), replace=False))]
-            t = time.perf_counter()
-            self._routes, _ = measure_routes(ivf, np.concatenate([q, extra])[:want], nprobe, on_gpu)
-            lines.append(f"routing measured in {time.perf_counter() - t:.1f} s: "
-                         f"{describe_routes(self._routes, on_gpu)}")
-        return lines
+            return f"routing from the profile: {describe_routes(self._routes, on_gpu)}"
+        # the calibration queries, topped up with distinct base vectors to the largest batch timed
+        q, n = self._cal_q, self.n
+        want = min(n, max(ROUTE_BATCHES))
+        rng = np.random.default_rng(1)
+        extra = self._x[np.sort(rng.choice(n, size=max(0, want - len(q)), replace=False))]
+        t = time.perf_counter()
+        self._routes, _ = measure_routes(self._ivf, np.concatenate([q, extra])[:want], self._nprobe, on_gpu)
+        return f"routing measured in {time.perf_counter() - t:.1f} s: {describe_routes(self._routes, on_gpu)}"
+
+    def save(self, path) -> None:
+        """Writes the index to ``path`` (a NumPy ``.npz`` file, written at exactly that path): the base
+        vectors, the IVF's centroids and lists, the calibration and its sample, the routes, the profile and
+        the plan. ``siann.Index.load(path)`` reads it back on any machine."""
+        from . import __version__
+        meta = {"format": FORMAT, "format_version": FORMAT_VERSION, "siann": __version__,
+                "saved": time.strftime("%Y-%m-%d"), "machine": _machine(), "metric": self.metric,
+                "recall": self.recall, "kind": self.kind, "nprobe": self._nprobe, "storage": self._storage,
+                "ivf_metric": self._ivf.metric if self._ivf else None, "routes": self._routes,
+                "profile": self._profile.to_dict(), "build_reasons": list(self._build_reasons),
+                "calibration": None if self._ivf is None else ("own" if self._cal_ids is not None else "given")}
+        bytes_ok = self._storage == "uint8"                 # every coordinate an integer 0-255: stored as bytes
+        arrays = {"meta": np.frombuffer(json.dumps(meta).encode("utf-8"), dtype=np.uint8),
+                  "x": self._x.astype(np.uint8) if bytes_ok else self._x}
+        if self._ivf is not None:
+            arrays["centroids"] = self._ivf.built.centroids
+            arrays["assign"] = self._ivf.built.assign.astype(np.int32)
+            arrays["calibration_queries"] = self._cal_q
+            if self._cal_ids is not None:
+                arrays["calibration_ids"] = self._cal_ids.astype(np.int64)
+        with open(path, "wb") as f:
+            np.savez(f, **arrays)
+
+    @classmethod
+    def load(cls, path, *, device: str = "auto", profile=None, remeasure: bool | None = None) -> Index:
+        """An index saved by ``index.save(path)``, returning the same neighbors on any machine: its lists,
+        its calibrated nprobe (which depends only on the data) and its choice between the IVF and exact
+        search are kept. Its routes and profile, which only decide where each search runs, depend on the
+        machine: kept where the file was saved on this machine (as named by its processor), otherwise
+        re-measured on the saved calibration sample, and the profile replaced by this process's
+        (``siann.use_profile``, or siann's own). ``remeasure`` forces either; ``profile`` gives one."""
+        from ._ivf import IVF
+        from ._profile import Profile, current_profile
+        from .ivf_build import lists_from_assign
+        if device not in ("auto", "gpu", "cpu"):
+            raise ValueError(f"device must be 'auto', 'gpu' or 'cpu', not {device!r}")
+        if profile is not None and not isinstance(profile, Profile):
+            raise TypeError("profile must be a siann.Profile (from siann.tune or siann.Profile.load)")
+        try:
+            data = np.load(path, allow_pickle=False)
+            meta = json.loads(bytes(data["meta"]).decode("utf-8"))
+        except (ValueError, KeyError, OSError, json.JSONDecodeError) as e:
+            raise ValueError(f"{path} is not a saved siann index ({e})") from None
+        if meta.get("format") != FORMAT:
+            raise ValueError(f"{path} is not a saved siann index")
+        if meta["format_version"] > FORMAT_VERSION:
+            raise ValueError(f"{path} was saved by siann {meta['siann']} in format {meta['format_version']}; "
+                             f"this siann reads format {FORMAT_VERSION} and earlier: upgrade siann")
+        gpu = _gpu_available()
+        if device == "gpu" and not gpu:
+            raise RuntimeError("device='gpu', but no GPU is available")
+        same = meta["machine"] == _machine()
+        redo = (not same) if remeasure is None else remeasure
+        self = cls.__new__(cls)
+        self.metric = meta["metric"]
+        self._x = np.ascontiguousarray(data["x"], dtype=np.float32)
+        self._kernel_metric = "ip" if self.metric == "cosine" else self.metric
+        self._profile = profile if profile is not None else (current_profile() if redo else
+                                                             Profile.from_dict(meta["profile"]))
+        self._device = device if device != "auto" else ("auto" if gpu else "cpu")
+        self._layouts = {}
+        self.recall = meta["recall"]
+        self._storage = meta["storage"]
+        self._nprobe = meta["nprobe"]
+        self._routes = dict(meta["routes"])
+        self._ivf = self._cal_q = self._cal_ids = None
+        reasons = [r if same or not r.startswith(("IVF chosen", "kept exact search")) else
+                   r + " (timed on the machine that saved it, and kept, so that results do not change)"
+                   for r in meta["build_reasons"] if not r.startswith("routing ")]
+        where = "this machine" if same else meta["machine"]
+        reasons.insert(0, f"loaded from {Path(path).name}, saved by siann {meta['siann']} on {meta['saved']} "
+                          f"on {where}")
+        if meta["kind"] == "ivf":
+            built = lists_from_assign(data["centroids"], data["assign"])
+            self._ivf = IVF(self._x, meta["ivf_metric"], len(built.centroids),
+                            "uint8" if self._storage == "uint8" else "float", "cpu", built=built)
+            self._cal_q = np.ascontiguousarray(data["calibration_queries"], dtype=np.float32)
+            self._cal_ids = data.get("calibration_ids")
+            if redo:
+                reasons.append(self._route().replace("routing measured", "routing re-measured on this machine", 1))
+            else:
+                from ._ivf import describe_routes
+                reasons.append(f"routing as saved, measured on this machine: "
+                               f"{describe_routes(self._routes, gpu and self._device != 'cpu')}")
+        if profile is None and not same and not redo:
+            reasons.append("profile as saved, from another machine (remeasure=False given)")
+        elif profile is None and redo and not same:
+            reasons.append("profile: this process's, as the saved one was measured on another machine")
+        self._build_reasons = tuple(r for r in reasons if not r.startswith("loaded from"))
+        self._finish_plan(reasons, device, gpu)
+        return self
 
     def _ivf_path(self, batch: int, device: str | None) -> str:
         """The IVF path a batch takes: by the device (given, or chosen by the profile) and the batch size."""
