@@ -149,11 +149,11 @@ def threshold_with_margin(cpu: dict[int, float], gpu: dict[int, float], default:
 def _tune_ivf(xb, xq, given_xq: bool, metric: str, recall: float, k: int):
     """Approximate search's thresholds: an IVF calibrated to ``recall`` (on ``xq`` if given), its routes
     measured as an index measures its own; returns (thresholds, rates as (label, path, batch, rate))."""
-    from ._index import Index
+    from ._index import Index, _gpu_available
     from ._ivf import measure_routes
     index = Index(xb, metric, recall=recall, kind="ivf", calibration_queries=xq[:1000] if given_xq else None,
                   profile=Profile({metric: 1}, "tuning"))
-    routes, rates = measure_routes(index._ivf, xq, index.nprobe, True, k)
+    routes, rates = measure_routes(index._ivf, xq, index.nprobe, _gpu_available(), k)
     thresholds = dict(routes, recall=recall, nprobe=index.nprobe, metric=metric)
     return thresholds, [("ivf", p, b, r) for (p, b), r in rates.items()]
 
@@ -189,7 +189,10 @@ def tune(xb, xq=None, metrics=None, batches=BATCHES, k: int = 10, budget: float 
     meta = {"n": len(xb), "d": int(xb.shape[1]), "k": int(k), "machine": platform.platform(),
             "date": time.strftime("%Y-%m-%d")}
     if not _gpu_available():
-        return Profile({m: None for m in metrics}, "tuned: no GPU found, every search on the CPU", (), meta)
+        # every exact search on the CPU; approximate search still chooses between the CPU's two scans
+        ivf, ivf_rates = (_tune_ivf(xb, xq, given_xq, metrics[0], recall, k) if recall is not None else (None, []))
+        return Profile({m: None for m in metrics}, "tuned: no GPU found, every search on the CPU",
+                       tuple(ivf_rates), meta, ivf)
     deadline = time.perf_counter() + budget
     rates, cpu_below = [], {}
     per_metric = budget / (len(metrics) + (2 if recall else 0))
