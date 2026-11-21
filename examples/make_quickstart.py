@@ -25,9 +25,9 @@ siann is fast similarity search on Apple silicon for dense vectors. Give it base
 it finds each query's nearest neighbors, on the GPU or the CPU (BLAS through NumPy, and siann's own Rust
 kernels), choosing the device for each search unless you tell it which.
 
-This notebook covers exact search: what each metric means and how to choose one, the scores siann returns
-and how it explains its choices, how the GPU and the CPU compare as batches grow, tuning siann's routing to
-your own data and hardware, and exact search as the ground truth for checking an approximate index.
+This notebook covers what each metric means and how to choose one, the scores siann returns and how it
+explains its choices, how the GPU and the CPU compare as batches grow, tuning siann's routing to your own
+data and hardware, exact search as the ground truth, and approximate search to a recall target.
 """),
     code("""
 import time
@@ -239,6 +239,87 @@ def recall(found, truth):
 
 
 recall(truth, truth)
+"""),
+    md("""
+## Approximate search
+
+With a recall target, siann builds an IVF: it clusters the vectors into lists (with its own k-means),
+finds how many lists each query must probe (nprobe) to reach the target on a sample of queries, times that
+against exact search on the sample, and keeps whichever is faster. The sample should look like the real
+queries: here, 1,000 of them, passed as `calibration_queries`. The plan reports every choice.
+"""),
+    code("""
+approx = siann.Index(xb, "l2", recall=0.95, calibration_queries=xq[:1000])
+print(approx.plan)
+"""),
+    md("""
+The target holds on queries it was not calibrated on: here, the other 9,000, against their true neighbors
+from above. This synthetic data clusters cleanly, so a couple of lists per query suffice; on SIFT1M the same
+target takes about 40 of its 4,000 lists.
+"""),
+    code("""
+rest = xq[1000:]
+found = approx.search(rest, 10).indices
+print(f"recall@10 on the other {len(rest):,} queries: {recall(found, truth[1000:]):.3f}")
+"""),
+    md("""
+Approximate search pays most where exact search costs most: in large batches. A single query goes to the
+CPU, split over 4 threads; batches go to the GPU.
+"""),
+    code("""
+def rate(fn, b):
+    q = rest[:b]
+    fn(q)                                              # warm-up: copies, kernels for this shape
+    calls = max(1, 2000 // b) if b < 1000 else 3
+    start = time.perf_counter()
+    for c in range(calls):
+        fn(rest[c:c + 1] if b == 1 else q)
+    return calls * b / (time.perf_counter() - start)
+
+
+sizes = [1, 10, 100, 1000, 9000]
+exact_rate = [rate(lambda q: truth_index.search(q, 10), b) for b in sizes]
+approx_rate = [rate(lambda q: approx.search(q, 10), b) for b in sizes]
+fig, ax = plt.subplots(figsize=(6, 3.6))
+ax.plot(sizes, exact_rate, marker="o", label="exact")
+ax.plot(sizes, approx_rate, marker="o", label=f"IVF, recall 0.95 (nprobe {approx.nprobe})")
+ax.set_xscale("log"); ax.set_yscale("log")
+ax.set_xlabel("queries per batch"); ax.set_ylabel("queries per second"); ax.legend()
+fig.tight_layout()
+"""),
+    md("""
+nprobe trades recall for speed. Below, a batch of 9,000 queries at nprobe from 1 to 128 (`search(...,
+nprobe=)` overrides the calibrated value), with the calibrated point and exact search marked.
+"""),
+    code("""
+curve = []
+for p in (1, 2, 4, 8, 16, 32, 64, 128):
+    approx.search(rest, 10, nprobe=p)
+    start = time.perf_counter()
+    found = approx.search(rest, 10, nprobe=p).indices
+    curve.append((recall(found, truth[1000:]), len(rest) / (time.perf_counter() - start), p))
+fig, ax = plt.subplots(figsize=(6, 3.6))
+ax.plot([r for r, _, _ in curve], [q for _, q, _ in curve], marker="o", label="IVF, by nprobe")
+for r, q, p in curve:
+    ax.annotate(str(p), (r, q), textcoords="offset points", xytext=(4, 4), fontsize=8)
+calibrated = [c for c in curve if c[2] == approx.nprobe]
+if calibrated:
+    ax.scatter([calibrated[0][0]], [calibrated[0][1]], s=120, facecolors="none", edgecolors="black",
+               label=f"calibrated, nprobe {approx.nprobe}")
+ax.scatter([1.0], [exact_rate[-1]], marker="s", label="exact")
+ax.set_yscale("log"); ax.set_xlabel("recall@10"); ax.set_ylabel("queries per second (batch of 9,000)")
+ax.legend(); fig.tight_layout()
+"""),
+    md("""
+Without `calibration_queries`, siann calibrates on a sample of the index's own vectors, and the target
+holds for queries like them. Here the queries are drawn like the base vectors, so the two agree; on real
+data they often do not, and calibrating on real queries is what keeps the target (BENCHMARKS.md,
+"Approximate search through siann.Index").
+"""),
+    code("""
+own = siann.Index(xb, "l2", recall=0.95)
+print(f"calibrated on its own vectors: nprobe {own.nprobe}, recall {recall(own.search(rest, 10).indices, truth[1000:]):.3f}")
+print(f"calibrated on 1,000 queries:   nprobe {approx.nprobe}, recall {recall(approx.search(rest, 10).indices, truth[1000:]):.3f}")
 """),
     md("""
 ## When fewer than k exist

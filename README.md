@@ -3,10 +3,10 @@
 [![CI](https://github.com/vglazer/siann/actions/workflows/ci.yml/badge.svg)](https://github.com/vglazer/siann/actions/workflows/ci.yml)
 [![Documentation](https://img.shields.io/readthedocs/siann/latest)](https://siann.readthedocs.io)
 
-**Fast nearest-neighbor search on Apple silicon,** for dense NumPy vectors, on the GPU and the CPU,
-by Euclidean (L2), cosine, inner product, Manhattan (L1) and Chebyshev (L-infinity) distance. Each search
-runs where it is fastest for its batch size and metric, and `index.plan` says why; `siann.tune` measures
-the choice on your own data and hardware.
+**Fast nearest-neighbor search on Apple silicon,** exact or to a recall target, for dense NumPy vectors,
+on the GPU and the CPU, by Euclidean (L2), cosine, inner product, Manhattan (L1) and Chebyshev (L-infinity)
+distance. Each search runs where it is fastest for its batch size and metric, and `index.plan` says why;
+`siann.tune` measures the choice on your own data and hardware.
 
 Exact search beats FAISS on the CPU and mlxvs on the GPU almost everywhere, most of all for L1 and
 L-infinity. Where another library is faster, as graph indexes are for approximate search on some data,
@@ -51,17 +51,23 @@ import numpy as np
 import siann
 
 xb = np.random.default_rng(0).standard_normal((100_000, 128), dtype=np.float32)
+xq = np.random.default_rng(1).standard_normal((1_000, 128), dtype=np.float32)
 index = siann.Index(xb, metric="cosine")     # or "l2", "l1", "linf", "ip"
 res = index.search(xb[:5], k=10)             # exact, on the GPU or the CPU by batch size
 res.indices, res.scores                      # (5, 10) each, best first
 print(index.plan)                            # what was chosen, and why
 profile = siann.tune(xb)                     # measure the GPU/CPU choice on your data
+
+approx = siann.Index(xb, metric="cosine", recall=0.95, calibration_queries=xq)   # approximate: an IVF
+approx.search(xq, k=10)                      # calibrated to recall 0.95 on queries like xq
 ```
 
 Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, the
 similarity for cosine and inner product. `device="cpu"` or `"gpu"` overrides the choice of device, for the
 index or for one search; a profile from `siann.tune` changes it for the indexes it is given to
-([TUNING](TUNING.md)).
+([TUNING](TUNING.md)). With `recall=`, siann builds an IVF, finds the number of lists to probe that reaches
+the target on `calibration_queries` (or, without them, on a sample of the index's own vectors), and keeps
+exact search instead where that is faster; the plan reports each choice.
 
 ## Which to use, and how it compares
 

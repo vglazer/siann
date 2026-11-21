@@ -461,6 +461,29 @@ float16 search on Gaussian data 0.118 s at 100 dimensions, 0.016 s at 104, float
 Zero-padding to 104 leaves L2 distances unchanged, and the comparisons pad; padding costs FAISS's float32
 IVF about 15% on GloVe, so for float32 the better of padded and unpadded is used.
 
+## Approximate search through siann.Index
+
+*Reproduce with `index_recall.py --dataset sift|glove|music100`, and with `--calibrate-on queries`.*
+
+`siann.Index(xb, metric, recall=0.95)` on the full datasets, its recall measured on the datasets' own
+queries (ties counted as found), and its speed at the batch sizes it routes (`index_recall_*.txt`):
+
+| Dataset | Calibrated on | nprobe | Recall on the queries | Build | Queries/s: 1 / 100 / 10,000 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| SIFT, L2 | its own vectors | 38 | 0.940 | 4.8 s | 11,343 / 104,939 / 194,992 |
+| SIFT, L2 | 1,000 of the queries (recall on the other 9,000) | 46 | **0.955** | 4.7 s | 11,035 / 94,080 / 180,141 |
+| GloVe, cosine | its own vectors | 364 | 0.947 | 5.0 s | 2,409 / 16,840 / 46,447 |
+| Music-100, inner product | its own vectors | 129 | 0.986 | 4.1 s | 9,515 / 60,194 / 169,406 |
+| Music-100, inner product | 1,000 of the queries (recall on the other 9,000) | 25 | **0.946** | 3.9 s | 15,832 / 161,949 / 325,474 |
+
+- **Calibrate on queries like the real ones.** A sample of the index's own vectors misses the target on
+  real queries, either way: SIFT's queries are harder than its base vectors (0.940 against 0.95), Music-100's
+  much easier (0.986, at five times the nprobe it needs). Calibrated on 1,000 of the queries, the other
+  9,000 land within 0.005 of the target.
+- **The IVF is chosen on every dataset,** 2-11 times faster than exact search on the calibration sample.
+- **The build takes 4-5 seconds for a million vectors:** k-means and the lists (3.4-3.9 s), then
+  calibration.
+
 ## Against mlxvs on the GPU
 
 *Reproduce with `mlxvs_compare.py --dataset sift|glove|music100`.*

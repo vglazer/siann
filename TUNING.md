@@ -39,6 +39,27 @@ tune.
 divides its work among threads 32 queries at a time), so their CPU throughput stays flat from 4 to 32
 queries (169 and 121 per second on SIFT1M), and the GPU wins every batch size.
 
+## Approximate search: the recall target and routing
+
+**Calibrate on representative queries.** `siann.Index(xb, metric, recall=0.95)` finds the nprobe that
+reaches the target on a sample of 1,000 queries. Without `calibration_queries=`, the sample is the
+index's own vectors, and the target holds for queries like them; real queries often differ. On SIFT1M its
+own vectors gave 0.940 on the real queries, on Music-100 0.986 at five times the nprobe needed; calibrated
+on 1,000 real queries, both came within 0.005 of 0.95 on the rest (BENCHMARKS.md, "Approximate search
+through siann.Index"). `search(..., nprobe=)` overrides the calibrated value for one search.
+
+**Routing.** A profile's `ivf` thresholds decide where an IVF search runs: below `cpu_below` queries
+(default 2: single queries) on the CPU, split over 4 threads for a single query; above, on the GPU; and
+from `list_major_from` queries (default 1,000) with a scan that reads each list once for all its queries.
+The single-query default comes from SIFT1M at recall 0.925, where siann's Rust IVF answers a query in 0.14 ms
+on one thread against the GPU's 0.49 ms; the GPU leads from batches of 100. To set them by hand:
+
+```python
+p = siann.Profile(siann.DEFAULT_PROFILE.cpu_below, "my thresholds",
+                  ivf={"cpu_below": 32, "list_major_from": 2000})
+index = siann.Index(xb, "l2", recall=0.95, profile=p)
+```
+
 ## How to tune
 
 ```python

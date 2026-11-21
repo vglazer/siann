@@ -164,6 +164,27 @@ and cost where it is not: a single query on one thread reads its lists below the
 so widening float16 is pure extra work, while the list-major scans already read each list once for many
 queries. Byte lists with integer queries are faster everywhere on the CPU, through the integer path.
 
+## From a recall target to an index
+
+`siann.Index(xb, metric, recall=0.95)` turns a recall target into an IVF and its settings:
+
+- **The lists:** about 4 sqrt(n) of them (4,000 for a million vectors), from siann's k-means, stored as
+  bytes where every coordinate is an integer from 0 to 255 (lossless), and otherwise as float16 on the GPU
+  and float32 on the CPU. Cosine search is L2 search on vectors normalized to unit length.
+- **Calibration:** a sample of 1,000 queries is searched exactly, then with the IVF at a doubling nprobe
+  until it reaches the target recall@10, and a bisection narrows nprobe to the smallest that does. The
+  sample is the index's own vectors (each one's own match left out) unless representative queries are
+  given (`calibration_queries=`). Recall counts a neighbor as found when it is no farther than the true
+  10th, so that ties broken differently are not misses.
+- **IVF or exact:** the IVF at the calibrated nprobe is timed against exact search on the same sample, and
+  the index keeps whichever is faster. Small collections, and data where an IVF needs most of its lists
+  to reach the target (inner product on vectors of very uneven length), end up with exact search.
+- **Routing:** each search goes by its batch size. A single query runs on the CPU, split over 4 threads;
+  larger batches on the GPU, scanning each query's lists (query-major) up to 999 queries and each list once
+  for all the queries that probe it (list-major) from 1,000. The thresholds are a profile's
+  ([TUNING](TUNING.md)). Single queries use the exact coarse step: the two-level one lowers recall by up to
+  0.011, below what calibration promised.
+
 ## What does not pay
 
 Each of these is measured; the scripts are named in parentheses, and their output is in

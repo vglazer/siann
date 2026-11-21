@@ -51,24 +51,26 @@ FAISS appears only in the benchmarks: siann does not wrap it.
 
 ## Which path a search takes
 
-The recommendation in [BENCHMARKS](BENCHMARKS.md#which-to-use), as a decision:
+What `siann.Index` does with a search; [BENCHMARKS](BENCHMARKS.md#which-to-use) adds where another
+library would be faster. The batch-size thresholds come from a profile ([TUNING](TUNING.md)).
 
 ```mermaid
 flowchart TB
-    q(["a batch of queries"]) --> kind{"exact or<br/>approximate?"}
-    kind -- exact --> where{"GPU<br/>available?"}
-    where -- yes --> ge["GPU kernels<br/>L2, cosine, inner product: matrix multiply + two-stage top-k<br/>L1, L-infinity: tiled kernel + top-k"]
-    where -- no --> metric{"metric?"}
+    build(["siann.Index(xb, metric, recall=?)"]) --> target{"recall<br/>target?"}
+    target -- no --> exact["exact search"]
+    target -- yes --> ivf["IVF: siann's k-means lists,<br/>nprobe calibrated to the target"]
+    ivf --> faster{"faster than exact search<br/>on the calibration sample?"}
+    faster -- no --> exact
+    faster -- yes --> approx["approximate search"]
+    exact --> ebatch{"GPU, and a batch<br/>above the profile's threshold?"}
+    ebatch -- yes --> ge["GPU kernels<br/>L2, cosine, inner product: matrix multiply + two-stage top-k<br/>L1, L-infinity: tiled kernel + top-k"]
+    ebatch -- no --> metric{"metric?"}
     metric -- "L2, cosine, inner product" --> cb["NumPy BLAS + Rust top-k"]
     metric -- "L1, L-infinity" --> cr["Rust blocked kernel"]
-    kind -- approximate --> ip{"inner<br/>product?"}
-    ip -- yes --> hip["IVF up to batches of 100; mlxvs's CAGRA for thousands;<br/>very uneven lengths: FAISS HNSW, or GPU exact search for recall 1.0"]
-    ip -- "no: L2, cosine, L1" --> size{"batch size?"}
-    size -- "thousands" --> gl["GPU IVF, list-major scan;<br/>mlxvs's CAGRA on SIFT-like data"]
-    size -- "about 100" --> hn["GPU IVF on GloVe-like data;<br/>on SIFT-like data, mlxvs's CAGRA or FAISS HNSW"]
-    size -- "one query" --> lat{"latency or<br/>throughput?"}
-    lat -- "latency, cores to spare" --> sp["Rust IVF split over 4 threads<br/>(on SIFT-like data, from recall 0.97)"]
-    lat -- throughput --> one["Rust IVF, two-level coarse step, on GloVe-like data;<br/>FAISS HNSW on SIFT-like data"]
+    approx --> abatch{"batch size?"}
+    abatch -- "one query" --> sp["Rust IVF, split over 4 threads"]
+    abatch -- "up to 999" --> gq["GPU IVF, query-major scan"]
+    abatch -- "1,000 and up" --> gl["GPU IVF, list-major scan"]
 ```
 
 ## Why siann is faster than FAISS
