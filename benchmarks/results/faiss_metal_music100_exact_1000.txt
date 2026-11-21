@@ -1,0 +1,7 @@
+FAISS 1.16.0, stage exact, metric ip, 1000 queries per call
+  [start] free memory 43.8 GB, this process's peak 0.0 GB
+  GPUs found: 1
+  [GPU resources made] free memory 43.8 GB, this process's peak 0.0 GB
+  [exact ip, music100, 3,000 queries, after a warm-up call] free memory 38.4 GB, this process's peak 1.3 GB
+  exact ip, music100, 3,000 queries: GPU 4,392 queries/s, CPU 4,607 queries/s, GPU's neighbors agree with the CPU's 1.0000
+  [exact ip, music100, 3,000 queries, after the search] free memory 26.4 GB, this process's peak 1.3 GB

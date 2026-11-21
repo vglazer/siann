@@ -1,0 +1,14 @@
+FAISS 1.16.0, stage tiny, metric l1, 100 queries per call
+  [start] free memory 43.9 GB, this process's peak 0.0 GB
+  GPUs found: 1
+  [GPU resources made] free memory 43.9 GB, this process's peak 0.0 GB
+Traceback (most recent call last):
+  File "/Users/glazer/repos/siann/benchmarks/faiss_metal.py", line 140, in <module>
+    main()
+  File "/Users/glazer/repos/siann/benchmarks/faiss_metal.py", line 98, in main
+    compare(f"exact {metric}, {n:,} x {d}, {nq} queries", cpu, faiss.index_cpu_to_gpu(res, 0, cpu), xb, xq,
+                                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/glazer/repos/siann/.venv/lib/python3.12/site-packages/faiss/swigfaiss.py", line 1106, in index_cpu_to_gpu
+    return _swigfaiss.index_cpu_to_gpu(res, device, index)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: Error in faiss::Index *faiss::gpu_metal::index_cpu_to_metal_gpu(StandardMetalResources *, int, const faiss::Index *) at /Users/runner/work/faiss/faiss/faiss/gpu_metal/MetalCloner.mm:61: Error: 'flat->metric_type == METRIC_L2 || flat->metric_type == METRIC_INNER_PRODUCT' failed

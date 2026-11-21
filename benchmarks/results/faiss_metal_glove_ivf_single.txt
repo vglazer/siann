@@ -1,0 +1,16 @@
+FAISS 1.16.0, stage ivf, metric l2, 1 queries per call
+  [start] free memory 43.9 GB, this process's peak 0.0 GB
+  GPUs found: 1
+  [GPU resources made] free memory 43.9 GB, this process's peak 0.0 GB
+  IVF-Flat (4,000 lists) built on the CPU in 16.1 s
+  [IVF copied to the GPU] free memory 39.3 GB, this process's peak 4.6 GB
+  IVF-Flat nprobe  16: recall@10 GPU 0.725, CPU 0.725; GPU 628 queries/s, CPU 3,072 queries/s
+  [nprobe 16] free memory 38.8 GB, this process's peak 5.1 GB
+  IVF-Flat nprobe  32: recall@10 GPU 0.785, CPU 0.785; GPU 611 queries/s, CPU 2,642 queries/s
+  [nprobe 32] free memory 38.9 GB, this process's peak 5.1 GB
+  IVF-Flat nprobe  64: recall@10 GPU 0.852, CPU 0.852; GPU 607 queries/s, CPU 2,065 queries/s
+  [nprobe 64] free memory 38.8 GB, this process's peak 5.1 GB
+  IVF-Flat nprobe 128: recall@10 GPU 0.890, CPU 0.890; GPU 513 queries/s, CPU 1,458 queries/s
+  [nprobe 128] free memory 38.8 GB, this process's peak 5.1 GB
+  IVF-Flat nprobe 256: recall@10 GPU 0.927, CPU 0.927; GPU 408 queries/s, CPU 938 queries/s
+  [nprobe 256] free memory 39.0 GB, this process's peak 5.1 GB
