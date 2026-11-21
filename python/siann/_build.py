@@ -8,7 +8,7 @@ NumPy; if NumPy was imported first, it is too late, and ``index.plan`` says so.
 
 
 The x86-64 wheels on PyPI are compiled for x86-64-v3 (AVX2 and FMA: Intel from Haswell, 2013, and AMD from
-Excavator, 2015, and every Zen), which makes L1 and L-infinity search 1.9-2.4x faster than a baseline
+Excavator, 2015, and every Zen), which makes L1 and L-infinity search 1.6-2.4x faster than a baseline
 x86-64 build. On a processor without them the extension would crash Python with an illegal instruction, so
 siann checks first and raises an ImportError that says why. The release workflow sets X86_FEATURES when it
 builds those wheels; a build from source targets the machine that builds it and requires nothing.

@@ -839,25 +839,21 @@ cost of about 0.2 ms per call.
 `x86_cpu.py` on GitHub's Linux runners; raw output in `results/x86_cpu_linux_*.txt`.*
 
 Every other number here is from an M3 Max. This one runs siann's CPU path against FAISS on GitHub's Linux
-runners, 4 threads each: an Intel Xeon 6975P-C (x86-64) and an ARM processor. The data are synthetic,
-since the datasets are too large for a runner: 200,000 vectors of 128 dimensions, drawn from 100 clusters
-in 16 dimensions and projected to 128, so that an IVF at recall 0.95 probes 9 of 1,789 lists, as on SIFT.
-The queries are 1,000 more from the same clusters, k is 10, and siann's exact neighbors are FAISS's in
-every case.
+runners, 4 threads each: an AMD EPYC 7763 (x86-64) and an ARM processor, which GitHub does not name. The
+data are synthetic, since the datasets are too large for a runner: 200,000 vectors of 128 dimensions,
+drawn from 100 clusters in 16 dimensions and projected to 128, so that an IVF at recall 0.95 probes 9 of
+1,789 lists, as on SIFT. The queries are 1,000 more from the same clusters, k is 10, and siann's exact
+neighbors are FAISS's in every case. `OPENBLAS_THREAD_TIMEOUT` is 4, as siann sets it when imported before
+NumPy (below).
 
 Exact search, siann's queries per second as a multiple of FAISS's flat index, by batch size:
 
 | Metric | x86-64: 1 | 10 | 100 | 1,000 | ARM: 1 | 10 | 100 | 1,000 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| L2 | 2.35 | 1.92 | 2.03 | 2.38 | 3.24 | 1.34 | 0.97 | 0.88 |
-| inner product | 2.08 | 1.46 | 1.80 | 2.32 | 2.29 | 1.09 | 0.81 | 0.78 |
-| L1 | 1.55 | 2.71 | 2.96 | 3.72 | 1.77 | 1.92 | 1.65 | 2.07 |
-| L-infinity | 20 | 30 | 35 | 43 | 16 | 16 | 14 | 17 |
-
-The x86-64 wheels are compiled for x86-64-v3 (AVX2 and FMA). Built for any x86-64 processor instead, siann
-runs L1 and L-infinity 1.9-2.4x slower, single L1 queries at 0.65x FAISS's speed; L2 and inner product do
-not change, as NumPy's BLAS does their arithmetic. On ARM, NumPy's BLAS trails FAISS's for L2 and inner
-product from batches of 100.
+| L2 | 3.89 | 1.66 | 1.11 | 1.06 | 3.06 | 1.56 | 1.27 | 1.16 |
+| inner product | 2.84 | 1.36 | 0.95 | 0.91 | 2.24 | 1.25 | 1.01 | 0.97 |
+| L1 | 1.89 | 2.78 | 2.47 | 2.75 | 1.69 | 1.88 | 1.59 | 1.99 |
+| L-infinity | 18 | 27 | 30 | 33 | 16 | 17 | 14 | 18 |
 
 Approximate search by L2: `siann.Index(recall=0.95)` calibrated on 1,000 separate queries reaches recall
 0.961 at nprobe 9. FAISS's IVF-Flat, on the same number of lists, reaches 0.972 at nprobe 10, and its HNSW
@@ -866,14 +862,34 @@ multiple of each:
 
 | Against | x86-64: 1 | 10 | 100 | 1,000 | ARM: 1 | 10 | 100 | 1,000 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FAISS IVF-Flat | 2.37 | 0.77 | 0.63 | 1.12 | 2.25 | 0.65 | 0.56 | 0.54 |
-| FAISS HNSW | 0.15 | 0.26 | 0.31 | 0.55 | 0.29 | 0.31 | 0.41 | 0.43 |
+| FAISS IVF-Flat | 1.80 | 0.88 | 0.84 | 1.16 | 2.08 | 0.65 | 0.84 | 0.95 |
+| FAISS HNSW | 0.18 | 0.36 | 0.63 | 0.92 | 0.22 | 0.28 | 0.52 | 0.60 |
 
-On these 4-thread machines siann's IVF leads FAISS's only on single queries and, on x86-64, on batches of
-1,000; on the M3 Max's 16 threads the same script has it ahead at batches of 100 and 1,000 too (1.22x and
-1.32x). These synthetic vectors suit a graph index more than SIFT does: HNSW leads siann's IVF 1.8-6.7x
-here, against 1.2-1.8x for siann's CPU IVF on SIFT1M on the M3 Max, single queries and batches of 10,000
-([Approximate search: batches](#approximate-search-batches)).
+On these 4-thread machines siann's IVF leads FAISS's on single queries and on x86-64 at 1,000 queries,
+and trails it at 10 and 100; on the M3 Max, on the same lists, it leads at every batch size on SIFT and
+GloVe ([The coarse step](#the-coarse-step)). These synthetic vectors suit a graph index more than SIFT
+does: HNSW leads siann's IVF 1.1-5.6x here, against 1.2-1.8x for siann's CPU IVF on SIFT1M on the M3 Max,
+single queries and batches of 10,000 ([Approximate search: batches](#approximate-search-batches)).
+
+**NumPy's OpenBLAS.** On Linux NumPy's BLAS is OpenBLAS, whose threads spin after each call, slowing the
+Rust code that follows on the same cores. With `OPENBLAS_THREAD_TIMEOUT=4` they sleep at once; siann's
+queries per second with it, as a multiple of OpenBLAS's default (28), the same build on the same runner:
+
+| Search | x86-64: 1 | 10 | 100 | 1,000 | ARM: 1 | 10 | 100 | 1,000 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Exact L2 | 1.05 | 1.22 | 1.45 | 1.52 | 0.95 | 1.23 | 1.40 | 1.34 |
+| Exact L1 | 1.04 | 1.01 | 1.00 | 1.00 | 0.98 | 0.99 | 1.00 | 1.00 |
+| IVF, L2 | 1.00 | 1.01 | 1.22 | 1.63 | 0.97 | 1.13 | 1.54 | 1.79 |
+
+L1 and L-infinity make no BLAS calls and do not change. With OpenBLAS's default, the IVF's routing
+measures the BLAS coarse step slower and does not take it; with the short timeout it takes it from 16
+queries (x86-64) and 8 (ARM). [TUNING](TUNING.md#numpys-blas-on-linux-and-windows) says how to set it.
+
+**x86-64-v3.** The x86-64 wheels are compiled for x86-64-v3 (AVX2 and FMA). Built for any x86-64 processor
+instead (`x86_cpu_linux_x86_64_baseline.txt`), siann runs L1 1.61-1.78x and L-infinity 1.67-1.80x slower
+on this runner, and 1.9-2.4x slower on an Intel Xeon 6975P-C runner (`x86_cpu_linux_xeon_*.txt`), where
+single L1 queries fall to 0.65x FAISS's speed. L2 and inner product do not change, as NumPy's BLAS does
+their arithmetic.
 
 ## Reproducing
 
