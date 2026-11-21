@@ -1,4 +1,4 @@
-"""siann.Index: exact search over dense vectors, on the GPU (MLX) or the CPU (BLAS through NumPy, and
+"""siann.Index: exact search over dense vectors, on the GPU (through siann's GPU backend) or the CPU (BLAS through NumPy, and
 siann's Rust kernels), with natural scores and a plan that says what was chosen and why."""
 from __future__ import annotations
 
@@ -79,8 +79,8 @@ class Index:
     """An index over base vectors ``xb`` (n, d), searched by ``metric``: "l2", "l1", "linf", "cosine"
     or "ip" (inner product).
 
-    Search is exact: the results are the true k nearest neighbors. ``device`` is "auto" (where MLX finds
-    a GPU, each search goes to the GPU or the CPU by its batch size, from ``profile``'s threshold for the
+    Search is exact: the results are the true k nearest neighbors. ``device`` is "auto" (where a GPU is
+    available, each search goes to the GPU or the CPU by its batch size, from ``profile``'s threshold for the
     metric; otherwise the CPU), "gpu" or "cpu". ``profile`` is a ``siann.Profile`` (from ``siann.tune``),
     by default the one set by ``siann.use_profile`` or siann's own; it is fixed when the index is built.
     Each device's copy of the vectors is built the first time a search needs it. ``index.plan`` says
@@ -101,7 +101,7 @@ class Index:
             raise ValueError("xb holds no vectors")
         gpu = _gpu_available()
         if device == "gpu" and not gpu:
-            raise RuntimeError("device='gpu', but MLX finds no GPU")
+            raise RuntimeError("device='gpu', but no GPU is available")
         self.metric = metric
         self._x = _normalized(x, "xb") if metric == "cosine" else x
         # cosine ranks as inner product on unit vectors
@@ -165,7 +165,7 @@ class Index:
         if dev not in ("gpu", "cpu"):
             raise ValueError(f"device must be 'gpu' or 'cpu', not {dev!r}")
         if dev == "gpu" and not _gpu_available():
-            raise RuntimeError("device='gpu', but MLX finds no GPU")
+            raise RuntimeError("device='gpu', but no GPU is available")
         if self.metric == "cosine":
             q = _normalized(q, "xq")
         kk = min(int(k), self.n)

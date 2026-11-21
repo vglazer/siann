@@ -37,7 +37,7 @@ comparison, and [ARCHITECTURE](ARCHITECTURE.md) explains where the speed comes f
 
 | Workload | Use | Against the strongest alternative |
 | --- | --- | --- |
-| Exact search, batches, GPU available | **siann's GPU kernels** (MLX) | L2 and cosine 8 times FAISS; L1 18-25 times; L-infinity 47-49 times (random vectors); inner product 4-18 times; 2.6-5.7 times mlxvs at 100-128 dimensions, 1.1-1.2 times at 1,536 (100,000 vectors); mlxvs has no L1 or L-infinity |
+| Exact search, batches, GPU available | **siann's GPU kernels** | L2 and cosine 8 times FAISS; L1 18-25 times; L-infinity 47-49 times (random vectors); inner product 4-18 times; 2.6-5.7 times mlxvs at 100-128 dimensions, 1.1-1.2 times at 1,536 (100,000 vectors); mlxvs has no L1 or L-infinity |
 | Exact search on the CPU, L1 or L-infinity | **siann's Rust kernel** | 3.8-4.3 times FAISS (L1), 7.3 times (L-infinity) |
 | Exact search on the CPU, L2, cosine or inner product | **siann's BLAS path** (NumPy's multiply, Accelerate, then siann's Rust top-k) | L2 and cosine 1.7-1.9 times FAISS on 1,000 queries, 3.0-3.6 times on 100; inner product 0.9-2.7 times |
 | Approximate, large batches (thousands) | GloVe-like data, L1 and L-infinity: **siann's GPU IVF, list-major**; SIFT-like data: **mlxvs's CAGRA** | GloVe: 5.0 times FAISS's HNSW, level with CAGRA; SIFT: CAGRA 2.1-2.6 times siann's GPU IVF, which is 1.2-1.3 times HNSW |

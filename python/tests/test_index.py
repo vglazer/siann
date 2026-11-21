@@ -6,7 +6,7 @@ import siann
 from siann._index import _gpu_available
 
 DEVICES = ["cpu"] + (["gpu"] if _gpu_available() else [])
-gpu_only = pytest.mark.skipif(not _gpu_available(), reason="MLX finds no GPU")
+gpu_only = pytest.mark.skipif(not _gpu_available(), reason="no GPU available")
 
 
 def natural(xb, q, metric):
@@ -52,7 +52,7 @@ def test_exact_matches_numpy(device, metric, n, d, m, k):
 @pytest.mark.parametrize("metric", siann.METRICS)
 def test_devices_agree(metric):
     if len(DEVICES) < 2:
-        pytest.skip("MLX finds no GPU")
+        pytest.skip("no GPU available")
     rng = np.random.default_rng(7)
     xb = rng.standard_normal((3000, 64), dtype=np.float32)
     q = rng.standard_normal((50, 64), dtype=np.float32)

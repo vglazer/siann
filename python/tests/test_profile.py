@@ -5,7 +5,7 @@ import pytest
 import siann
 from siann._profile import crossover
 
-gpu_only = pytest.mark.skipif(not siann.gpu_available(), reason="MLX finds no GPU")
+gpu_only = pytest.mark.skipif(not siann.gpu_available(), reason="no GPU available")
 XB = np.random.default_rng(0).standard_normal((2000, 16), dtype=np.float32)
 
 

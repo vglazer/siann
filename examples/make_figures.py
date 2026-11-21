@@ -25,7 +25,7 @@ def metrics(out: Path) -> None:
         r = res.scores[0, -1]
         ax.scatter(*pts.T, s=10, c="0.75")
         ax.scatter(*pts[res.indices[0]].T, s=22, c="tab:blue")
-        ax.scatter(*q.T, s=260, marker="*", c="tab:red", zorder=3)
+        ax.scatter(*q.T, s=150, c="tab:orange", edgecolors="black", linewidths=1.2, zorder=3)
         if metric == "l2":
             t = np.linspace(0, 2 * np.pi, 400)
             ax.plot(q[0, 0] + r * np.cos(t), q[0, 1] + r * np.sin(t), c="tab:blue", lw=1.5)

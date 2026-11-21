@@ -12,7 +12,7 @@ finding the settings that reach a recall target, is a different thing and needs 
 
 ## Exact search: GPU or CPU
 
-Where MLX finds a GPU, `siann.Index` sends each exact search to the GPU or the CPU by its batch size: the
+Where a GPU is available, `siann.Index` sends each exact search to the GPU or the CPU by its batch size: the
 CPU below the profile's threshold for the metric, the GPU from it. A GPU call has a fixed cost that a large
 batch spreads thin; the CPU's cost grows with the number of vectors searched. So where the two cross
 depends on the metric, the hardware and the size of the collection.

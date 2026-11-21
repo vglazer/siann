@@ -16,7 +16,7 @@ that keep the code fast. [ALGORITHMS](ALGORITHMS.md) describes each method in de
 flowchart TB
     user(["Python: NumPy vectors and queries"])
 
-    subgraph gpu["GPU: MLX"]
+    subgraph gpu["GPU backend: MLX (or PyTorch, the same kernels)"]
         kern["knn_kernels.py<br/>custom Metal kernels:<br/>tiled L1 and L-infinity, two-stage top-k"]
         ivfg["ivf_gpu.py<br/>IVF: query-major and list-major scans"]
         mm["MLX matrix multiply, addmm<br/>exact L2"]
@@ -39,14 +39,15 @@ flowchart TB
     user -. "benchmarks" .-> faiss
 ```
 
-siann has two homes for its work. On the GPU it runs custom Metal kernels (Metal is Apple's GPU
-language) through MLX, Apple's array framework, which compiles kernels written as source strings
-(`mx.fast.metal_kernel`). On the CPU it runs a small Rust extension, exposed to Python through PyO3
+siann has three backends: the CPU, and two GPU backends that run the same kernels, MLX and PyTorch. On
+the GPU it runs custom Metal kernels (Metal is Apple's GPU language) through a GPU backend: MLX, Apple's
+array framework, which compiles kernels written as source strings (`mx.fast.metal_kernel`), and is the
+faster of the two on Apple silicon, or PyTorch's MPS backend (`torch.mps.compile_shader`). On the CPU it runs a small Rust extension, exposed to Python through PyO3
 (the bridge that lets Python call Rust) and built with maturin (the tool that packages it as a Python
 module), plus NumPy's matrix multiply, which on a Mac is Apple's Accelerate BLAS (the tuned
-linear-algebra library). There is no Rust core between Python and the GPU: MLX goes from Python to
-Metal directly. The same Metal kernels also run on PyTorch's MPS backend, at the same speed (see
-[BACKENDS](BACKENDS.md)). FAISS appears only in the benchmarks: siann does not wrap it.
+linear-algebra library). There is no Rust core between Python and the GPU: a GPU backend goes from
+Python to Metal directly, and the kernels run at the same speed on both (see [BACKENDS](BACKENDS.md)).
+FAISS appears only in the benchmarks: siann does not wrap it.
 
 ## Which path a search takes
 

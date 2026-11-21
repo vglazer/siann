@@ -132,8 +132,8 @@ centroids), and for a single query it is half the work at nprobe 16. A two-level
 the centroids are clustered into groups (64 for 4,000 lists), and a query is compared with the groups'
 centres, then only with the centroids of its nearest groups (16 of 64 in the measurements). On the GPU, the
 distances to the centroids are one fused multiply, and the costly part is choosing each query's nprobe
-nearest. The scans need the lists in no order, so the query-major scan chooses them with MLX's
-`argpartition`, unordered; the list-major scan does too above nprobe 16, and at 16 and below uses the
+nearest. The scans need the lists in no order, so the query-major scan chooses them unordered, with
+the GPU backend's own partial selection (MLX's `argpartition`, PyTorch's `topk`); the list-major scan does too above nprobe 16, and at 16 and below uses the
 two-stage selection with 32 threads per query, which is cheaper there for thousands of queries.
 
 **List storage.** The scan reads every vector of every probed list, so in a batch of queries scanned

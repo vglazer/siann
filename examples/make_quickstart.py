@@ -22,8 +22,8 @@ cells = [
 # siann quickstart
 
 siann is fast similarity search on Apple silicon for dense vectors. Give it base vectors and a metric, and
-it finds each query's nearest neighbors, on the GPU (through MLX) or the CPU (BLAS through NumPy, and
-siann's own Rust kernels), choosing the device itself unless you tell it which.
+it finds each query's nearest neighbors, on the GPU or the CPU (BLAS through NumPy, and siann's own Rust
+kernels), choosing the device for each search unless you tell it which.
 
 This notebook covers exact search: what each metric means and how to choose one, the scores siann returns
 and how it explains its choices, how the GPU and the CPU compare as batches grow, tuning siann's routing to
@@ -42,7 +42,7 @@ siann.__version__
 ## The metrics, in two dimensions
 
 siann searches by five measures of nearness. In two dimensions they are easy to see: below, 600 points,
-one query (the star), and each metric's 25 nearest points to it, with the boundary that encloses them.
+one query (the orange dot), and each metric's 25 nearest points to it (blue), with the boundary that encloses them.
 The L2, L1 and L-infinity panels are zoomed in on the query; the cosine and inner product panels show the
 whole cloud, since their regions run out from the origin.
 
@@ -72,7 +72,7 @@ for ax, metric in zip(axes, siann.METRICS):
     near, kth = res.indices[0], res.scores[0, -1]
     ax.scatter(*pts.T, s=6, c="0.75")
     ax.scatter(*pts[near].T, s=14, c="tab:blue")
-    ax.scatter(*q.T, s=180, marker="*", c="tab:red", zorder=3)
+    ax.scatter(*q.T, s=110, c="tab:orange", edgecolors="black", linewidths=1, zorder=3)
     t = np.linspace(0, 2 * np.pi, 400)
     if metric == "l2":
         ax.plot(q[0, 0] + kth * np.cos(t), q[0, 1] + kth * np.sin(t), c="tab:blue", lw=1)

@@ -1,7 +1,7 @@
 """siann: fast similarity search on Apple silicon.
 
 ``siann.Index(xb, metric)`` builds an index over dense base vectors and ``index.search(xq, k)``
-returns each query's k nearest, exactly, on the GPU (MLX) or the CPU (BLAS through NumPy and siann's
+returns each query's k nearest, exactly, on the GPU or the CPU (BLAS through NumPy and siann's
 Rust kernels), chosen by batch size from a ``siann.Profile``: siann's default, or one measured on your own
 data and hardware by ``siann.tune``; ``index.plan`` says what was chosen and why. The kernels themselves are in
 ``siann.knn_kernels``, ``siann.exact``, ``siann.ivf_gpu`` and ``siann.blas_l2`` (the same kernels on

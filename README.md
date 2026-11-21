@@ -6,14 +6,15 @@
 *Pronounced like "cyan".*
 
 **si**licon **a**pproximate **n**earest **n**eighbors: fast similarity search on Apple silicon, for
-dense NumPy vectors, across metrics (L1, L2, L-infinity, cosine, inner product). siann runs each search
-on the CPU (its own Rust code, and BLAS through NumPy) or the GPU ([MLX](https://github.com/ml-explore/mlx),
-or the same kernels on PyTorch's MPS backend), measures every path against the strongest alternative on
-the same Mac, [FAISS](https://github.com/facebookresearch/faiss) on the CPU and
+dense NumPy vectors, across metrics (L1, L2, L-infinity, cosine, inner product). siann has three
+backends: the CPU (its own Rust code, and BLAS through NumPy) and two GPU backends running the same
+kernels, [MLX](https://github.com/ml-explore/mlx) and PyTorch, of which MLX is the faster on Apple
+silicon and the one `siann.Index` uses. It routes each search to the CPU or the GPU, measures every path against the strongest
+alternative on the same Mac, [FAISS](https://github.com/facebookresearch/faiss) on the CPU and
 [mlxvs](https://github.com/mikepapadim/mlxvs) on the GPU, and recommends the fastest for each
 workload, naming the other library where it is faster.
 
-![One query (a red star) among 600 points, and its 25 nearest by three metrics, found by siann: under L2 they fill a circle around the query, under L1 a diamond, under L-infinity a square](https://raw.githubusercontent.com/vglazer/siann/main/assets/metrics.png)
+![One query (an orange dot) among 600 points, and its 25 nearest by three metrics, found by siann: under L2 they fill a circle around the query, under L1 a diamond, under L-infinity a square](https://raw.githubusercontent.com/vglazer/siann/main/assets/metrics.png)
 
 *One query's 25 nearest points under three of siann's metrics: L2 (straight-line distance), L1 (the sum
 of the coordinate differences) and L-infinity (the largest single difference). L1 and L-infinity have no
@@ -32,7 +33,7 @@ import siann
 
 xb = np.random.default_rng(0).standard_normal((100_000, 128), dtype=np.float32)
 index = siann.Index(xb, metric="cosine")     # or "l2", "l1", "linf", "ip"
-res = index.search(xb[:5], k=10)             # on the GPU where MLX finds one, otherwise the CPU
+res = index.search(xb[:5], k=10)             # on the GPU or the CPU, by batch size
 res.indices, res.scores                      # (5, 10) each, best first: similarities for cosine
 print(index.plan)                            # what was chosen, and why
 profile = siann.tune(xb)                     # optional: measure the GPU/CPU routing on your data
@@ -58,7 +59,7 @@ backend is not part of these comparisons.
 
 | Workload | Use | Against the strongest alternative |
 | --- | --- | --- |
-| Exact search, batches, GPU available | **siann's GPU kernels** (MLX) | L2 and cosine 8 times FAISS; L1 18-25 times; L-infinity 47-49 times (random vectors); inner product 4-18 times; 2.6-5.7 times mlxvs at 100-128 dimensions, 1.1-1.2 times at 1,536 (100,000 vectors); mlxvs has no L1 or L-infinity |
+| Exact search, batches, GPU available | **siann's GPU kernels** | L2 and cosine 8 times FAISS; L1 18-25 times; L-infinity 47-49 times (random vectors); inner product 4-18 times; 2.6-5.7 times mlxvs at 100-128 dimensions, 1.1-1.2 times at 1,536 (100,000 vectors); mlxvs has no L1 or L-infinity |
 | Exact search on the CPU, L1 or L-infinity | **siann's Rust kernel** | 3.8-4.3 times FAISS (L1), 7.3 times (L-infinity) |
 | Exact search on the CPU, L2, cosine or inner product | **siann's BLAS path** (NumPy's multiply, Accelerate, then siann's Rust top-k) | L2 and cosine 1.7-1.9 times FAISS on 1,000 queries, 3.0-3.6 times on 100; inner product 0.9-2.7 times |
 | Approximate, large batches (thousands) | GloVe-like data, L1 and L-infinity: **siann's GPU IVF, list-major**; SIFT-like data: **mlxvs's CAGRA** | GloVe: 5.0 times FAISS's HNSW, level with CAGRA; SIFT: CAGRA 2.1-2.6 times siann's GPU IVF, which is 1.2-1.3 times HNSW |
