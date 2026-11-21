@@ -13,6 +13,7 @@ def test_default_profile():
     p = siann.DEFAULT_PROFILE
     assert p.threshold("l2") == 2 and all(p.threshold(m) == 1 for m in ("l1", "linf", "cosine", "ip"))
     assert "M3 Max" in p.source
+    assert p.ivf is None and "measured by each index" in p.describe_ivf()
 
 
 @gpu_only
@@ -41,6 +42,9 @@ def test_save_and_load(tmp_path):
     p = siann.Profile({"l2": 8, "cosine": None}, "test", (("l2", "cpu", 1, 10.0), ("l2", "gpu", 1, 5.0)), {"n": 3})
     p.save(tmp_path / "p.json")
     assert siann.Profile.load(tmp_path / "p.json") == p
+    q = siann.Profile({"l2": 1}, "test", ivf={"cpu_below": 64, "gpu_list_from": 2000, "cpu_list_from": 10 ** 9})
+    q.save(tmp_path / "q.json")
+    assert siann.Profile.load(tmp_path / "q.json") == q
 
 
 def test_use_profile():
@@ -72,3 +76,13 @@ def test_tune():
     assert "queries per second" in str(p) or not p.rates
     with pytest.raises(ValueError, match="unknown metric"):
         siann.tune(XB, metrics=("hamming",))
+
+
+def test_tune_measures_approximate_routing():
+    rng = np.random.default_rng(9)
+    x = (rng.standard_normal((20, 16), dtype=np.float32)[rng.integers(0, 20, 8000)]
+         + 0.3 * rng.standard_normal((8000, 16), dtype=np.float32))
+    p = siann.tune(x, metrics=("l2",), batches=(1, 8), recall=0.9, budget=5)
+    assert p.ivf and {"cpu_below", "gpu_list_from", "cpu_list_from", "nprobe"} <= set(p.ivf)
+    assert any(m == "ivf" for m, _, _, _ in p.rates) and "approximate search" in str(p)
+    assert "nan" not in str(p)

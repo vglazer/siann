@@ -1,0 +1,50 @@
+sift:
+siann.Profile (tuned on 1,000,000 x 128 vectors, k = 10, 2026-11-21)
+  l2      exact search on the CPU below 1000 queries per batch, on the GPU from 1000
+  approximate search (IVF): below 17 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 1,024 queries, list-major from 1,025
+  queries per second, CPU / GPU, by batch size:
+                          1           1,000
+    l2            151 / 144  4,498 / 20,902
+  approximate search, queries per second by path and batch size (l2, recall 0.95, nprobe 46):
+                       1         2         4         8        16        32        64       128       256       512     1,024     2,048     4,096
+    cpu-split     14,824                                                                                                                        
+    cpu-query               11,782    18,490    29,763    34,024    42,145    47,429                                                            
+    cpu-list                 4,229     6,893     8,541    10,330    11,305    15,979                                                            
+    gpu-query      1,970     3,867     6,968    13,806    26,296    47,610    76,861   125,943   167,512   196,047   214,677   229,551   236,981
+    gpu-list       1,766     3,301     5,653     9,435    14,902    21,773    29,766    48,101    75,645   127,936   176,431   210,350   234,232
+
+glove:
+siann.Profile (tuned on 1,183,514 x 100 vectors, k = 10, 2026-11-21)
+  cosine  exact search always on the GPU
+  approximate search (IVF): below 5 queries on the CPU (single queries split over 4 threads); larger batches on the GPU, list-major
+  queries per second, CPU / GPU, by batch size:
+                          1           1,000
+    cosine         93 / 334  4,253 / 19,969
+  approximate search, queries per second by path and batch size (cosine, recall 0.95, nprobe 370):
+                       1         2         4         8        16        32        64       128       256       512     1,024     2,048     4,096
+    cpu-split      2,979                                                                                                                        
+    cpu-query                2,225     2,704     3,064     3,203                                                                                
+    cpu-list                 1,263     1,791     2,046     2,427                                                                                
+    gpu-query        361       599     1,203     2,396     4,169     7,059    12,344    18,255    20,581    21,959    22,354    22,926    23,210
+    gpu-list         934     1,532     2,264     3,727     5,647     9,317    16,047    25,356    34,526    42,194    45,395    48,108    48,587
+
+music100:
+siann.Profile (tuned on 1,000,000 x 100 vectors, k = 10, 2026-11-21)
+  ip      exact search always on the GPU
+  approximate search (IVF): below 65 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 4,096 queries, list-major from 4,097
+  queries per second, CPU / GPU, by batch size:
+                          1           1,000
+    ip            111 / 399  4,988 / 24,283
+  approximate search, queries per second by path and batch size (ip, recall 0.95, nprobe 25):
+                       1         2         4         8        16        32        64       128       256       512     1,024     2,048     4,096
+    cpu-split     21,164                                                                                                                        
+    cpu-query               28,136    31,250    57,953    69,139   120,755   142,526   145,696   164,221                                        
+    cpu-list                 5,446    10,250    15,601    24,020    29,101    47,635    71,754   100,127                                        
+    gpu-query      2,614     5,051    10,375    19,757    38,847    72,665   109,277   183,195   301,961   396,630   501,827   578,075   626,152
+    gpu-list       1,869     3,609     7,249    13,846    27,080    53,222    80,205   133,073   200,196   268,961   329,848   368,309   416,770
+
+thresholds by dataset (10**9: never, among the batch sizes measured):
+  dataset   nprobe  cpu_below  gpu_list_from  cpu_list_from
+  sift          46         17          1,025  1,000,000,000
+  glove        370          5              1  1,000,000,000
+  music100      25         65          4,097  1,000,000,000

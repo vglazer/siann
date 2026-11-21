@@ -34,11 +34,12 @@ import time
 
 import matplotlib.pyplot as plt
 import numpy as np
+
 import siann
 
 siann.__version__
 """),
-    md("""
+    md(f"""
 ## The metrics, in two dimensions
 
 siann searches by five measures of nearness. In two dimensions they are easy to see: below, 600 points,
@@ -57,7 +58,7 @@ whole cloud, since their regions run out from the origin.
   whatever their length. The usual choice for text and image embeddings.
 - [**Inner product**]({W}Dot_product) favors vectors that point the query's way *and* are long: its
   neighbors lie beyond a line perpendicular to the query. For embeddings trained to be compared this way.
-""".format(W=W)),
+"""),
     code("""
 rng = np.random.default_rng(1)
 pts = rng.standard_normal((600, 2), dtype=np.float32)
@@ -240,7 +241,7 @@ def recall(found, truth):
 
 recall(truth, truth)
 """),
-    md("""
+    md(f"""
 ## Approximate search
 
 Exact search compares each query with every vector. Approximate search compares it with only some of them,
@@ -261,10 +262,13 @@ approximate search is judged: a faster search at lower recall is not a better on
 at the same recall, as in siann's benchmarks.
 
 With a recall target, siann builds an IVF, finds the smallest nprobe that reaches the target on a sample of
-queries (*calibration*), times that against exact search on the sample, and keeps whichever is faster. The
-sample should look like the real queries: here, 1,000 of them, passed as `calibration_queries`. The plan
-reports every choice.
-""".format(W=W)),
+queries (*calibration*), times that against exact search on the sample, and keeps whichever is faster; it
+also times its CPU and GPU scans on the sample, to route each batch. All of it is automatic:
+`siann.Index(xb, "l2", recall=0.95)` calibrates on 1,000 of the index's own vectors. Passing a sample of your
+own queries as `calibration_queries` is optional, like tuning, and pays where the queries differ from the
+base vectors (at the end of this section). Here, 1,000 of the queries are passed. The plan reports every
+choice.
+"""),
     code("""
 approx = siann.Index(xb, "l2", recall=0.95, calibration_queries=xq[:1000])
 print(approx.plan)
@@ -280,8 +284,8 @@ found = approx.search(rest, 10).indices
 print(f"recall@10 on the other {len(rest):,} queries: {recall(found, truth[1000:]):.3f}")
 """),
     md("""
-Approximate search pays most where exact search costs most: in large batches. A single query goes to the
-CPU, split over 4 threads; batches go to the GPU.
+Approximate search pays most where exact search costs most: in large batches. Where each batch runs, on the
+CPU or the GPU and with which scan, the index measured when it was built (the plan's "routing" line).
 """),
     code("""
 def rate(fn, b):
@@ -333,15 +337,29 @@ ax.set_ylabel("queries per second, batch of 9,000")
 ax.legend(loc="center left"); fig.tight_layout()
 """),
     md("""
-Without `calibration_queries`, siann calibrates on a sample of the index's own vectors, and the target
-holds for queries like them. Here the queries are drawn like the base vectors, so the two agree; on real
-data they often do not, and calibrating on real queries is what keeps the target (BENCHMARKS.md,
-"Approximate search through siann.Index").
+**Calibrating on your queries (optional).** Without `calibration_queries`, siann calibrates on a sample of
+the index's own vectors, and the target holds for queries like them. Here the queries are drawn like the
+base vectors, so the two agree:
 """),
     code("""
 own = siann.Index(xb, "l2", recall=0.95)
 print(f"calibrated on its own vectors: nprobe {own.nprobe}, recall {recall(own.search(rest, 10).indices, truth[1000:]):.3f}")
 print(f"calibrated on 1,000 queries:   nprobe {approx.nprobe}, recall {recall(approx.search(rest, 10).indices, truth[1000:]):.3f}")
+"""),
+    md("""
+On real data the queries often differ from the base vectors, in either direction, and calibrating on 1,000
+of them pays on each dataset measured (a million vectors, target 0.95, recall on the other 9,000 queries;
+BENCHMARKS.md, "Approximate search through siann.Index"):
+
+| Dataset | Calibrated on its own vectors | Calibrated on 1,000 queries |
+| --- | --- | --- |
+| SIFT1M, L2 | nprobe 38, recall **0.940**: below the target | nprobe 46, recall 0.955 |
+| Music-100, inner product | nprobe 129, recall 0.986; 60,076 / 170,253 queries/s in batches of 100 / 10,000 | nprobe 25, recall 0.946; 168,543 / 333,396 queries/s (**2.8x / 2.0x**) |
+
+SIFT's queries are harder than its base vectors, so calibrating on them is what keeps the target, for 5-10%
+of the speed. Music-100's are easier, so calibrating on them avoids scanning five times the lists needed,
+and lands within 0.005 of the target. The same queries time the routing too: timed on its own vectors, Music-100's index sends
+batches of 512 to a scan that runs at 0.77 times the speed of the other on real queries.
 """),
     md("""
 ## When fewer than k exist

@@ -48,15 +48,25 @@ def test_every_path_gives_the_same_neighbors():
         np.testing.assert_allclose(results[path], results["cpu-query"][:n])
 
 
-@gpu_only
-def test_routes_by_batch_size():
+def test_routes_are_measured_at_build():
     index = siann.Index(clustered(30_000, 16, 3), "l2", recall=0.9, kind="ivf")
-    assert index._ivf_path(1, None) == "cpu-split" and index.route(1) == "cpu"
-    assert index._ivf_path(100, None) == "gpu-query" and index._ivf_path(5000, None) == "gpu-list"
-    assert index._ivf_path(5000, "cpu") == "cpu-list" and index._ivf_path(10, "cpu") == "cpu-query"
-    p = siann.Profile({"l2": 1}, "test", ivf={"cpu_below": 64, "list_major_from": 2000})
+    assert "routing measured" in str(index.plan)
+    r = index._routes
+    assert {"cpu_below", "gpu_list_from", "cpu_list_from"} <= set(r)
+    assert index._ivf_path(1, None) in ("cpu-split", "gpu-query", "gpu-list")
+    for b in (1, 16, 300, 5000):                                   # every batch has a path, on its device
+        path = index._ivf_path(b, None)
+        assert path.split("-")[0] == ("cpu" if b < r["cpu_below"] else "gpu") or not siann.gpu_available()
+    assert index._ivf_path(10, "cpu") in ("cpu-query", "cpu-list")
+
+
+@gpu_only
+def test_a_profile_overrides_the_measured_routes():
+    p = siann.Profile({"l2": 1}, "test", ivf={"cpu_below": 64, "gpu_list_from": 2000, "cpu_list_from": 10 ** 9})
     tuned = siann.Index(clustered(30_000, 16, 3), "l2", recall=0.9, kind="ivf", profile=p)
-    assert tuned._ivf_path(50, None) == "cpu-query" and tuned._ivf_path(1000, None) == "gpu-query"
+    assert "routing from the profile" in str(tuned.plan)
+    assert tuned._ivf_path(1, None) == "cpu-split" and tuned._ivf_path(50, None) == "cpu-query"
+    assert tuned._ivf_path(1000, None) == "gpu-query" and tuned._ivf_path(5000, None) == "gpu-list"
 
 
 def test_auto_keeps_exact_search_when_it_is_faster():
@@ -97,3 +107,19 @@ def test_calibration_queries():
     assert recall(index.search(q[1000:], 10).indices, truth) >= 0.86
     with pytest.raises(ValueError, match="calibration_queries"):
         siann.Index(x, "l2", recall=0.9, calibration_queries=np.ones((5, 3)))
+
+
+def test_routes_leave_the_default_only_for_a_clear_win():
+    from siann._ivf import NEVER, crossover_with_margin
+    a = {2: 100.0, 4: 100.0, 8: 100.0}
+    # b's side from 4 by default: a 5% lead for a does not move it, a 20% lead does
+    assert crossover_with_margin(a, {2: 50.0, 4: 96.0, 8: 120.0}, 4) == 4
+    # a wins at 4: b from 5, the unmeasured batches above 4 taking the default
+    assert crossover_with_margin(a, {2: 50.0, 4: 80.0, 8: 120.0}, 4) == 5
+    # a's side everywhere by default: b must be 10% faster to take a batch
+    assert crossover_with_margin(a, {2: 105.0, 4: 105.0, 8: 105.0}, NEVER) == NEVER
+    assert crossover_with_margin(a, {2: 105.0, 4: 115.0, 8: 130.0}, NEVER) == 4
+    # b wins everywhere: from the smallest batch; a wins at the largest: the default beyond it
+    assert crossover_with_margin(a, {2: 200.0, 4: 200.0, 8: 200.0}, 4) == 2
+    assert crossover_with_margin(a, {2: 200.0, 4: 200.0, 8: 50.0}, 4) == 9
+    assert crossover_with_margin(a, {2: 200.0, 4: 200.0, 8: 50.0}, 1000) == 1000

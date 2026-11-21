@@ -58,16 +58,18 @@ res.indices, res.scores                      # (5, 10) each, best first
 print(index.plan)                            # what was chosen, and why
 profile = siann.tune(xb)                     # measure the GPU/CPU choice on your data
 
-approx = siann.Index(xb, metric="cosine", recall=0.95, calibration_queries=xq)   # approximate: an IVF
-approx.search(xq, k=10)                      # calibrated to recall 0.95 on queries like xq
+approx = siann.Index(xb, metric="cosine", recall=0.95)   # approximate: an IVF, calibrated to the target
+approx.search(xq, k=10)
+approx = siann.Index(xb, metric="cosine", recall=0.95, calibration_queries=xq[:1000])  # optional: on your queries
 ```
 
 Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, the
 similarity for cosine and inner product. `device="cpu"` or `"gpu"` overrides the choice of device, for the
 index or for one search; a profile from `siann.tune` changes it for the indexes it is given to
 ([TUNING](TUNING.md)). With `recall=`, siann builds an IVF, finds the number of lists to probe that reaches
-the target on `calibration_queries` (or, without them, on a sample of the index's own vectors), and keeps
-exact search instead where that is faster; the plan reports each choice.
+the target on a sample of the index's own vectors, and keeps exact search instead where that is faster;
+the plan reports each choice. Passing `calibration_queries`, a sample of your own queries, is optional, and
+keeps the target where they differ from the base vectors ([TUNING](TUNING.md)).
 
 ## Which to use, and how it compares
 

@@ -179,11 +179,17 @@ queries. Byte lists with integer queries are faster everywhere on the CPU, throu
 - **IVF or exact:** the IVF at the calibrated nprobe is timed against exact search on the same sample, and
   the index keeps whichever is faster. Small collections, and data where an IVF needs most of its lists
   to reach the target (inner product on vectors of very uneven length), end up with exact search.
-- **Routing:** each search goes by its batch size. A single query runs on the CPU, split over 4 threads;
-  larger batches on the GPU, scanning each query's lists (query-major) up to 999 queries and each list once
-  for all the queries that probe it (list-major) from 1,000. The thresholds are a profile's
-  ([TUNING](TUNING.md)). Single queries use the exact coarse step: the two-level one lowers recall by up to
-  0.011, below what calibration promised.
+- **Routing, measured per index:** after calibration the build times its CPU scans (one thread per query,
+  and list-major) and its GPU scans (query-major and list-major) on 1 to 4,096 of the calibration queries
+  (or of its own vectors), and each search goes by its batch size to the fastest. Where they cross depends
+  on how many lists a query probes: on SIFT1M at nprobe 46 the CPU wins up to 16 queries and the GPU's
+  query-major scan up to 1,024; on GloVe-100 at nprobe 370 the GPU wins from 8 queries and list-major at every
+  size. A measured route replaces the default one (single queries on the CPU, the GPU's query-major scan
+  below 1,000 queries, its list-major scan from 1,000) only where it was at least 10% faster, about the
+  timings' spread, and between the batch sizes measured the default holds. A single query on the CPU is
+  split over 4 threads. A profile with thresholds of its own overrides the measurement
+  ([TUNING](TUNING.md)). Single queries use the exact coarse step: the two-level one lowers recall by up
+  to 0.011, below what calibration promised.
 
 ## What does not pay
 

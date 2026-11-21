@@ -52,7 +52,8 @@ FAISS appears only in the benchmarks: siann does not wrap it.
 ## Which path a search takes
 
 What `siann.Index` does with a search; [BENCHMARKS](BENCHMARKS.md#which-to-use) adds where another
-library would be faster. The batch-size thresholds come from a profile ([TUNING](TUNING.md)).
+library would be faster. Exact search's batch-size thresholds come from a profile, approximate search's
+from the index's own measurement ([TUNING](TUNING.md)).
 
 ```mermaid
 flowchart TB
@@ -67,10 +68,10 @@ flowchart TB
     ebatch -- no --> metric{"metric?"}
     metric -- "L2, cosine, inner product" --> cb["NumPy BLAS + Rust top-k"]
     metric -- "L1, L-infinity" --> cr["Rust blocked kernel"]
-    approx --> abatch{"batch size?"}
-    abatch -- "one query" --> sp["Rust IVF, split over 4 threads"]
-    abatch -- "up to 999" --> gq["GPU IVF, query-major scan"]
-    abatch -- "1,000 and up" --> gl["GPU IVF, list-major scan"]
+    approx --> abatch{"batch size, against thresholds<br/>the index measured when built"}
+    abatch -- "small" --> sp["Rust IVF: one query split over 4 threads,<br/>or one thread per query"]
+    abatch -- "medium" --> gq["GPU IVF, query-major scan"]
+    abatch -- "large" --> gl["GPU IVF, list-major scan"]
 ```
 
 ## Why siann is faster than FAISS

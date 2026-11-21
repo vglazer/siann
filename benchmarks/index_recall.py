@@ -9,10 +9,10 @@ import argparse
 import time
 
 import numpy as np
-
-import siann
 from backends import agreement
 from datasets import load
+
+import siann
 
 METRIC = {"sift": "l2", "glove": "cosine", "music100": "ip", "dbpedia": "cosine"}
 K = 10
@@ -48,7 +48,9 @@ def main() -> None:
     for b in (1, 10, 100, 1000, 10_000):
         q = xq[:min(b, len(xq))]
         reps = max(1, 2000 // b) if b < 1000 else 3
-        index.search(q[:1] if b == 1 else q, K)
+        warm = time.perf_counter()      # steady state: a device idle before this batch starts slower
+        while time.perf_counter() - warm < 0.2:
+            index.search(q[:1] if b == 1 else q, K)
         t = time.perf_counter()
         for i in range(reps):
             index.search(xq[i:i + 1] if b == 1 else q, K)

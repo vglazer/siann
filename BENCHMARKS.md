@@ -470,19 +470,55 @@ queries (ties counted as found), and its speed at the batch sizes it routes (`in
 
 | Dataset | Calibrated on | nprobe | Recall on the queries | Build | Queries/s: 1 / 100 / 10,000 |
 | --- | --- | ---: | ---: | ---: | ---: |
-| SIFT, L2 | its own vectors | 38 | 0.940 | 4.8 s | 11,343 / 104,939 / 194,992 |
-| SIFT, L2 | 1,000 of the queries (recall on the other 9,000) | 46 | **0.955** | 4.7 s | 11,035 / 94,080 / 180,141 |
-| GloVe, cosine | its own vectors | 364 | 0.947 | 5.0 s | 2,409 / 16,840 / 46,447 |
-| Music-100, inner product | its own vectors | 129 | 0.986 | 4.1 s | 9,515 / 60,194 / 169,406 |
-| Music-100, inner product | 1,000 of the queries (recall on the other 9,000) | 25 | **0.946** | 3.9 s | 15,832 / 161,949 / 325,474 |
+| SIFT, L2 | its own vectors | 38 | 0.940 | 6.0 s | 11,503 / 103,959 / 199,346 |
+| SIFT, L2 | 1,000 of the queries (recall on the other 9,000) | 46 | **0.955** | 6.0 s | 11,103 / 98,239 / 180,252 |
+| GloVe, cosine | its own vectors | 364 | 0.947 | 8.6 s | 2,396 / 21,616 / 46,450 |
+| Music-100, inner product | its own vectors | 129 | 0.986 | 5.7 s | 9,546 / 60,076 / 170,253 |
+| Music-100, inner product | 1,000 of the queries (recall on the other 9,000) | 25 | **0.946** | 4.8 s | 15,782 / 168,543 / 333,396 |
 
 - **Calibrate on queries like the real ones.** A sample of the index's own vectors misses the target on
   real queries, either way: SIFT's queries are harder than its base vectors (0.940 against 0.95), Music-100's
   much easier (0.986, at five times the nprobe it needs). Calibrated on 1,000 of the queries, the other
   9,000 land within 0.005 of the target.
 - **The IVF is chosen on every dataset,** 2-11 times faster than exact search on the calibration sample.
-- **The build takes 4-5 seconds for a million vectors:** k-means and the lists (3.4-3.9 s), then
-  calibration.
+- **The build takes 5-9 seconds for a million vectors:** k-means and the lists (3.5-4.0 s), calibration,
+  then the routing measurement (0.9-3.6 s).
+
+### Routing approximate search
+
+*Reproduce with `index_routing_ab.py --dataset sift|glove|music100`, with and without `--calibrate-on
+queries`, and `ivf_routing.py`.*
+
+Each index times its CPU and GPU scans on 1 to 4,096 queries when it is built and routes each batch to the
+fastest. The table compares that routing with fixed thresholds (single queries on the CPU, the GPU's
+query-major scan below 1,000 queries and its list-major scan from 1,000) on the same index: queries per
+second of the measured route over the fixed one, at the batch sizes where the two differ
+(`index_routing_ab_*.txt`; elsewhere they take the same path).
+
+| Dataset, calibrated on | 2-8 queries | 16-64 | 100-512 | 1,000-2,048 |
+| --- | ---: | ---: | ---: | ---: |
+| SIFT, its own vectors | 2.3-3.8x (CPU) | 1.4x at 16 (CPU) | same | 1.3x at 1,000 (query-major) |
+| SIFT, queries | 2.5-3.8x (CPU) | 1.6x at 16 (CPU) | same | 1.2x at 1,000 (query-major) |
+| GloVe, its own vectors | 1.5-3.7x | 1.2-1.3x (list-major) | 1.3-1.9x (list-major) | same |
+| Music-100, its own vectors | 2.6-6.3x (CPU) | same | **0.77x at 512** (list-major) | same |
+| Music-100, queries | 3.2-5.3x (CPU) | 1.2-1.9x (CPU) | same | 1.6x (query-major) |
+
+- **Small batches gain most:** the GPU's fixed cost per call outweighs its speed below 8-64 queries,
+  depending on nprobe, and the CPU answers them 1.2-6.3 times faster.
+- **The crossovers move with nprobe** (`ivf_routing.txt`, `siann.tune` on each dataset's queries): at nprobe
+  46 on SIFT the CPU wins up to 16 queries and the GPU's list-major scan beyond 1,024; at nprobe 370 on
+  GloVe the GPU wins from 8 queries and its list-major scan at every size; at nprobe 25 on Music-100 the
+  CPU wins up to 64 and the GPU's query-major scan up to 4,096.
+- **Time on queries like the real ones.** The one loss comes from timing on the index's own vectors: on
+  Music-100 they made the list-major scan look faster at 512 queries, and on real queries it runs at 0.77
+  times the query-major scan. Calibrated and timed on 1,000 queries, the index takes no slower route at
+  any batch size.
+- **A measured route replaces the default only where it was at least 10% faster,** about the spread of the
+  timings, and between the batch sizes measured the default holds, so no threshold rests on a difference
+  the timings cannot resolve.
+- **Time each route back to back, warmed up.** After calls on the CPU, the GPU's next calls run up to 40%
+  slower until it is busy again, so routes timed in alternation, or a fresh index's first calls, favor the
+  CPU.
 
 ## Against mlxvs on the GPU
 

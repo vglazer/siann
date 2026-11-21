@@ -1,6 +1,6 @@
 """The IVF behind siann.Index when a recall target is given: lists built once (siann.ivf_build), each
-device's copy made on first use, nprobe calibrated to the target on a sample of the index's own
-vectors, and each search routed by its batch size."""
+device's copy made on first use, nprobe calibrated to the target on sample queries (the given calibration
+queries, or the index's own vectors), and each search routed by its batch size along routes timed on them."""
 from __future__ import annotations
 
 import time
@@ -113,3 +113,106 @@ def calibrate(search, scores, truth_kth: np.ndarray, sample_ids: np.ndarray, tar
         else:
             lo = mid
     return hi, r_hi
+
+
+ROUTE_BATCHES = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096)
+NEVER = 10 ** 9          # a threshold no batch reaches
+CPU_GIVE_UP = 0.3        # seconds: a CPU call this slow at one batch size is not timed at larger ones
+
+
+DEFAULT_ROUTES = {"cpu_below": 2, "gpu_list_from": 1000, "cpu_list_from": NEVER}
+MARGIN = 1.1             # a measured path replaces the default one only where it is this much faster
+
+
+def crossover_with_margin(a: dict[int, float], b: dict[int, float], default: int) -> int:
+    """The batch size from which path b is taken over path a, where by default b is taken from ``default``
+    up. At a measured batch, b wins from ``default`` up unless a is ``MARGIN`` times faster, and below it
+    only if b is ``MARGIN`` times faster. b is taken from the smallest measured batch from which it wins at
+    every larger one; between that batch and the measured one below it (or past the largest measured
+    batch, where a wins), the default decides."""
+    batches = sorted(a)
+    wins = {x: (b[x] * MARGIN >= a[x]) if x >= default else (b[x] >= MARGIN * a[x]) for x in batches}
+    i = next((i for i in range(len(batches)) if all(wins[y] for y in batches[i:])), len(batches))
+    if i == 0:
+        return batches[0]
+    upper = batches[i] if i < len(batches) else NEVER
+    return max(batches[i - 1] + 1, min(upper, default))
+
+
+def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CALIBRATION_K) -> tuple[dict, dict]:
+    """Where this IVF's searches should run, measured: each path timed by itself (the median call after a
+    warm-up) at batch sizes doubling from 1 to 4,096 queries of ``q``. The CPU is no
+    longer timed once the GPU has beaten it at two sizes in a row, or once one of its calls takes 0.3 s.
+    Returns the thresholds (``cpu_below``: from which batch size the GPU's best scan beats the CPU's at every
+    larger size measured; ``gpu_list_from`` and ``cpu_list_from``: from which the list-major scan beats the
+    query-major one), each departing from ``DEFAULT_ROUTES`` only where the other path is at least 10%
+    faster (about the timings' run-to-run spread), and the rates, as {(path, batch): rate}."""
+
+    def time_paths(b, paths):
+        """Each path's rate at batch b and its slowest call. Each path is timed by itself, its calls back to
+        back as in a stream of searches (between calls on the other device, a GPU call can run 40% slower):
+        a warm-up call, then calls until there are at least 5 (3 from 64 queries) taking 20 ms in all (at
+        most 25 calls); the rate is from the median call."""
+        qq = q[:b]
+        rates, slowest = {}, {}
+        for path in paths:
+            ivf.search(qq, k, nprobe, path)
+            times = []
+            while len(times) < (5 if b < 64 else 3) or (sum(times) < 0.02 and len(times) < 25):
+                start = time.perf_counter()
+                ivf.search(qq, k, nprobe, path)
+                times.append(time.perf_counter() - start)
+            rates[path], slowest[path] = b / sorted(times)[len(times) // 2], max(times)
+        return rates, slowest
+
+    batches = [b for b in ROUTE_BATCHES if b <= len(q)]
+    if gpu:
+        # a warm-up pass over every batch size: a fresh index's first GPU calls at a size run up to 30% slower
+        # than later ones even after a call at that size
+        for b in batches:
+            for path in ("gpu-query", "gpu-list"):
+                ivf.search(q[:b], k, nprobe, path)
+    rates = {}
+    cpu_on, gpu_wins = True, 0
+    for b in batches:
+        paths = (("cpu-split",) if b == 1 else ("cpu-query", "cpu-list")) if cpu_on else ()
+        measured, slowest = time_paths(b, paths + (("gpu-query", "gpu-list") if gpu else ()))
+        rates.update({(path, b): r for path, r in measured.items()})
+        if cpu_on:
+            if gpu:
+                cpu_best = max(measured[p] for p in paths)
+                gpu_best = max(measured["gpu-query"], measured["gpu-list"])
+                gpu_wins = gpu_wins + 1 if gpu_best > cpu_best else 0
+            cpu_on = gpu_wins < 2 and max(slowest[p] for p in paths) < CPU_GIVE_UP
+    cpu_batches = sorted({b for (p, b) in rates if p.startswith("cpu")})
+    many = [b for b in cpu_batches if b > 1]
+    cq = {b: rates[("cpu-query", b)] for b in many}
+    cl = {b: rates[("cpu-list", b)] for b in many}
+    routes = {"cpu_list_from": crossover_with_margin(cq, cl, DEFAULT_ROUTES["cpu_list_from"]) if cq else NEVER}
+    if gpu:
+        gq = {b: rates[("gpu-query", b)] for b in batches}
+        gl = {b: rates[("gpu-list", b)] for b in batches}
+        cpu = {b: rates[("cpu-split", b)] if b == 1 else max(cq[b], cl[b]) for b in cpu_batches}
+        best_gpu = {b: max(gq[b], gl[b]) for b in cpu_batches}
+        routes["cpu_below"] = crossover_with_margin(cpu, best_gpu, DEFAULT_ROUTES["cpu_below"])
+        routes["gpu_list_from"] = crossover_with_margin(gq, gl, DEFAULT_ROUTES["gpu_list_from"])
+    else:
+        routes["cpu_below"], routes["gpu_list_from"] = NEVER, NEVER
+    return routes, rates
+
+
+def describe_routes(routes: dict, gpu: bool) -> str:
+    """The routes, in words."""
+    c, gl, cl = routes["cpu_below"], routes["gpu_list_from"], routes["cpu_list_from"]
+    cpu_list = "" if cl >= NEVER else f" (list-major from {cl:,})"
+    if not gpu or c >= NEVER:
+        return f"single queries split over 4 threads, batches on the CPU{cpu_list}"
+    parts = ["single queries on the CPU, split over 4 threads"] if c <= 2 else \
+        [f"below {c:,} queries on the CPU (single queries split over 4 threads){cpu_list}"]
+    if gl >= NEVER:
+        parts.append("larger batches on the GPU, query-major")
+    elif gl <= c:
+        parts.append("larger batches on the GPU, list-major")
+    else:
+        parts.append(f"on the GPU query-major up to {gl - 1:,} queries, list-major from {gl:,}")
+    return "; ".join(parts)

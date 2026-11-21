@@ -12,11 +12,7 @@ from pathlib import Path
 import numpy as np
 
 BATCHES = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024)
-# Approximate search's routing (see Profile.ivf). Single queries on the CPU: on SIFT1M at recall 0.925 a
-# single query takes siann's Rust IVF on one thread 0.14 ms (7,228 per second) against the GPU's 0.49 ms
-# (2,055); the GPU leads in batches of 100 (BENCHMARKS.md). List-major scans from 1,000 queries, where the GPU IVF
-# switches in every measurement. Where between 1 and 100 the devices cross is measured by siann.tune.
-IVF_DEFAULTS = {"cpu_below": 2, "list_major_from": 1000}
+IVF_BATCHES = (1, 4, 16, 64, 256, 1024, 4096)
 
 
 @dataclass(frozen=True)
@@ -25,16 +21,18 @@ class Profile:
 
     ``cpu_below[metric]`` is the batch size below which exact search by that metric runs on the CPU
     when a GPU is available: 1 means always the GPU, ``None`` always the CPU. ``rates`` holds the
-    measured queries per second, as ``(metric, device, batch, rate)``. ``ivf`` holds approximate
-    search's thresholds: ``cpu_below``, the batch size below which an IVF search runs on the CPU (a single
-    query split over 4 threads), and ``list_major_from``, the batch size from which a scan reads each list
-    once for all the queries that probe it (on either device).
+    measured queries per second, as ``(metric, device, batch, rate)``. ``ivf``, if set, holds approximate
+    search's thresholds for every index given the profile: ``cpu_below``, the batch size below which an IVF
+    search runs on the CPU (a single query split over 4 threads), and ``gpu_list_from`` and
+    ``cpu_list_from``, the batch sizes from which a scan reads each list once for all the queries that
+    probe it. Without them (siann's default), each index measures its own when it is built: they depend
+    on how many lists its queries probe.
     """
     cpu_below: dict[str, int | None]
     source: str
     rates: tuple[tuple[str, str, int, float], ...] = ()
     meta: dict = field(default_factory=dict)
-    ivf: dict = field(default_factory=lambda: dict(IVF_DEFAULTS))
+    ivf: dict | None = None
 
     def threshold(self, metric: str) -> int | None:
         """The batch size below which ``metric`` runs on the CPU (``None``: always the CPU)."""
@@ -49,17 +47,17 @@ class Profile:
         return f"on the CPU below {t} queries per batch, on the GPU from {t}"
 
     def describe_ivf(self) -> str:
-        c, lm = self.ivf.get("cpu_below", 2), self.ivf.get("list_major_from", 1000)
-        cpu = "single queries" if c <= 2 else f"batches below {c:,}"
-        return (f"{cpu} on the CPU (one query split over 4 threads), the GPU above; "
-                f"list-major scans from {lm:,} queries")
+        if not self.ivf:
+            return "measured by each index when it is built"
+        from ._ivf import describe_routes
+        return describe_routes(self.ivf, True)
 
     def __str__(self) -> str:
         lines = [f"siann.Profile ({self.source})"]
         lines += [f"  {m:7s} exact search {self.describe(m)}" for m in self.cpu_below]
         lines.append(f"  approximate search (IVF): {self.describe_ivf()}")
-        if self.rates:
-            batches = sorted({b for _, _, b, _ in self.rates})
+        if any(m != "ivf" for m, _, _, _ in self.rates):
+            batches = sorted({b for m, _, b, _ in self.rates if m != "ivf"})
             rate = {(m, dev, b): r for m, dev, b, r in self.rates}
             lines.append("  queries per second, CPU / GPU, by batch size:")
             lines.append("    " + " " * 7 + "".join(f"{b:>16,}" for b in batches))
@@ -67,6 +65,17 @@ class Profile:
                 cells = [f"{rate.get((m, 'cpu', b), float('nan')):,.0f} / {rate.get((m, 'gpu', b), float('nan')):,.0f}"
                          for b in batches]
                 lines.append(f"    {m:7s}" + "".join(f"{c:>16s}" for c in cells))
+        ivf_rates = [r for r in self.rates if r[0] == "ivf"]
+        if ivf_rates:
+            batches = sorted({b for _, _, b, _ in ivf_rates})
+            rate = {(p, b): r for _, p, b, r in ivf_rates}
+            lines.append(f"  approximate search, queries per second by path and batch size "
+                         f"({self.ivf.get('metric')}, recall {self.ivf.get('recall')}, nprobe {self.ivf.get('nprobe')}):")
+            lines.append("    " + " " * 10 + "".join(f"{b:>10,}" for b in batches))
+            for p in ("cpu-split", "cpu-query", "cpu-list", "gpu-query", "gpu-list"):
+                if any((p, b) in rate for b in batches):
+                    lines.append(f"    {p:10s}" + "".join(f"{rate[(p, b)]:>10,.0f}" if (p, b) in rate else f"{'':>10s}"
+                                                       for b in batches))
         return "\n".join(lines)
 
     def save(self, path) -> None:
@@ -79,7 +88,7 @@ class Profile:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         return cls(dict(data["cpu_below"]), data["source"],
                    tuple((m, d, int(b), float(r)) for m, d, b, r in data.get("rates", [])), data.get("meta", {}),
-                   dict(data.get("ivf", IVF_DEFAULTS)))
+                   data.get("ivf"))
 
 
 # Tuned by benchmarks/exact_routing.py on an Apple M3 Max (results/exact_routing.txt): for each metric,
@@ -130,14 +139,28 @@ def crossover(cpu: dict[int, float], gpu: dict[int, float]) -> int | None:
     return None
 
 
+def _tune_ivf(xb, xq, given_xq: bool, metric: str, recall: float, k: int):
+    """Approximate search's thresholds: an IVF calibrated to ``recall`` (on ``xq`` if given), its routes
+    measured as an index measures its own; returns (thresholds, rates as (label, path, batch, rate))."""
+    from ._index import Index
+    from ._ivf import measure_routes
+    index = Index(xb, metric, recall=recall, kind="ivf", calibration_queries=xq[:1000] if given_xq else None,
+                  profile=Profile({metric: 1}, "tuning"))
+    routes, rates = measure_routes(index._ivf, xq, index.nprobe, True, k)
+    thresholds = dict(routes, recall=recall, nprobe=index.nprobe, metric=metric)
+    return thresholds, [("ivf", p, b, r) for (p, b), r in rates.items()]
+
+
 def tune(xb, xq=None, metrics=None, batches=BATCHES, k: int = 10, budget: float = 60.0,
-              seed: int = 0) -> Profile:
+         seed: int = 0, recall: float | None = None) -> Profile:
     """Measures where exact search is faster, on the CPU or the GPU, for this data on this machine.
 
     ``xb`` is the user's base vectors (all of them: the crossover depends on the collection's size);
     ``xq`` the queries to time with, by default a sample of ``xb``. ``metrics`` defaults to all five.
     Each metric and batch size is timed on both devices (median of three after a warm-up that also
-    compiles the GPU kernels for that shape), within about ``budget`` seconds in all. Returns a Profile;
+    compiles the GPU kernels for that shape), within about ``budget`` seconds in all. With ``recall``,
+    approximate search's thresholds are measured too: an IVF over ``xb`` (by the first metric) calibrated to
+    that recall, on ``xq`` if given, its paths timed at batch sizes from 1 to 4,096. Returns a Profile;
     pass it to ``siann.Index(..., profile=p)`` or ``siann.use_profile(p)``.
     """
     from ._index import METRICS, Index, _gpu_available
@@ -145,21 +168,23 @@ def tune(xb, xq=None, metrics=None, batches=BATCHES, k: int = 10, budget: float 
     for m in metrics:
         if m not in METRICS:
             raise ValueError(f"unknown metric {m!r}")
-    batches = sorted(set(int(b) for b in batches))
+    batches = sorted({int(b) for b in batches})
     xb = np.asarray(xb)
+    given_xq = xq is not None
     if xq is None:
         rng = np.random.default_rng(seed)
-        xq = xb[rng.choice(len(xb), size=min(len(xb), max(batches)), replace=len(xb) < max(batches))]
+        want = max(max(batches), max(IVF_BATCHES) if recall else 0)
+        xq = xb[rng.choice(len(xb), size=min(len(xb), want), replace=len(xb) < want)]
     xq = np.asarray(xq)
     if len(xq) < max(batches):
         batches = [b for b in batches if b <= len(xq)]
-    meta = {"n": int(len(xb)), "d": int(xb.shape[1]), "k": int(k), "machine": platform.platform(),
+    meta = {"n": len(xb), "d": int(xb.shape[1]), "k": int(k), "machine": platform.platform(),
             "date": time.strftime("%Y-%m-%d")}
     if not _gpu_available():
         return Profile({m: None for m in metrics}, "tuned: no GPU found, every search on the CPU", (), meta)
     deadline = time.perf_counter() + budget
     rates, cpu_below = [], {}
-    per_metric = budget / len(metrics)
+    per_metric = budget / (len(metrics) + (2 if recall else 0))
     for m in metrics:
         index = Index(xb, m, profile=Profile({m: 1}, "tuning"))
         stop = min(deadline, time.perf_counter() + per_metric)
@@ -170,5 +195,9 @@ def tune(xb, xq=None, metrics=None, batches=BATCHES, k: int = 10, budget: float 
             gpu[b] = _rate(index, q, k, "gpu", stop)
             rates += [(m, "cpu", b, cpu[b]), (m, "gpu", b, gpu[b])]
         cpu_below[m] = crossover(cpu, gpu)
+    ivf = None
+    if recall is not None:
+        ivf, ivf_rates = _tune_ivf(xb, np.asarray(xq), given_xq, metrics[0], recall, k)
+        rates += ivf_rates
     source = f"tuned on {meta['n']:,} x {meta['d']} vectors, k = {k}, {meta['date']}"
-    return Profile(cpu_below, source, tuple(rates), meta)
+    return Profile(cpu_below, source, tuple(rates), meta, ivf)

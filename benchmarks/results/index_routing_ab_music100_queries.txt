@@ -1,0 +1,19 @@
+music100, ip, target 0.95, calibrated on queries: built in 5.0 s, nprobe 25
+  routing measured in 0.9 s: below 65 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 2,048 queries, list-major from 2,049
+
+   batch fixed path       q/s   measured path       q/s    ratio
+       1  cpu-split    25,751       cpu-split    25,751     1.00
+       2  gpu-query     4,923       cpu-query    26,130     5.31
+       4  gpu-query     9,792       cpu-query    31,867     3.25
+       8  gpu-query    19,682       cpu-query    62,480     3.17
+      16  gpu-query    37,347       cpu-query    71,856     1.92
+      32  gpu-query    72,201       cpu-query   129,162     1.79
+      64  gpu-query   126,300       cpu-query   148,299     1.17
+     100  gpu-query   180,343       gpu-query   180,343     1.00
+     128  gpu-query   217,156       gpu-query   217,156     1.00
+     256  gpu-query   282,717       gpu-query   282,717     1.00
+     512  gpu-query   416,846       gpu-query   416,846     1.00
+   1,000   gpu-list   320,875       gpu-query   498,473     1.55
+   2,048   gpu-list   376,722       gpu-query   587,282     1.56
+   4,096   gpu-list   417,727        gpu-list   417,727     1.00
+   9,000   gpu-list   457,210        gpu-list   457,210     1.00

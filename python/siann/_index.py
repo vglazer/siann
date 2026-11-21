@@ -44,7 +44,7 @@ def _gpu_available() -> bool:
     try:
         import mlx.core as mx
         return bool(mx.metal.is_available())
-    except Exception:
+    except Exception:  # noqa: BLE001 (any failure to load or query MLX means no usable GPU)
         return False
 
 
@@ -132,6 +132,7 @@ class Index:
         self.recall = recall
         self._ivf = None
         self._nprobe = None
+        self._routes = {}
         reasons = []
         if recall is None or kind == "exact":
             reasons.append("exact search (no recall target): the results are the true nearest neighbors"
@@ -141,7 +142,7 @@ class Index:
         if device != "auto":
             reasons.append(f"device={device!r} given")
         elif gpu and self._ivf is not None:
-            reasons.append(f"GPU found: {self._profile.describe_ivf()} (profile: {self._profile.source})")
+            reasons.append("GPU found: approximate searches routed as above")
         elif gpu:
             reasons.append(f"GPU found: {self._profile.describe(metric)} "
                            f"(profile: {self._profile.source})")
@@ -160,7 +161,14 @@ class Index:
                    calibration_queries=None) -> list[str]:
         """Builds the IVF, calibrates nprobe and, with kind "auto", keeps it only if it is faster than exact
         search on the calibration sample. Returns the plan's lines."""
-        from ._ivf import CALIBRATION_K, CALIBRATION_SAMPLE, IVF, calibrate, default_nlist, default_storage
+        from ._ivf import (
+            CALIBRATION_K,
+            CALIBRATION_SAMPLE,
+            IVF,
+            calibrate,
+            default_nlist,
+            default_storage,
+        )
         n = self.n
         ivf_metric = "l2" if self.metric == "cosine" else self.metric      # cosine: L2 on unit vectors
         nlist = int(nlist) if nlist else default_nlist(n)
@@ -225,16 +233,30 @@ class Index:
         lines.append(f"IVF chosen: {ivf_seconds * 1e3:.1f} ms for {sample}, against {exact_seconds * 1e3:.1f} ms "
                      "for exact search" + (" (kind='ivf' given)" if kind == "ivf" else ""))
         self._ivf, self._nprobe = ivf, nprobe
+        from ._ivf import ROUTE_BATCHES, describe_routes, measure_routes
+        on_gpu = gpu and self._device != "cpu"
+        if self._profile.ivf:
+            self._routes = dict(self._profile.ivf)
+            lines.append(f"routing from the profile: {describe_routes(self._routes, on_gpu)}")
+        else:
+            # the calibration queries, topped up with distinct base vectors to the largest batch timed
+            want = min(n, max(ROUTE_BATCHES))
+            extra = self._x[np.sort(rng.choice(n, size=max(0, want - len(q)), replace=False))]
+            t = time.perf_counter()
+            self._routes, _ = measure_routes(ivf, np.concatenate([q, extra])[:want], nprobe, on_gpu)
+            lines.append(f"routing measured in {time.perf_counter() - t:.1f} s: "
+                         f"{describe_routes(self._routes, on_gpu)}")
         return lines
 
     def _ivf_path(self, batch: int, device: str | None) -> str:
         """The IVF path a batch takes: by the device (given, or chosen by the profile) and the batch size."""
-        lm = self._profile.ivf.get("list_major_from", 1000)
+        from ._ivf import DEFAULT_ROUTES
+        r = {**DEFAULT_ROUTES, **self._routes}
         dev = device or (self._device if self._device != "auto" else
-                         ("cpu" if batch < self._profile.ivf.get("cpu_below", 2) else "gpu"))
+                         ("cpu" if batch < r["cpu_below"] else "gpu"))
         if dev == "gpu":
-            return "gpu-list" if batch >= lm else "gpu-query"
-        return "cpu-split" if batch == 1 else ("cpu-list" if batch >= lm else "cpu-query")
+            return "gpu-list" if batch >= r["gpu_list_from"] else "gpu-query"
+        return "cpu-split" if batch == 1 else ("cpu-list" if batch >= r["cpu_list_from"] else "cpu-query")
 
     @property
     def kind(self) -> str:

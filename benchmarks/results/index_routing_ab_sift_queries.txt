@@ -1,0 +1,19 @@
+sift, l2, target 0.95, calibrated on queries: built in 6.1 s, nprobe 46
+  routing measured in 1.2 s: below 17 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 1,024 queries, list-major from 1,025
+
+   batch fixed path       q/s   measured path       q/s    ratio
+       1  cpu-split    17,033       cpu-split    17,033     1.00
+       2  gpu-query     3,803       cpu-query    14,585     3.84
+       4  gpu-query     6,253       cpu-query    17,921     2.87
+       8  gpu-query    12,439       cpu-query    30,913     2.49
+      16  gpu-query    22,619       cpu-query    35,040     1.55
+      32  gpu-query    43,358       gpu-query    43,358     1.00
+      64  gpu-query    77,595       gpu-query    77,595     1.00
+     100  gpu-query   109,076       gpu-query   109,076     1.00
+     128  gpu-query   124,858       gpu-query   124,858     1.00
+     256  gpu-query   165,428       gpu-query   165,428     1.00
+     512  gpu-query   195,079       gpu-query   195,079     1.00
+   1,000   gpu-list   176,908       gpu-query   215,647     1.22
+   2,048   gpu-list   209,123        gpu-list   209,123     1.00
+   4,096   gpu-list   233,709        gpu-list   233,709     1.00
+   9,000   gpu-list   247,262        gpu-list   247,262     1.00

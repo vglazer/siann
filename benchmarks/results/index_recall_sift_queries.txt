@@ -1,16 +1,17 @@
-sift, l2: 1,000,000 vectors, target 0.95; built in 4.7 s
+sift, l2: 1,000,000 vectors, target 0.95; built in 6.0 s
 siann.Index: 1,000,000 vectors, 128 dimensions, metric l2
   kind: ivf
   device: auto
-  approximate search: an IVF of 4,000 lists (about 4 sqrt(n)), built in 3.9 s (siann's k-means, 10 iterations)
+  approximate search: an IVF of 4,000 lists (about 4 sqrt(n)), built in 4.0 s (siann's k-means, 10 iterations)
   lists stored as bytes (every coordinate an integer 0-255: lossless)
   calibrated: nprobe 46 reaches recall@10 0.951 (target 0.95) on 1,000 of the given calibration queries
-  IVF chosen: 5.8 ms for 1,000 calibration queries on the GPU, against 46.0 ms for exact search
-  GPU found: single queries on the CPU (one query split over 4 threads), the GPU above; list-major scans from 1,000 queries (profile: siann's default, tuned on an Apple M3 Max with about a million vectors)
+  IVF chosen: 5.7 ms for 1,000 calibration queries on the GPU, against 46.4 ms for exact search
+  routing measured in 1.2 s: below 17 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 2,048 queries, list-major from 2,049
+  GPU found: approximate searches routed as above
 
   recall@10 on the dataset's 9,000 queries: 0.955 (target 0.95)
-  batch      1: cpu-split      11,035 queries/s
-  batch     10: gpu-query      13,536 queries/s
-  batch    100: gpu-query      94,080 queries/s
-  batch  1,000: gpu-list      129,606 queries/s
-  batch 10,000: gpu-list      180,141 queries/s
+  batch      1: cpu-split      11,103 queries/s
+  batch     10: cpu-query      32,841 queries/s
+  batch    100: gpu-query      98,239 queries/s
+  batch  1,000: gpu-query     160,170 queries/s
+  batch 10,000: gpu-list      180,252 queries/s
