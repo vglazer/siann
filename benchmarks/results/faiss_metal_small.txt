@@ -1,0 +1,7 @@
+FAISS 1.16.0, stage small, 100 queries per call
+  [start] free memory 43.9 GB, this process's peak 0.0 GB
+  GPUs found: 1
+  [GPU resources made] free memory 43.9 GB, this process's peak 0.0 GB
+  [exact L2, 100,000 x 128, 100 queries, after a warm-up call] free memory 43.5 GB, this process's peak 0.2 GB
+  exact L2, 100,000 x 128, 100 queries: GPU 28,193 queries/s, CPU 7,043 queries/s, GPU's neighbors agree with the CPU's 1.0000
+  [exact L2, 100,000 x 128, 100 queries, after the search] free memory 43.4 GB, this process's peak 0.2 GB

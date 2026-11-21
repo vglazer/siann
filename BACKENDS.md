@@ -73,9 +73,11 @@ strongest CPU method for approximate search), plain and compressed.
 - **Set `faiss.cvar.distance_compute_blas_threshold = 20`** for exact L2 below 128 dimensions.
   FAISS 1.16 defaults it to 128,000, so with fewer queries it skips BLAS and runs 4-7 times slower
   (GloVe-100: 2.90 s against 0.42 s).
-- **Do not run its Metal GPU path.** FAISS 1.16's Mac builds include a Metal backend (flat and IVF
-  indexes). On exact L2 with 1,000 queries it is 2.6 times slower than siann; with 10,000 it fails and
-  crashes the machine.
+- **Keep its Metal GPU path's exact-search calls small.** FAISS 1.16's Mac builds include a Metal
+  backend (flat and IVF indexes), whose GPU memory is counted outside the process: a call of 10,000
+  queries against a million vectors needs more than 40 GB and can freeze the machine
+  ([BENCHMARKS](BENCHMARKS.md#faisss-metal-path-on-the-gpu)). Its IVF index on the GPU is an opaque
+  `faiss.Index`: set nprobe with `SearchParametersIVF`.
 - **HNSW handles L1 well,** and is the method to beat for single queries and small batches.
 - **Pad to a multiple of 8 dimensions for its compressed indexes.** Its scalar quantizer
   (`IndexIVFScalarQuantizer`, `IndexHNSWSQ`) has a fast SIMD path only for such dimensions: at 100

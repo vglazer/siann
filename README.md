@@ -82,7 +82,8 @@ neighbors and approximate search compared at matched recall. "SIFT-like" and "Gl
 real datasets measured, SIFT1M (image descriptors) and GloVe-100 (word embeddings), which favor
 different methods; Music-100 is the inner-product dataset, and DBpedia OpenAI embeddings (1,536
 dimensions) the high-dimensional one ([DATASETS](DATASETS.md)). FAISS's Metal
-backend is not part of these comparisons.
+GPU path is level with mlxvs in small batches and slower in large ones, with no graph index, so mlxvs is
+the GPU comparison ([BENCHMARKS](BENCHMARKS.md#faisss-metal-path-on-the-gpu)).
 
 | Workload | Use | Against the strongest alternative |
 | --- | --- | --- |

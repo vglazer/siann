@@ -26,8 +26,8 @@ comparison, and [IMPLEMENTATION](IMPLEMENTATION.md) explains where the speed com
   Repeated runs of the same configuration differ by up to 15%, so smaller differences are noise.
 - **FAISS at its best:** its flat L2 needs `faiss.cvar.distance_compute_blas_threshold = 20` (see
   "FAISS's BLAS threshold"), and its compressed indexes need dimensions in multiples of 8 (see "List
-  storage"); every comparison sets both. FAISS's Metal GPU path is not run: with 10,000 queries it
-  fails and crashes the machine (with 1,000, on exact L2, it is 2.6 times slower than siann's GPU).
+  storage"); every comparison sets both. FAISS's Metal GPU path has a section of its own, its exact
+  search run in calls of at most 1,000 queries ("FAISS's Metal path on the GPU").
 - **On the GPU,** the strongest alternative is [mlxvs](https://github.com/mikepapadim/mlxvs) 0.16.1,
   which runs NVIDIA cuVS's methods on MLX (CAGRA graphs, IVF variants, exact search; L2, cosine and inner
   product, not L1 or L-infinity), measured on the same machine (see "Against mlxvs on the GPU").
@@ -518,7 +518,8 @@ second of the measured route over the fixed one, at the batch sizes where the tw
 
 *Reproduce with `mlxvs_compare.py --dataset sift|glove|music100`.*
 
-mlxvs runs only on Apple GPUs; FAISS lacks a mature Apple GPU path, so mlxvs is the GPU baseline. Same
+mlxvs runs only on Apple GPUs. FAISS's Metal path is level with it in small batches and under half its
+speed in large ones, with no graph index ("FAISS's Metal path on the GPU"), so mlxvs is the GPU baseline. Same
 data and queries, recall@10 against exact search, queries per second for single queries, batches of 100
 and one batch of 10,000 (`mlxvs_sift.txt`, `mlxvs_glove.txt`, `mlxvs_music100.txt`). mlxvs's CAGRA uses
 graph degree 32 pruned from 64, as in mlxvs's own benchmarks, in float32 and float16; the faster of the
@@ -563,6 +564,35 @@ batches of 10,000.
   the GPU (about 0.5-0.7 ms each), siann's Rust IVF on one thread 4,453 on SIFT at recall 0.973 (6,254
   with uint8 lists) and 5,057 on GloVe at 0.839.
 - **L1 and L-infinity** are siann's alone: mlxvs supports L2, cosine and inner product.
+
+## FAISS's Metal path on the GPU
+
+*Reproduce with `faiss_metal.py --stage tiny|small|sift-exact|sift-ivf`, `--chunk` setting the queries per
+call.*
+
+FAISS 1.16's Mac builds run its flat and IVF indexes on the GPU through Metal (`index_cpu_to_gpu`). On
+SIFT1M, with an IVF-Flat of 4,000 lists from FAISS's own k-means (float32 lists), against mlxvs and siann
+from the section above, in queries per second at nprobe 16, 32 and 64 (`faiss_metal_*.txt`). In every run
+FAISS's GPU returns exactly its CPU index's neighbors, and its recall at each nprobe is within 0.004 of the
+other two IVFs' on the same 10,000 queries (0.840, 0.924, 0.973).
+
+| | FAISS Metal | mlxvs | siann's GPU |
+| --- | ---: | ---: | ---: |
+| Exact search, batches of 100 | 3,963 | 3,669 | 10,722 |
+| IVF, single queries | 2,527 / 2,477 / 2,348 | 655 / 646 / 622 | 2,568 / 2,055 / 1,511 |
+| IVF, batches of 100 | 34,839 / 38,130 / 24,890 | 42,986 / 36,116 / 29,974 | 180,286 / 123,922 / 91,600 |
+| IVF, batches of 10,000 | 121,760 / 70,352 / 37,719 | 240,542 / 184,001 / 107,910 | 573,795 / 311,030 / 197,625 |
+
+- **mlxvs is the stronger GPU baseline.** FAISS's Metal path is level with mlxvs in batches of 100
+  (0.8-1.1 times) and at 0.35-0.51 times its speed in batches of 10,000, and it has no graph index
+  (FAISS's CAGRA runs only on CUDA).
+- **Single queries:** FAISS's GPU IVF is 3.8-3.9 times mlxvs's and level with siann's GPU IVF; siann
+  sends single queries to the CPU, which is faster again.
+- **Keep FAISS's exact search on the GPU to small calls.** Its GPU memory is counted outside the process:
+  one call of 1,000 queries against SIFT1M (4,432 queries per second) lowered the machine's free memory by
+  10 GB while the process peaked at 1.6 GB. Calls of 10,000 queries would need more than 40 GB of this
+  machine's 64, and such calls froze it. IVF calls of 10,000 queries hold only the probed lists' distances
+  (process peak 5.9 GB, free memory steady).
 
 ## High-dimensional text embeddings
 

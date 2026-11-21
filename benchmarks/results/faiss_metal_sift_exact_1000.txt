@@ -1,0 +1,7 @@
+FAISS 1.16.0, stage sift-exact, 1000 queries per call
+  [start] free memory 43.9 GB, this process's peak 0.0 GB
+  GPUs found: 1
+  [GPU resources made] free memory 44.0 GB, this process's peak 0.0 GB
+  [exact L2, SIFT1M, 1,000 queries, after a warm-up call] free memory 38.2 GB, this process's peak 1.6 GB
+  exact L2, SIFT1M, 1,000 queries: GPU 4,432 queries/s, CPU 2,860 queries/s, GPU's neighbors agree with the CPU's 1.0000
+  [exact L2, SIFT1M, 1,000 queries, after the search] free memory 34.1 GB, this process's peak 1.6 GB

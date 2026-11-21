@@ -22,6 +22,7 @@ The README's "Which to use" table and BENCHMARKS.md's main sections.
 | `ivf_torch.py` | The PyTorch GPU IVF, run by `ivf_cpu.py` in a process of its own | Approximate search: batches |
 | `single_query.py` | Single-query latency: siann's IVF on one thread and split, against FAISS's HNSW and IVF | Approximate search: single queries; List storage |
 | `fp16_lists.py` | float16 and uint8 lists against float32, and against FAISS's compressed IVF and HNSW | Approximate search: batches; List storage |
+| `faiss_metal.py` | FAISS's Metal GPU path (exact search, IVF-Flat), in stages from tiny to SIFT1M; exact-search calls kept to 1,000 queries | FAISS's Metal path on the GPU |
 | `mlxvs_compare.py` | siann's GPU paths against mlxvs (exact search, IVF-Flat, CAGRA) | Against mlxvs on the GPU; High-dimensional text embeddings |
 | `index_recall.py` | `siann.Index(recall=)` on the full datasets: recall on the real queries, what it chose, speed by batch size | Approximate search through siann.Index |
 | `graph_faiss.py` | A CAGRA graph built on the GPU, searched by FAISS's HNSW code, against FAISS's own HNSW | A graph built on the GPU, searched on the CPU |
