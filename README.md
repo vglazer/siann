@@ -44,6 +44,7 @@ To run the quickstart notebook, clone the repository and, from its folder,
 | [DATASETS](DATASETS.md) | SIFT1M, GloVe-100, Music-100, DBpedia OpenAI and Gaussian vectors: sources, preparation and quirks |
 | [BENCHMARKS](BENCHMARKS.md) | Which path to use for each workload, and every measurement behind it, with the scripts that reproduce them |
 | [TUNING](TUNING.md) | Calibration and tuning: what siann measures, on what, and how to measure it on your own queries, data and hardware |
+| [DEVELOPMENT](DEVELOPMENT.md) | Building, testing and linting, and the rules for changing the code |
 
 ## Python
 

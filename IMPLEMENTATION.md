@@ -450,47 +450,5 @@ flowchart TB
 There is no Rust core between Python and the GPU: a GPU backend goes from Python to Metal directly. The
 Python package lives in `python/siann/`, and maturin (the tool that builds Rust extensions for Python)
 compiles the Rust crate into it as `siann._cpu`; `pyproject.toml` at the top of the repository ties the
-two together. FAISS appears only in the benchmarks: siann does not call it.
-
-## Rules for changing the code
-
-- **Exact search is the oracle.** Every kernel and index is checked against NumPy's exact search
-  (`check_kernels.py`), and changes that should not move results are checked bit for bit against
-  outputs saved before the change.
-- **Every number from a committed script,** with its raw output in `benchmarks/results/` and its place in
-  [BENCHMARKS](BENCHMARKS.md), including the approaches that do not pay ([above](#what-does-not-pay)).
-- **A new default must be no slower than the old one on any measured case,** single queries, batches
-  of 100 and batches of 10,000 alike.
-- **Time each path by itself, warmed up.** A GPU call right after CPU calls runs up to 40% slower, and a
-  fresh index's first GPU calls are slower than later ones.
-- **Write each GPU kernel once,** in `siann._metal`: MLX and PyTorch run the same text, so the two
-  backends cannot drift apart.
-- **Pass sizes such as the batch size at run time, not as compile-time constants,** in GPU kernels:
-  compiled in, every new batch size recompiles them, 26-74 ms on top of a 1-4 ms search. Compile in only
-  what sizes an array in registers or threadgroup memory (k, threads per query) or a loop worth unrolling
-  (the dimension).
-- **Safe Rust.** No `unsafe` in siann's code; every case has a safe alternative (NumPy for BLAS
-  calls, a compare-and-select for the maximum, a buffer for float16, plain loops over contiguous bytes
-  for the integer path). The compiler turns plain loops into NEON instructions, and five rules keep
-  them fast:
-  1. **Check the assembly, not just the timing.** The compiler's choice of which loop to vectorize
-     decides the speed, and it is easy to see in the emitted instructions (`fabd.4s`, `udot`) and easy
-     to miss in a timing alone.
-  2. **Write a floating-point maximum as a comparison and select.** `f32::max` (and an integer maximum
-     on the float bits) is a reduction the compiler may reorder, so it vectorizes across dimensions and
-     L-infinity takes twice L1's time; the select keeps one running maximum per lane (1.4 times L1's
-     time).
-  3. **Choose the layout for the arithmetic.** Floating-point sums may not be reordered, so the blocked
-     layout (8 vectors per block, dimension by dimension) gets one running distance per lane. Integer
-     sums may be reordered, so for byte lists the integer path reads each vector's bytes contiguously,
-     where a plain loop compiles to 16-byte absolute differences (`uabd`) and the dot-product
-     instruction (`udot`); in the blocked layout the same arithmetic is no faster than float.
-  4. **Loop over flat slices.** Widening float16 over nested `[u16; 8]` blocks makes the compiler load
-     each value separately; over flat slices it is one 16-byte load per 8 values.
-  5. **Give one query's parallel work a thread pool of its own** (rayon's `ThreadPoolBuilder`, made once
-     per size): waking rayon's global pool costs about 100 microseconds per query, more than a split
-     saves at low nprobe.
-- **Why not call Accelerate from Rust?** Every call into a C library is `unsafe` in Rust. NumPy makes
-  the call safely, and Rust only ranks the products, reading NumPy's arrays in place through rust-numpy
-  (the PyO3 project's NumPy bindings), whose safe API keeps the `unsafe` inside the crate; copying the
-  products instead would cost about as much as FAISS's whole search.
+two together. FAISS appears only in the benchmarks: siann does not call it. [DEVELOPMENT](DEVELOPMENT.md)
+covers building, testing and the rules for changing the code.

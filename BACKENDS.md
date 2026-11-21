@@ -104,6 +104,6 @@ queries.
 
 The code relies on the compiler to turn plain loops into NEON instructions, without `unsafe` (which
 explicit NEON intrinsics would need); the rules that keep it fast are in
-[IMPLEMENTATION](IMPLEMENTATION.md#rules-for-changing-the-code). Rust has no stable float16 type (it exists
+[DEVELOPMENT](DEVELOPMENT.md#rules-for-changing-the-code). Rust has no stable float16 type (it exists
 only in nightly builds), so float16 lists are stored as their 16-bit patterns and widened in safe code
 (see [IMPLEMENTATION](IMPLEMENTATION.md#on-the-cpu), "float16 lists").
