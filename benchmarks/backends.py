@@ -15,7 +15,6 @@ timing.
 """
 import argparse
 import json
-import os
 import subprocess
 import sys
 import tempfile
@@ -29,8 +28,8 @@ L1_TILE = 16        # queries per tile for the broadcast L1 (its intermediate is
 L1_CHUNK = 25_000   # base vectors per chunk for the broadcast L1
 
 BACKENDS = ["faiss-cpu", "siann-rust-cpu", "mlx-custom-gpu", "torch-custom-mps",
-            "mlx-builtin-gpu", "mlx-compiled-gpu", "torch-builtin-mps", "jax-builtin-mps",
-            "mlx-builtin-cpu", "torch-builtin-cpu", "jax-builtin-cpu"]
+            "mlx-builtin-gpu", "mlx-compiled-gpu", "torch-builtin-mps",
+            "mlx-builtin-cpu", "torch-builtin-cpu"]
 
 
 # --- MLX, built-in operations ---------------------------------------------------------------------
@@ -132,49 +131,6 @@ def torch_custom(xb, xq: np.ndarray, k: int, metric: str) -> np.ndarray:
     return np.concatenate(out)
 
 
-# --- JAX, built-in operations (jax-mps translates JAX programs into MLX operations) ----------------
-
-_JAX = {}
-
-
-def _jax_fns():
-    """The jitted functions, made once per process so that each shape compiles once. The arrays are
-    arguments, not captured constants, which JAX would embed in every compilation."""
-    if not _JAX:
-        import jax
-        import jax.numpy as jnp
-        _JAX["norms"] = jax.jit(lambda b: jnp.sum(b * b, axis=1))
-        _JAX["l2"] = jax.jit(lambda q, b, n, k: jax.lax.top_k(-(n[None, :] - 2 * (q @ b.T)), k)[1],
-                             static_argnums=3)
-        _JAX["l1_chunk"] = jax.jit(lambda q, b: jnp.sum(jnp.abs(q[:, None, :] - b[None, :, :]), axis=2))
-        _JAX["linf_chunk"] = jax.jit(lambda q, b: jnp.max(jnp.abs(q[:, None, :] - b[None, :, :]), axis=2))
-        _JAX["topk"] = jax.jit(lambda d, k: jax.lax.top_k(-d, k)[1], static_argnums=1)
-    return _JAX
-
-
-def jax_builtin(xb, xq: np.ndarray, k: int, metric: str) -> np.ndarray:
-    import jax.numpy as jnp
-    f = _jax_fns()
-    if metric == "l2":
-        norms = f["norms"](xb)
-
-        def tile_fn(q):
-            return f["l2"](q, xb, norms, k)
-        tile = TILE
-    else:
-        chunks = [xb[c:c + L1_CHUNK] for c in range(0, xb.shape[0], L1_CHUNK)]
-
-        chunk_fn = f["linf_chunk"] if metric == "linf" else f["l1_chunk"]
-
-        def tile_fn(q):
-            return f["topk"](jnp.concatenate([chunk_fn(q, b) for b in chunks], axis=1), k)
-        tile = L1_TILE
-    pad = -len(xq) % tile   # pad to whole tiles, so that every tile has one shape and one compilation
-    xq_p = np.concatenate([xq, np.zeros((pad, xq.shape[1]), np.float32)])
-    out = [np.asarray(tile_fn(jnp.asarray(xq_p[s:s + tile]))) for s in range(0, len(xq_p), tile)]
-    return np.concatenate(out)[:len(xq)]
-
-
 def make_runner(backend: str, xb: np.ndarray, k: int, threads: int):
     """A function (queries, metric) -> neighbor indices, with the base vectors already on the device."""
     if backend == "siann-rust-cpu":
@@ -209,10 +165,6 @@ def make_runner(backend: str, xb: np.ndarray, k: int, threads: int):
         if backend == "torch-custom-mps":
             return lambda q, m: torch_custom(xb_t, q, k, m), f"torch {torch.__version__}"
         return lambda q, m: torch_builtin(xb_t, q, k, m), f"torch {torch.__version__}"
-    if backend.startswith("jax"):
-        import jax  # the platform is chosen by JAX_PLATFORMS, set by the parent process
-        xb_j = jax.device_put(xb)
-        return lambda q, m: jax_builtin(xb_j, q, k, m), f"jax {jax.__version__}"
     raise ValueError(backend)
 
 
@@ -300,11 +252,7 @@ def main() -> None:
         for b in backends:
             args = [sys.executable, __file__, "--backend", b, "--out", tmp] + [
                 f"--{f}={getattr(a, f)}" for f in ("n", "d", "q", "k", "threads", "metrics", "repeats", "dataset")]
-            env = dict(os.environ)
-            if b.startswith("jax"):
-                env["JAX_PLATFORMS"] = b.rsplit("-", 1)[1]
-            r = subprocess.run(args, check=False, capture_output=True, text=True, encoding="utf-8",
-                               env=env)
+            r = subprocess.run(args, check=False, capture_output=True, text=True, encoding="utf-8")
             if r.returncode != 0:
                 print(f"  {b}: failed\n{r.stderr[-2000:]}")
                 continue

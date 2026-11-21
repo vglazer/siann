@@ -6,15 +6,14 @@ theme:
   name: material
 nav:
   - Home: README.md
-  - Architecture: ARCHITECTURE.md
-  - Algorithms: ALGORITHMS.md
+  - Implementation: IMPLEMENTATION.md
   - Backends: BACKENDS.md
   - Datasets: DATASETS.md
   - Benchmarks: BENCHMARKS.md
   - Tuning: TUNING.md
 markdown_extensions:
   - tables
-  - pymdownx.superfences:   # renders the Mermaid diagrams in ARCHITECTURE.md
+  - pymdownx.superfences:   # renders the Mermaid diagrams in IMPLEMENTATION.md
       custom_fences:
         - name: mermaid
           class: mermaid

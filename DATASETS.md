@@ -37,7 +37,7 @@ an image. It is the classic benchmark for L2 search, and siann also uses it for 
 - **128 dimensions,** a multiple of the kernels' 16-dimension tiles, and the size at which FAISS's
   L2 is fast by default (see below).
 - **The coordinates fit in a byte,** so IVF lists can be stored as uint8 (a quarter of float32's
-  memory) or float16 with nothing lost (see [ALGORITHMS](ALGORITHMS.md), "List storage").
+  memory) or float16 with nothing lost (see [IMPLEMENTATION](IMPLEMENTATION.md), "List storage").
 - **The queries are integers too,** so FAISS's uint8 index, which rounds queries to integers, is
   exact on SIFT (see [BACKENDS](BACKENDS.md)).
 - **L-infinity distances are integers from 0 to 218 too,** so they tie even more often than L1's; the

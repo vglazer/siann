@@ -2,7 +2,7 @@
 
 The fused L1 (and L-infinity) kernel computes each query's distances and selection in one pass, with no
 distance matrix: it reads the whole base once per query and is limited by memory speed, at a third of
-the tiled kernel's speed (ALGORITHMS.md, "What does not pay").
+the tiled kernel's speed (IMPLEMENTATION.md, "What does not pay").
 """
 import mlx.core as mx
 

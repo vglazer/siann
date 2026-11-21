@@ -2,13 +2,72 @@
 
 *Part of the [siann documentation](README.md#documentation).*
 
-siann decides where each search runs from thresholds measured on one machine and a few datasets. This
-page covers what each threshold decides, its default and where that came from, and how to measure it on
-your own data and hardware with `siann.tune`. Tuning changes only speed: every route returns the same
-neighbors, checked against exact search.
+siann makes its choices from measurements, some taken on your data when an index is built and some on one
+machine and a few datasets. This page covers what each choice depends on, what it is measured on by
+default, and what to do when the defaults do not fit your data or your machine.
 
-Here *tuning* means measuring siann's routing on your data and machine. An index's own *calibration*,
-finding the settings that reach a recall target, is a different thing and needs no tuning.
+Two words name the two kinds of measurement. **Calibration** makes an approximate index meet its recall
+target: it finds the fewest lists a query must scan (nprobe) on a sample of queries. **Tuning** measures
+where searches run fastest, on the CPU or the GPU and with which scan; it changes only speed, since every
+route returns the same neighbors, checked against exact search. The two meet in approximate search, where
+the same sample of queries calibrates the index and times its routes.
+
+## What siann decides, and what you can do
+
+| Decision | Measured on, by default | To improve it |
+| --- | --- | --- |
+| nprobe, for a recall target | 1,000 of the index's own vectors, when it is built | pass `calibration_queries=`, a sample of your queries |
+| Exact search or an IVF | the same sample, both timed | pass `calibration_queries=`; `kind="exact"` or `"ivf"` to choose |
+| Approximate search: CPU or GPU, which scan | the same sample, at 1 to 4,096 queries per batch | pass `calibration_queries=`; a profile's `ivf` thresholds to fix them |
+| Exact search: CPU or GPU | siann's default profile, from an Apple M3 Max and about a million vectors | `siann.tune(xb)` on your data and machine |
+
+Everything here is optional: `siann.Index(xb, metric)` and `siann.Index(xb, metric, recall=0.95)` need
+nothing more. `index.plan` reports each choice, and what it was measured on.
+
+## Calibration: meeting the recall target on your queries
+
+`siann.Index(xb, metric, recall=0.95)` finds the nprobe that reaches the target on a sample of 1,000
+queries. Without `calibration_queries=`, the sample is the index's own vectors (each one's own match left
+out), and the target holds for queries like them. Real queries often differ, in either direction, and then
+calibrating on them pays (a million vectors, target 0.95, recall measured on 9,000 other queries;
+[BENCHMARKS](BENCHMARKS.md#approximate-search-through-siannindex)):
+
+| Dataset | Calibrated on its own vectors | Calibrated on 1,000 queries |
+| --- | --- | --- |
+| SIFT1M, L2 | nprobe 38, recall 0.940: below the target | nprobe 46, recall 0.955 |
+| Music-100, inner product | nprobe 129, recall 0.986: five times the lists needed | nprobe 25, recall 0.946, 2.0-2.8 times faster |
+
+Pass queries when you have them, drawn like the ones the index will serve; 1,000 are used. To trade recall
+for speed by hand, `search(..., nprobe=)` overrides the calibrated value for one search, and `kind=` picks
+exact search or the IVF regardless of which was faster.
+
+## Approximate search: where each batch runs
+
+Where an IVF search runs fastest depends on how many lists its queries scan, so no fixed threshold fits.
+On SIFT1M at nprobe 46 the CPU is faster up to 16 queries per batch and the GPU's query-major scan up to
+1,024; on GloVe-100 at nprobe 370 the GPU wins from 8 queries and its list-major scan at every size; on
+Music-100 at nprobe 25 the CPU wins up to 64 and the GPU's query-major scan at every size measured, up to
+4,096 (`benchmarks/ivf_routing.py`).
+
+So each index times its scans when it is built, on 1 to 4,096 of its calibration queries, in about one to
+four seconds for a million vectors, and the plan reports the thresholds. A measured route replaces the
+default (single queries on the CPU, the GPU's query-major scan below 1,000 queries, its list-major scan
+from 1,000) only where it was at least 10% faster. Like calibration, the timing is only as representative
+as the queries: on its own vectors, Music-100's index sends batches of 512 to the list-major scan, which
+runs at 0.77 times the speed of the default on real queries. Passing `calibration_queries=` fixes both.
+
+To fix the thresholds instead, give a profile thresholds of its own: `siann.tune(xb, xq, recall=0.95)`
+measures them on your data, or set them by hand:
+
+```python
+p = siann.Profile(siann.DEFAULT_PROFILE.cpu_below, "my thresholds",
+                  ivf={"cpu_below": 32, "gpu_list_from": 2000, "cpu_list_from": 10 ** 9})
+index = siann.Index(xb, "l2", recall=0.95, profile=p)
+```
+
+`cpu_below` is the batch size from which searches go to the GPU (a single query on the CPU is split over 4
+threads), and `gpu_list_from` and `cpu_list_from` the sizes from which each device reads each list once
+for all the queries that probe it.
 
 ## Exact search: GPU or CPU
 
@@ -39,40 +98,6 @@ tune.
 divides its work among threads 32 queries at a time), so their CPU throughput stays flat from 4 to 32
 queries (169 and 121 per second on SIFT1M), and the GPU wins every batch size.
 
-## Approximate search: the recall target and routing
-
-**Calibrate on representative queries (optional).** `siann.Index(xb, metric, recall=0.95)` finds the nprobe
-that reaches the target on a sample of 1,000 queries, with nothing more to set. Without
-`calibration_queries=`, the sample is the index's own vectors, and the target holds for queries like them; real queries often differ. On SIFT1M its
-own vectors gave 0.940 on the real queries, on Music-100 0.986 at five times the nprobe needed; calibrated
-on 1,000 real queries, both came within 0.005 of 0.95 on the rest, and Music-100's index ran 2.0-2.8 times
-faster (BENCHMARKS.md, "Approximate search through siann.Index"). `search(..., nprobe=)` overrides the calibrated value for one search.
-
-**Routing is measured by each index.** Where an IVF search should run depends on how many lists its
-queries probe, so no fixed threshold fits: on SIFT1M at nprobe 46 the CPU is faster up to 16 queries per
-batch and the GPU's query-major scan up to 1,024; on GloVe-100 at nprobe 370 the GPU wins from 8
-queries and its list-major scan at every size; on Music-100 at nprobe 25 the CPU wins up to 64 and the
-GPU's query-major scan at every size measured, up to 4,096 (`benchmarks/ivf_routing.py`). So each index
-times its scans on 1 to 4,096 of its calibration queries when it is built, in about one to four seconds
-for a million vectors, and the plan reports the thresholds. A measured route replaces the default (single
-queries on the CPU, the GPU's query-major scan below 1,000 queries, its list-major scan from 1,000) only
-where it was at least 10% faster. Like calibration, the timing is only as representative as the queries:
-without `calibration_queries=` it runs on the index's own vectors, which on Music-100 sent batches of 512 to
-the list-major scan at 0.77 times the speed of the default on real queries.
-
-To set the thresholds yourself, give a profile thresholds of its own: `siann.tune(xb, recall=0.95)`
-measures them on your data, or by hand:
-
-```python
-p = siann.Profile(siann.DEFAULT_PROFILE.cpu_below, "my thresholds",
-                  ivf={"cpu_below": 32, "gpu_list_from": 2000, "cpu_list_from": 10 ** 9})
-index = siann.Index(xb, "l2", recall=0.95, profile=p)
-```
-
-`cpu_below` is the batch size from which searches go to the GPU (a single query on the CPU is split over 4
-threads), and `gpu_list_from` and `cpu_list_from` the sizes from which each device reads each list once
-for all the queries that probe it.
-
 ## How to tune
 
 ```python
@@ -88,20 +113,26 @@ profile.save("profile.json")                            # and siann.Profile.load
 - **Data:** `siann.tune(xb)` times both devices on all of your base vectors, since the crossover depends
   on the collection's size, with a sample of them as queries. Pass `xq=` to time with real queries.
 - **What it measures:** `metrics=` (all five by default) at `batches=` (1 to 1,024 queries, doubling), with
-  `k=10`. Ask only for the metrics you use: each takes its share of the budget.
+  `k=10`. Ask only for the metrics you use: each takes its share of the budget. With `recall=`, it also
+  builds an IVF calibrated to that recall (on `xq` if given) and measures its routes at 1 to 4,096
+  queries.
 - **Time:** `budget=60` seconds in all. Each batch size is timed on each device as the median of three
   calls after a warm-up call, which also compiles the GPU kernels for that shape; a tight budget cuts the
   repeats, not the batch sizes.
 - **The threshold** for a metric is the smallest measured batch size from which the GPU is at least as fast
   as the CPU at every larger measured size. Repeated runs differ by up to 15%, so near a crossover the
   threshold can move by a step; a larger budget steadies it.
+- **A latency budget:** `print(profile)` lists the measured queries per second of every path at each batch
+  size, so you can see which batch sizes fit.
 - **Applying it:** a profile takes effect only where you pass it, with `profile=` or
   `siann.use_profile`, so results never depend on a file you forgot about. `index.plan` names the profile
   and the threshold in use, and `index.route(batch)` says where a batch of that size goes.
 - **Pinning a device:** `device="cpu"` or `"gpu"`, for an index or for one search, overrides any profile.
 
-To rerun the measurement behind siann's default, on your own copy of the datasets:
+To rerun the measurements behind siann's defaults, on your own copy of the datasets:
 
 ```sh
-cd benchmarks && uv run --group bench python exact_routing.py
+cd benchmarks
+uv run --group bench python exact_routing.py    # exact search's default profile
+uv run --group bench python ivf_routing.py      # approximate search's routes, by dataset
 ```

@@ -7,13 +7,12 @@ is against FAISS's strongest option for the case, its compressed indexes include
 returning exactly FAISS's neighbors and approximate search compared at matched recall. Each section
 names the scripts that reproduce it; they are in [benchmarks/](benchmarks/), and their raw output is in
 [benchmarks/results/](benchmarks/results/). The [README](README.md#which-to-use-and-how-it-compares) sums up the
-comparison, and [ARCHITECTURE](ARCHITECTURE.md) explains where the speed comes from.
+comparison, and [IMPLEMENTATION](IMPLEMENTATION.md) explains where the speed comes from.
 
 ## Setup
 
 - **Machine:** Apple M3 Max (12 performance and 4 efficiency cores, 64 GB, 400 GB/s), 16 CPU threads.
-- **Software:** FAISS 1.16 (CPU), MLX 0.32.4, PyTorch 2.15.0, JAX 0.11.2 with jax-mps 0.11.1, NumPy
-  with Apple's Accelerate.
+- **Software:** FAISS 1.16 (CPU), MLX 0.32.4, PyTorch 2.15.0, NumPy with Apple's Accelerate.
 - **Data:** SIFT1M, GloVe-100 (normalized, so that L2 ranks as cosine; `glove-raw` unnormalized, for
   inner product) and Gaussian vectors ([DATASETS](DATASETS.md)). k = 10 throughout.
 - **Correctness:** every kernel and index is checked against NumPy's exact search (`check_kernels.py`,
@@ -150,7 +149,7 @@ unaffected; HNSW does not use flat search.
 *Reproduce with `backends.py`.*
 
 What a user of each framework would write: L2 as norms minus twice a matrix multiply, L1 as a
-broadcast absolute difference (MLX, JAX) or `torch.cdist` (PyTorch), then the framework's top-k.
+broadcast absolute difference (MLX) or `torch.cdist` (PyTorch), then the framework's top-k.
 1,000,000 x 128 Gaussian vectors, 1,000 queries:
 
 | Backend | L2 | vs FAISS | L1 | vs FAISS |
@@ -159,15 +158,10 @@ broadcast absolute difference (MLX, JAX) or `torch.cdist` (PyTorch), then the fr
 | MLX built-in (GPU) | 0.65 s | 0.60x | 7.20 s | 0.25x |
 | MLX compiled (GPU) | 0.63 s | 0.61x | 4.37 s | 0.42x |
 | PyTorch built-in (MPS) | 0.70 s | 0.55x | 4.72 s | 0.39x |
-| JAX built-in (jax-mps) | 0.67 s | 0.58x | 4.56 s | 0.40x |
 | PyTorch built-in (CPU) | 1.10 s | 0.35x | 4.52 s | 0.40x |
-| JAX built-in (XLA, CPU) | 1.34 s | 0.29x | 3.95 s | 0.46x |
 | MLX built-in (CPU) | 6.8 s | 0.06x | 32.5 s | 0.06x |
 
-JAX runs on the Mac's GPU through [jax-mps](https://github.com/tillahoffmann/jax-mps), a third-party
-plugin that translates JAX programs into MLX operations; it has no route to custom kernels (Pallas,
-JAX's kernel language, targets CUDA and TPU), so built-in operations are all it offers there. The
-ratios hold on SIFT1M and GloVe-100 (0.34-0.65x on the GPU). Built-in operations lose to FAISS's CPU
+The ratios hold on SIFT1M and GloVe-100 (0.34-0.65x on the GPU). Built-in operations lose to FAISS's CPU
 everywhere, on the GPU too: the GPU's advantage comes entirely from custom kernels.
 
 ## Approximate search: batches
@@ -716,8 +710,7 @@ cost of about 0.2 ms per call.
 ## Reproducing
 
 With [Rust](https://rustup.rs) and [uv](https://docs.astral.sh/uv/) installed, `uv sync --group bench`
-builds siann, Rust extension included, with the benchmarks' dependencies (FAISS, PyTorch, jax-mps,
-h5py); the datasets go in `data/` ([DATASETS](DATASETS.md)). Then, from `benchmarks/`:
+builds siann, Rust extension included, with the benchmarks' dependencies (FAISS, PyTorch, h5py); the datasets go in `data/` ([DATASETS](DATASETS.md)). Then, from `benchmarks/`:
 
 ```sh
 uv run --group bench python check_kernels.py                     # every kernel against NumPy

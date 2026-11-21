@@ -5,8 +5,10 @@
 
 **Fast nearest-neighbor search on Apple silicon,** exact or to a recall target, for dense NumPy vectors,
 on the GPU and the CPU, by Euclidean (L2), cosine, inner product, Manhattan (L1) and Chebyshev (L-infinity)
-distance. Each search runs where it is fastest for its batch size and metric, and `index.plan` says why;
-`siann.tune` measures the choice on your own data and hardware.
+distance. Give siann a recall target rather than settings: it calibrates the index to your data, measures
+where each batch size runs fastest, on the CPU or the GPU, and `index.plan` says what it chose and why. Each
+path it chooses between is fast in its own right, through custom GPU kernels and CPU code laid out for the
+hardware ([IMPLEMENTATION](IMPLEMENTATION.md)).
 
 Exact search beats FAISS on the CPU and mlxvs on the GPU almost everywhere, most of all for L1 and
 L-infinity. Where another library is faster, as graph indexes are for approximate search on some data,
@@ -37,12 +39,11 @@ To run the quickstart notebook, clone the repository and, from its folder,
 | --- | --- |
 | [Quickstart notebook](https://github.com/vglazer/siann/blob/main/examples/quickstart.ipynb) | The metrics, scores, plans, devices and tuning, hands-on |
 | [siann.readthedocs.io](https://siann.readthedocs.io) | These pages, online |
-| [ARCHITECTURE](ARCHITECTURE.md) | Why siann is faster than FAISS (and where it is not), with diagrams of how the pieces fit and which path a search takes |
-| [ALGORITHMS](ALGORITHMS.md) | How exact search and IVF work on the GPU and the CPU, and what does not pay |
+| [IMPLEMENTATION](IMPLEMENTATION.md) | Why siann is fast: how it chooses the fastest way to meet a recall target, the search methods, the kernels in detail, where other libraries are faster, and what does not pay |
 | [BACKENDS](BACKENDS.md) | MLX, PyTorch MPS, FAISS and siann's Rust code: what each offers, and their pitfalls |
 | [DATASETS](DATASETS.md) | SIFT1M, GloVe-100, Music-100, DBpedia OpenAI and Gaussian vectors: sources, preparation and quirks |
 | [BENCHMARKS](BENCHMARKS.md) | Which path to use for each workload, and every measurement behind it, with the scripts that reproduce them |
-| [TUNING](TUNING.md) | The routing thresholds siann uses, where its defaults come from, and how to measure them on your data and hardware |
+| [TUNING](TUNING.md) | Calibration and tuning: what siann measures, on what, and how to measure it on your own queries, data and hardware |
 
 ## Python
 
@@ -130,7 +131,7 @@ there.
 | L1 and L-infinity | mlxvs has neither; against FAISS on the CPU, the only alternative, **18-49x** exact |
 
 [BENCHMARKS](BENCHMARKS.md) has the measurements behind each row and how to rerun them, and
-[ARCHITECTURE](ARCHITECTURE.md) explains where the speed comes from.
+[IMPLEMENTATION](IMPLEMENTATION.md) explains where the speed comes from.
 
 ## License
 

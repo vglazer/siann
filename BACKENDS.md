@@ -97,13 +97,13 @@ strongest CPU method for approximate search), plain and compressed.
 A small extension in safe Rust (`crates/siann-py`, built into the package as `siann._cpu`), exposed to Python through PyO3 (the bridge that
 lets Python call Rust) and threaded with rayon (Rust's data-parallelism library): exact search and IVF
 for L1, L2, L-infinity and inner product, with the blocked layout described in
-[ALGORITHMS](ALGORITHMS.md), IVF lists stored as float32, float16 or uint8, and `L2TopK`, which ranks
+[IMPLEMENTATION](IMPLEMENTATION.md#on-the-cpu), IVF lists stored as float32, float16 or uint8, and `L2TopK`, which ranks
 NumPy's BLAS products for exact L2. It exists for the cases where FAISS and the frameworks' CPU
 backends fall short: exact L1 at 3.8-4.3 times FAISS, L-infinity at 7.3 times, and IVF for single
 queries.
 
 The code relies on the compiler to turn plain loops into NEON instructions, without `unsafe` (which
 explicit NEON intrinsics would need); the rules that keep it fast are in
-[ARCHITECTURE](ARCHITECTURE.md#rules-for-changing-the-code). Rust has no stable float16 type (it exists
+[IMPLEMENTATION](IMPLEMENTATION.md#rules-for-changing-the-code). Rust has no stable float16 type (it exists
 only in nightly builds), so float16 lists are stored as their 16-bit patterns and widened in safe code
-(see [ALGORITHMS](ALGORITHMS.md), "List storage").
+(see [IMPLEMENTATION](IMPLEMENTATION.md#on-the-cpu), "float16 lists").
