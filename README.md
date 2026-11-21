@@ -117,3 +117,7 @@ there.
 | [DATASETS](DATASETS.md) | SIFT1M, GloVe-100, Music-100, DBpedia OpenAI and Gaussian vectors: sources, preparation and quirks |
 | [BENCHMARKS](BENCHMARKS.md) | Which path to use for each workload, and every measurement behind it, with the scripts that reproduce them |
 | [TUNING](TUNING.md) | The routing thresholds siann uses, where its defaults come from, and how to measure them on your data and hardware |
+
+## License
+
+MIT ([LICENSE](https://github.com/vglazer/siann/blob/main/LICENSE))
