@@ -5,91 +5,30 @@ row in registers (neighbouring threads read neighbouring elements); a small argp
 T * k survivors then gives the final k.
 
 L1 and L-infinity (the largest coordinate difference) share their kernels: each distance is built up
-one coordinate pair (q, x) at a time by `combine` (COMBINE below), a sum of |q - x| for L1 and a
+one coordinate pair (q, x) at a time by `combine` (COMBINE, in siann._metal, with the kernels' bodies), a sum of |q - x| for L1 and a
 running maximum of it for L-infinity. Exact L2 and inner product are matrix multiplies instead, but
 the IVF scans use `combine` for every metric, inner product included (a running sum of -q x, so that
 smaller is nearer, as for the distances).
 """
 import mlx.core as mx
 
-# How each metric folds one coordinate pair (q, x) into a running distance a, as a Metal header.
-# Inner product ("ip") is negated, so that, as for the distances, smaller is nearer.
-COMBINE = {
-    "l1": "inline float combine(float a, float q, float x) { return a + metal::abs(q - x); }\n",
-    "l2": "inline float combine(float a, float q, float x) { float e = q - x; return a + e * e; }\n",
-    "linf": "inline float combine(float a, float q, float x) { return metal::max(a, metal::abs(q - x)); }\n",
-    "ip": "inline float combine(float a, float q, float x) { return a - q * x; }\n",
-}
+from ._metal import _INSERT, _KEEP_BEST, _WRITE, COMBINE, SELECT, TILED, Kernel  # noqa: F401 (re-exported)
 
-_KEEP_BEST = """
-    float best[K];
-    int where[K];
-    for (int a = 0; a < K; ++a) { best[a] = INFINITY; where[a] = -1; }
-"""
-_INSERT = """
-        if (v < best[K - 1]) {
-            int p = K - 1;
-            while (p > 0 && best[p - 1] > v) { best[p] = best[p - 1]; where[p] = where[p - 1]; --p; }
-            best[p] = v;
-            where[p] = int(j);
-        }
-"""
-_WRITE = """
-    for (int a = 0; a < K; ++a) {
-        out_val[(i * T + t) * K + a] = best[a];
-        out_idx[(i * T + t) * K + a] = where[a];
-    }
-"""
 
-_select = mx.fast.metal_kernel(
-    name="select_k", input_names=["dist"], output_names=["out_val", "out_idx"],
-    source="""
-    uint t = thread_position_in_grid.x;
-    uint i = thread_position_in_grid.y;
-    if (t >= T || i >= Q) return;
-""" + _KEEP_BEST + """
-    for (uint j = t; j < N; j += T) {
-        float v = dist[i * N + j];
-""" + _INSERT + """
-    }
-""" + _WRITE)
+def mlx_kernel(kernel: Kernel, header: str = "", suffix: str = ""):
+    """An MLX kernel from a shared body; its run-time sizes go in the last input, ``sz``."""
+    return mx.fast.metal_kernel(name=kernel.name + suffix, input_names=[n for n, _ in kernel.inputs] + ["sz"],
+                                output_names=[n for n, _ in kernel.outputs], source=kernel.mlx_source(),
+                                header=header)
 
-# A tiled L1 (or L-infinity) distance matrix, like a matrix multiply: each threadgroup of 16 x 16
-# threads computes a 64 x 64 block of distances (4 x 4 per thread, in registers), staging 16 dimensions
-# of 64 queries and 64 base vectors at a time in threadgroup memory, so each base vector is read once
-# per 64 queries. Padding is zero in both, a difference of 0 that changes neither metric.
-_TILED = """
-    const uint B = 64, S = 16, R = 4;
-    threadgroup float qs[B][S + 1];
-    threadgroup float xs[B][S + 1];
-    uint tx = thread_position_in_threadgroup.x, ty = thread_position_in_threadgroup.y;
-    uint col0 = threadgroup_position_in_grid.x * B, row0 = threadgroup_position_in_grid.y * B;
-    uint lane = ty * 16 + tx;
-    float acc[R][R];
-    for (uint a = 0; a < R; ++a) for (uint b = 0; b < R; ++b) acc[a][b] = 0.0f;
-    for (uint d0 = 0; d0 < D; d0 += S) {
-        for (uint e = lane; e < B * S; e += 256) {
-            uint r = e / S, c = e % S;
-            uint qi = row0 + r, xi = col0 + r, dd = d0 + c;
-            qs[r][c] = (qi < Q && dd < D) ? q[qi * D + dd] : 0.0f;
-            xs[r][c] = (xi < N && dd < D) ? x[xi * D + dd] : 0.0f;
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        for (uint c = 0; c < S; ++c) {
-            float qv[R], xv[R];
-            for (uint a = 0; a < R; ++a) { qv[a] = qs[ty * R + a][c]; xv[a] = xs[tx * R + a][c]; }
-            for (uint a = 0; a < R; ++a) for (uint b = 0; b < R; ++b) acc[a][b] = combine(acc[a][b], qv[a], xv[b]);
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    for (uint a = 0; a < R; ++a) for (uint b = 0; b < R; ++b) {
-        uint qi = row0 + ty * R + a, xi = col0 + tx * R + b;
-        if (qi < Q && xi < N) out[qi * N + xi] = acc[a][b];
-    }
-"""
-_tiled = {m: mx.fast.metal_kernel(name=f"{m}_tiled", input_names=["q", "x"], output_names=["out"],
-                                  source=_TILED, header=COMBINE[m])
-          for m in ("l1", "linf")}
+
+def sz(*sizes: int) -> mx.array:
+    """The run-time sizes a kernel reads from ``sz``, in its order."""
+    return mx.array(sizes, dtype=mx.uint32)
+
+
+_select = mlx_kernel(SELECT)
+_tiled = {m: mlx_kernel(TILED, COMBINE[m], f"_{m}") for m in ("l1", "linf")}
 
 
 def dist(q: mx.array, x: mx.array, metric: str) -> mx.array:
@@ -97,7 +36,7 @@ def dist(q: mx.array, x: mx.array, metric: str) -> mx.array:
     nq, d = q.shape
     n = x.shape[0]
     groups = ((n + 63) // 64, (nq + 63) // 64)
-    return _tiled[metric](inputs=[q, x], template=[("N", n), ("Q", nq), ("D", d)],
+    return _tiled[metric](inputs=[q, x, sz(n, nq)], template=[("D", d)],
                           grid=(groups[0] * 16, groups[1] * 16, 1), threadgroup=(16, 16, 1),
                           output_shapes=[(nq, n)], output_dtypes=[mx.float32])[0]
 
@@ -118,7 +57,7 @@ def _finish(vals: mx.array, idx: mx.array, q: int, k: int) -> mx.array:
 def select_k(dist: mx.array, k: int, threads: int = 512) -> mx.array:
     """The column indices of the k smallest entries of each row, in increasing order."""
     q, n = dist.shape
-    vals, idx = _select(inputs=[dist], template=[("N", n), ("Q", q), ("T", threads), ("K", k)],
+    vals, idx = _select(inputs=[dist, sz(n, q)], template=[("T", threads), ("K", k)],
                         grid=(threads, q, 1), threadgroup=(256, 1, 1),
                         output_shapes=[(q * threads * k,), (q * threads * k,)], output_dtypes=[mx.float32, mx.int32])
     return _finish(vals, idx, q, k)

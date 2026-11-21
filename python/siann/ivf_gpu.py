@@ -10,135 +10,16 @@ threads per query walk its lists and merge their best k inside the kernel) or th
 import mlx.core as mx
 import numpy as np
 
+from ._metal import COMBINE, list_scan, scan, scan_merged
 from .ivf_build import build_lists
-from .knn_kernels import COMBINE, _finish, dist, select_k
+from .knn_kernels import _finish, dist, mlx_kernel, select_k, sz
 
-SCAN = """
-    uint t = thread_position_in_grid.x;
-    uint i = thread_position_in_grid.y;
-    if (t >= T || i >= Q) return;
-    float best[K];
-    int where[K];
-    for (int a = 0; a < K; ++a) { best[a] = INFINITY; where[a] = -1; }
-    for (uint p = 0; p < P; ++p) {
-        int l = probes[i * P + p];
-        for (int j = offsets[l] + int(t); j < offsets[l + 1]; j += int(T)) {
-            float v = 0.0f;
-            for (uint d = 0; d < D; ++d) { v = combine(v, q[i * D + d], x[uint(j) * D + d]); }
-            if (v < best[K - 1]) {
-                int s = K - 1;
-                while (s > 0 && best[s - 1] > v) { best[s] = best[s - 1]; where[s] = where[s - 1]; --s; }
-                best[s] = v;
-                where[s] = j;
-            }
-        }
-    }
-    for (int a = 0; a < K; ++a) {
-        out_val[(i * T + t) * K + a] = best[a];
-        out_idx[(i * T + t) * K + a] = where[a];
-    }
-"""
-# The query-major scan with the merge inside the kernel: each query's T threads form one threadgroup
-# (T a power of two up to 256); after scanning, each thread's sorted best K goes to threadgroup memory,
-# and the lists are merged pairwise in log2(T) steps (two sorted lists of K into one, the left first
-# on ties), so the kernel writes only K results per query, sorted.
-SCAN_MERGED = SCAN.split("    for (int a = 0; a < K; ++a) {\n        out_val")[0].replace(
-    "    if (t >= T || i >= Q) return;\n", "") + """
-    threadgroup float tv[T * K];
-    threadgroup int ti[T * K];
-    for (int a = 0; a < K; ++a) { tv[t * K + a] = best[a]; ti[t * K + a] = where[a]; }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint stride = T / 2; stride > 0; stride /= 2) {
-        if (t < stride) {
-            float mv[K];
-            int mi[K];
-            uint a0 = t * K, b0 = (t + stride) * K;
-            int ia = 0, ib = 0;
-            for (int c = 0; c < K; ++c) {
-                float va = tv[a0 + ia], vb = tv[b0 + ib];
-                if (va <= vb) { mv[c] = va; mi[c] = ti[a0 + ia]; ++ia; }
-                else { mv[c] = vb; mi[c] = ti[b0 + ib]; ++ib; }
-            }
-            for (int c = 0; c < K; ++c) { tv[a0 + c] = mv[c]; ti[a0 + c] = mi[c]; }
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (t == 0) {
-        for (int a = 0; a < K; ++a) { out_val[i * K + a] = tv[a]; out_idx[i * K + a] = ti[a]; }
-    }
-"""
 METRICS = ("l1", "l2", "linf", "ip")
-SCANS = {m: mx.fast.metal_kernel(name=f"ivf_scan_{m}", input_names=["q", "x", "offsets", "probes"],
-                                 output_names=["out_val", "out_idx"], source=SCAN, header=COMBINE[m])
-         for m in METRICS}
-SCANS_MERGED = {m: mx.fast.metal_kernel(name=f"ivf_scan_merged_{m}", input_names=["q", "x", "offsets", "probes"],
-                                        output_names=["out_val", "out_idx"], source=SCAN_MERGED, header=COMBINE[m])
-                for m in METRICS}
-
-
-# List-major scan: one threadgroup per work item, a list and up to QB of the queries probing it.
-# 256 threads = QB queries x LANES lanes; the queries and XB of the list's vectors at a time are staged
-# through threadgroup memory S dimensions at a time, so each list vector is read once per QB queries.
-# Each thread keeps the best K for its query; output is per (query, probe slot, lane).
-LIST_MAJOR = """
-    const uint QB = 16, LANES = 16, XB = 64, S = 16, R = XB / LANES;
-    threadgroup float qs[QB][S + 1];
-    threadgroup float xs[XB][S + 1];
-    uint l = threadgroup_position_in_grid.x;
-    uint tid = thread_position_in_threadgroup.x;
-    uint qa = tid / LANES, lane = tid % LANES;
-    int x0 = offsets[l], x1 = offsets[l + 1];
-    int first = list_first[l], total = list_count[l];
-    for (int c0 = 0; c0 < total; c0 += int(QB)) {
-    int start = first + c0, count = min(int(QB), total - c0);
-    bool active = int(qa) < count;
-    int pair = active ? pair_ids[start + int(qa)] : 0;
-    float best[K];
-    int where[K];
-    for (int a = 0; a < K; ++a) { best[a] = INFINITY; where[a] = -1; }
-    for (int base = x0; base < x1; base += int(XB)) {
-        float acc[R];
-        for (uint r = 0; r < R; ++r) acc[r] = 0.0f;
-        for (uint d0 = 0; d0 < D; d0 += S) {
-            for (uint e = tid; e < QB * S; e += 256) {
-                uint r = e / S, c = e % S;
-                qs[r][c] = (int(r) < count && d0 + c < D) ? q[uint(pair_ids[start + int(r)] / int(P)) * D + d0 + c] : 0.0f;
-            }
-            for (uint e = tid; e < XB * S; e += 256) {
-                uint r = e / S, c = e % S;
-                int j = base + int(r);
-                xs[r][c] = (j < x1 && d0 + c < D) ? x[uint(j) * D + d0 + c] : 0.0f;
-            }
-            threadgroup_barrier(mem_flags::mem_threadgroup);
-            for (uint c = 0; c < S; ++c) {
-                float qv = qs[qa][c];
-                for (uint r = 0; r < R; ++r) acc[r] = combine(acc[r], qv, xs[lane + r * LANES][c]);
-            }
-            threadgroup_barrier(mem_flags::mem_threadgroup);
-        }
-        for (uint r = 0; r < R; ++r) {
-            int j = base + int(lane + r * LANES);
-            float v = acc[r];
-            if (active && j < x1 && v < best[K - 1]) {
-                int s = K - 1;
-                while (s > 0 && best[s - 1] > v) { best[s] = best[s - 1]; where[s] = where[s - 1]; --s; }
-                best[s] = v;
-                where[s] = j;
-            }
-        }
-    }
-    if (active) {
-        for (int a = 0; a < K; ++a) {
-            out_val[(uint(pair) * LANES + lane) * K + a] = best[a];
-            out_idx[(uint(pair) * LANES + lane) * K + a] = where[a];
-        }
-    }
-    }
-"""
-LIST_SCANS = {m: mx.fast.metal_kernel(
-    name=f"ivf_list_scan_{m}", input_names=["q", "x", "offsets", "pair_ids", "list_first", "list_count"],
-    output_names=["out_val", "out_idx"], source=LIST_MAJOR, header=COMBINE[m])
-    for m in METRICS}
+# The scans' bodies are siann._metal's, shared with the PyTorch port; MLX infers the lists' element type
+# (float32, float16 or uint8) from the array passed.
+SCANS = {m: mlx_kernel(scan("float"), COMBINE[m], f"_{m}") for m in METRICS}
+SCANS_MERGED = {m: mlx_kernel(scan_merged("float"), COMBINE[m], f"_{m}") for m in METRICS}
+LIST_SCANS = {m: mlx_kernel(list_scan("float"), COMBINE[m], f"_{m}") for m in METRICS}
 
 
 def coarse_dist(q, centroids, cnorms, metric):
@@ -202,15 +83,15 @@ class GpuIVF:
         if merge == "kernel" and threads <= 256 and threads & (threads - 1) == 0 and threads * k * 8 <= 32768:
             # the merge inside the scan kernel: K sorted results per query
             _, idx = SCANS_MERGED[self.metric](
-                inputs=[q, self.x, self.offsets, probes],
-                template=[("Q", nq), ("D", d), ("P", nprobe), ("T", threads), ("K", k)],
+                inputs=[q, self.x, self.offsets, probes, sz(nq, nprobe)],
+                template=[("D", d), ("T", threads), ("K", k)],
                 grid=(threads, nq, 1), threadgroup=(threads, 1, 1),
                 output_shapes=[(nq * k,), (nq * k,)], output_dtypes=[mx.float32, mx.int32])
             local = idx.reshape(nq, k)
         else:
             vals, idx = SCANS[self.metric](
-                inputs=[q, self.x, self.offsets, probes],
-                template=[("Q", nq), ("D", d), ("P", nprobe), ("T", threads), ("K", k)],
+                inputs=[q, self.x, self.offsets, probes, sz(nq, nprobe)],
+                template=[("D", d), ("T", threads), ("K", k)],
                 grid=(threads, nq, 1), threadgroup=(min(threads, 256), 1, 1),
                 output_shapes=[(nq * threads * k,), (nq * threads * k,)], output_dtypes=[mx.float32, mx.int32])
             local = _finish(vals, idx, nq, k)
@@ -232,8 +113,8 @@ class GpuIVF:
         first = (mx.cumsum(counts) - counts).astype(mx.int32)
         lanes = 16
         vals, idx = LIST_SCANS[self.metric](
-            inputs=[q, self.x, self.offsets, pair_ids, first, counts],
-            template=[("D", d), ("P", nprobe), ("K", k)],
+            inputs=[q, self.x, self.offsets, pair_ids, first, counts, sz(nprobe)],
+            template=[("D", d), ("K", k)],
             grid=(256 * nlist, 1, 1), threadgroup=(256, 1, 1),
             output_shapes=[(nq * nprobe * lanes * k,), (nq * nprobe * lanes * k,)], output_dtypes=[mx.float32, mx.int32])
         pick = select_k(vals.reshape(nq, -1), k, threads=64)

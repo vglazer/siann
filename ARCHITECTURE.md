@@ -205,7 +205,8 @@ siann's GPU IVF.
 
 | File | What it holds |
 | --- | --- |
-| `python/siann/knn_kernels.py` | The MLX Metal kernels: the two-stage top-k, the tiled L1 and L-infinity kernel, fused L2 |
+| `python/siann/_metal.py` | The Metal kernels' text, shared by both GPU backends: the two-stage top-k, the tiled L1 and L-infinity kernel, the IVF scans |
+| `python/siann/knn_kernels.py` | Exact search on MLX: the kernels compiled from `_metal`, fused L2, the top-k |
 | `python/siann/exact.py` | Exact search on the GPU, a tile of queries at a time |
 | `python/siann/ivf_gpu.py` | The GPU IVF: k-means build, query-major and list-major scans, float16 and uint8 lists |
 | `python/siann/blas_l2.py` | Exact L2 and inner product on the CPU through NumPy's BLAS and `L2TopK`, with the default tile sizes |
@@ -228,8 +229,12 @@ ties the two together.
   ([ALGORITHMS](ALGORITHMS.md#what-does-not-pay)).
 - **A new default must be no slower than the old one on any measured case,** single queries, batches
   of 100 and batches of 10,000 alike.
-- **Pass sizes such as the batch size at run time, not as compile-time constants,** in GPU kernels, or
-  every new batch size recompiles them.
+- **Write each GPU kernel once,** in `siann._metal`: MLX and PyTorch run the same text, so the two
+  backends cannot drift apart.
+- **Pass sizes such as the batch size at run time, not as compile-time constants,** in GPU kernels:
+  compiled in, every new batch size recompiles them, 26-74 ms on top of a 1-4 ms search. Compile in only
+  what sizes an array in registers or threadgroup memory (k, threads per query) or a loop worth unrolling
+  (the dimension).
 - **Safe Rust.** No `unsafe` in siann's code; every case has a safe alternative (NumPy for BLAS
   calls, a compare-and-select for the maximum, a buffer for float16, plain loops over contiguous bytes
   for the integer path). The compiler turns plain loops into NEON instructions, and five rules keep

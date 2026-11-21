@@ -285,6 +285,19 @@ centroids, then each query's nprobe nearest lists), the scan and the merge. SIFT
   merged pairwise in seven steps) is 0-5% faster than the separate merge and writes only k results per
   query (`gpu_merge_ab.txt`).
 
+### What a new batch size costs
+
+*Reproduce with `compile_cost.py`.*
+
+The GPU kernels read the sizes that change from call to call (how many queries, how many probes, a row's
+length) at run time, and compile in only those that size arrays in registers or threadgroup memory (k,
+threads per query) or that a loop is unrolled for (the dimension). With the batch size compiled in, every
+new batch size compiles the kernels again, costing the first call 26-74 ms (median) on top of a 1-4 ms
+search; read at run time, a new batch size costs 0-3 ms. The first call with a new k still compiles once, 38-113 ms for an
+IVF. Random vectors, 100,000 x 128, k = 10, nine batch sizes from 7 to 1,001 (`compile_cost_before.txt`,
+`compile_cost_after.txt`). Warm searches run at the same speed either way: on SIFT1M, exact search and both
+IVF scans, on both GPU backends, are within 3% of each other with the sizes compiled in or read at run time.
+
 ### Work per query
 
 *Reproduce with `dist_counts.py`.*

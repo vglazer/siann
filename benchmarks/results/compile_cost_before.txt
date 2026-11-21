@@ -1,0 +1,10 @@
+batch sizes 7, 8, 9, 50, 51, 300, 301, 1000, 1001, each new to the process when first called
+  exact, l2                    first call minus repeat: median   38.5 ms, max   66.4 ms; repeat   2.84 ms (median)
+  exact, l1                    first call minus repeat: median   42.6 ms, max   88.4 ms; repeat   3.58 ms (median)
+  exact, linf                  first call minus repeat: median   42.8 ms, max   89.6 ms; repeat   3.63 ms (median)
+  exact, cosine                first call minus repeat: median   -0.0 ms, max    0.7 ms; repeat   0.82 ms (median)
+  exact, ip                    first call minus repeat: median    0.0 ms, max    0.2 ms; repeat   0.93 ms (median)
+  MLX IVF, query-major         first call minus repeat: median   46.2 ms, max   47.2 ms; repeat   1.55 ms (median)
+  MLX IVF, list-major          first call minus repeat: median   74.2 ms, max   78.9 ms; repeat   2.56 ms (median)
+  PyTorch IVF, query-major     first call minus repeat: median   28.5 ms, max  103.4 ms; repeat   2.25 ms (median)
+  PyTorch IVF, list-major      first call minus repeat: median   25.9 ms, max   69.2 ms; repeat   3.53 ms (median)

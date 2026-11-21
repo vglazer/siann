@@ -18,7 +18,7 @@ import numpy as np
 
 from datasets import load
 from siann.ivf_gpu import SCANS, GpuIVF, coarse_dist
-from siann.knn_kernels import _finish, select_k
+from siann.knn_kernels import _finish, select_k, sz
 
 K = 10
 
@@ -86,8 +86,8 @@ def main() -> None:
 
     def scan(q, pr):
         nq = q.shape[0]
-        vals, idx = SCANS["l2"](inputs=[q, ivf.x, ivf.offsets, pr],
-                                template=[("Q", nq), ("D", d), ("P", a.nprobe), ("T", threads), ("K", K)],
+        vals, idx = SCANS["l2"](inputs=[q, ivf.x, ivf.offsets, pr, sz(nq, a.nprobe)],
+                                template=[("D", d), ("T", threads), ("K", K)],
                                 grid=(threads, nq, 1), threadgroup=(min(threads, 256), 1, 1),
                                 output_shapes=[(nq * threads * K,), (nq * threads * K,)],
                                 output_dtypes=[mx.float32, mx.int32])
@@ -118,8 +118,8 @@ def main() -> None:
     for st in (128, 256):
         def scan_t(q, pr, st=st):
             nq = q.shape[0]
-            vals, idx = SCANS["l2"](inputs=[q, ivf.x, ivf.offsets, pr],
-                                    template=[("Q", nq), ("D", d), ("P", a.nprobe), ("T", st), ("K", K)],
+            vals, idx = SCANS["l2"](inputs=[q, ivf.x, ivf.offsets, pr, sz(nq, a.nprobe)],
+                                    template=[("D", d), ("T", st), ("K", K)],
                                     grid=(st, nq, 1), threadgroup=(min(st, 256), 1, 1),
                                     output_shapes=[(nq * st * K,), (nq * st * K,)],
                                     output_dtypes=[mx.float32, mx.int32])
@@ -138,8 +138,8 @@ def main() -> None:
         nq = q.shape[0]
         dd = coarse_dist(q, ivf.centroids, ivf.cnorms, "l2")
         pr = mx.argpartition(dd, kth=a.nprobe - 1, axis=1)[:, :a.nprobe].astype(mx.int32)
-        vals, idx = SCANS["l2"](inputs=[q, ivf.x, ivf.offsets, pr],
-                                template=[("Q", nq), ("D", d), ("P", a.nprobe), ("T", st), ("K", K)],
+        vals, idx = SCANS["l2"](inputs=[q, ivf.x, ivf.offsets, pr, sz(nq, a.nprobe)],
+                                template=[("D", d), ("T", st), ("K", K)],
                                 grid=(st, nq, 1), threadgroup=(min(st, 256), 1, 1),
                                 output_shapes=[(nq * st * K,), (nq * st * K,)],
                                 output_dtypes=[mx.float32, mx.int32])
