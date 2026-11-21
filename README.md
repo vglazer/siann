@@ -1,6 +1,7 @@
 # siann
 
 [![CI](https://github.com/vglazer/siann/actions/workflows/ci.yml/badge.svg)](https://github.com/vglazer/siann/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/siann)](https://pypi.org/project/siann/)
 [![Documentation](https://img.shields.io/readthedocs/siann/latest)](https://siann.readthedocs.io)
 
 **Fast nearest-neighbor search on Apple silicon,** exact or to a recall target, for dense NumPy vectors,
@@ -22,13 +23,19 @@ Start with the [quickstart notebook](https://github.com/vglazer/siann/blob/main/
 
 ## Install
 
-siann runs on Python 3.12 or later: on the CPU on Linux, macOS and Windows, and on the GPU too on Macs with
-Apple silicon. Building it from source takes a [Rust](https://rustup.rs) toolchain:
+siann is [on PyPI](https://pypi.org/project/siann/) and runs on Python 3.12 or later: on the CPU on
+Linux, macOS and Windows, and on the GPU too on Macs with Apple silicon, where it installs MLX for it.
 
 ```sh
-uv add git+https://github.com/vglazer/siann         # with uv
-pip install git+https://github.com/vglazer/siann    # with pip
+uv add siann            # with uv
+pip install siann       # with pip
 ```
+
+There are wheels (built packages) for Linux on x86-64 and ARM, macOS on Apple silicon and Windows on x86-64.
+The x86-64 wheels need a processor with AVX2 (Intel from 2013's Haswell, AMD from 2015's Excavator); on an
+older one, `pip install --no-binary siann siann` builds siann from source, which takes a
+[Rust](https://rustup.rs) toolchain. On Linux and Windows, import siann before NumPy
+([TUNING](TUNING.md#numpys-blas-on-linux-and-windows)).
 
 To run the quickstart notebook, clone the repository and, from its folder,
 `uv run --group dev --with jupyterlab jupyter lab examples/quickstart.ipynb`.

@@ -12,7 +12,7 @@
 //!   blocks. A query finds its `nprobe` nearest centroids, then scans their lists. One thread per
 //!   query, so that single queries are cheap and batches spread across cores.
 
-use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -1426,6 +1426,71 @@ impl L2TopK {
     }
 }
 
+/// Each returned neighbor's score, computed from the vectors in f32: for `ids` (nq, k) int64 rows of `x`
+/// (n, d) and queries `q` (nq, d), both C-contiguous float32 and read in place, the Euclidean distance
+/// for "l2", the sum of absolute differences for "l1", the largest for "linf" and the inner product for
+/// "ip" (and cosine, on unit vectors); infinity (minus infinity for "ip") where an id is -1. Large batches
+/// are spread over threads.
+#[pyfunction]
+fn scores<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray2<'_, f32>,
+    q: PyReadonlyArray2<'_, f32>,
+    ids: PyReadonlyArray2<'_, i64>,
+    metric: &str,
+) -> PyResult<Bound<'py, PyArray2<f32>>> {
+    let kind = parse_metric(metric)?;
+    let (n, d) = x.as_array().dim();
+    let (nq, qd) = q.as_array().dim();
+    let (iq, k) = ids.as_array().dim();
+    let contiguous = || PyValueError::new_err("x, q and ids must be C-contiguous");
+    let (xs, qs, is) = (
+        x.as_slice().map_err(|_| contiguous())?,
+        q.as_slice().map_err(|_| contiguous())?,
+        ids.as_slice().map_err(|_| contiguous())?,
+    );
+    if qd != d || iq != nq || is.iter().any(|&i| i >= n as i64 || i < -1) {
+        return Err(PyValueError::new_err(
+            "q must be (nq, d) and ids (nq, k), each id -1 or a row of x",
+        ));
+    }
+    let missing = if matches!(kind, Kind::Ip) {
+        f32::NEG_INFINITY
+    } else {
+        f32::INFINITY
+    };
+    let one = |(o, (row, qv)): (&mut [f32], (&[i64], &[f32]))| {
+        for (s, &i) in o.iter_mut().zip(row) {
+            if i < 0 {
+                *s = missing;
+                continue;
+            }
+            let xv = &xs[i as usize * d..(i as usize + 1) * d];
+            let pairs = qv.iter().zip(xv);
+            *s = match kind {
+                Kind::L2 => pairs.map(|(a, b)| (a - b) * (a - b)).sum::<f32>().sqrt(),
+                Kind::L1 => pairs.map(|(a, b)| (a - b).abs()).sum(),
+                Kind::Linf => pairs.fold(0.0f32, |m, (a, b)| larger(m, (a - b).abs())),
+                Kind::Ip => pairs.map(|(a, b)| a * b).sum(),
+            };
+        }
+    };
+    let mut out = vec![0.0f32; nq * k];
+    py.detach(|| {
+        let rows = out
+            .chunks_mut(k.max(1))
+            .zip(is.chunks(k.max(1)).zip(qs.chunks(d.max(1))));
+        if nq * k * d < 1 << 16 {
+            rows.for_each(one);
+        } else {
+            out.par_chunks_mut(k.max(1))
+                .zip(is.par_chunks(k.max(1)).zip(qs.par_chunks(d.max(1))))
+                .for_each(one);
+        }
+    });
+    PyArray1::from_vec(py, out).reshape([nq, k])
+}
+
 /// float16 values (their bits, a uint16 buffer) widened to f32 as the lists widen them: for
 /// check_kernels.py, which compares every finite float16 with NumPy's conversion.
 #[pyfunction]
@@ -1439,5 +1504,6 @@ fn _cpu(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FlatIndex>()?;
     m.add_class::<L2TopK>()?;
     m.add_function(wrap_pyfunction!(widen_f16, m)?)?;
+    m.add_function(wrap_pyfunction!(scores, m)?)?;
     m.add_class::<IvfIndex>()
 }

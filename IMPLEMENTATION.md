@@ -219,7 +219,7 @@ faster on one thread, with at most 0.011 less recall.
 
 For a batch on the CPU, by L2, cosine or inner product, the coarse step can instead be one BLAS matrix
 multiply of the queries against the centroids, whose products Rust ranks as it ranks its own distances,
-finding the same lists. The list-major scan always does it this way (1.04-2.0 times faster). For the
+finding the same lists. The list-major scan always does it this way (1.06-2.0 times faster from 10 queries). For the
 query-major scan it depends on the machine: with 4 threads it pays from about 32 queries (up to 1.6 times
 faster), with 16 it does not, as each query's own coarse step is already spread over 16 cores. So it is a
 route each index measures (BENCHMARKS, [The coarse step](BENCHMARKS.md#the-coarse-step)).

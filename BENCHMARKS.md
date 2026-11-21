@@ -458,16 +458,17 @@ alternating rounds, with every thread pool held to 4 threads and with all 16:
 
 | Scan, threads | Batch 2 | 4 | 10 | 32 | 100 | 1,000 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Query-major, 4 | 0.80-0.93 | 0.74-0.93 | 0.68-0.97 | 1.00-1.29 | 1.03-1.57 | 1.03-1.79 |
-| Query-major, 16 | 0.55-0.79 | 0.61-0.87 | 0.44-0.84 | 0.64-0.95 | 0.80-1.00 | 0.99-1.05 |
-| List-major, 4 | 1.07-1.51 | 1.05-1.31 | 1.25-1.54 | 1.32-1.62 | 1.13-1.24 | 1.16-1.24 |
-| List-major, 16 | 0.91-1.58 | 0.92-1.35 | 1.10-1.70 | 1.38-2.03 | 1.20-1.47 | 0.96-1.17 |
+| Query-major, 4 | 0.78-0.92 | 0.75-0.94 | 0.74-0.99 | 0.98-1.15 | 1.03-1.51 | 1.04-1.79 |
+| Query-major, 16 | 0.55-0.78 | 0.61-0.88 | 0.47-0.84 | 0.58-0.98 | 0.74-1.00 | 1.02-1.13 |
+| List-major, 4 | 0.89-1.50 | 0.95-1.30 | 1.10-1.52 | 1.33-1.63 | 1.14-1.23 | 1.17-1.24 |
+| List-major, 16 | 0.90-1.59 | 0.88-1.34 | 1.06-1.70 | 1.39-2.04 | 1.22-1.47 | 1.03-1.16 |
 
-The list-major scan gains on every dataset but Music-100 at 16 threads at batches of 2, 4 and 1,000
-(0.91-0.96, within the timings' spread), so it always takes the BLAS coarse step. For the query-major scan
+The list-major scan gains on every dataset from 10 queries; on Music-100 it is 0.88-0.95 at 2 and 4,
+sizes at which routing never chooses the list-major scan (the query-major one is several times faster
+there), so it always takes the BLAS coarse step. For the query-major scan
 the gain depends on the cores: with 16, each query's own coarse step is already spread over all of them and
 the multiply does not pay; with 4 it pays from about 32 queries. Each index therefore measures it as a
-route (`cpu_blas_from`), and takes it with 4 threads from 32 queries on SIFT and 16 on Music-100, and not on
+route (`cpu_blas_from`), and takes it with 4 threads from 32 queries on SIFT and Music-100, and not on
 GloVe, whose nprobe of 281 makes the coarse step a small share. FAISS's IVF does its coarse step for a
 batch through BLAS too.
 
@@ -476,15 +477,15 @@ nprobe, on the CPU, median of 3 alternating passes:
 
 | Dataset, threads | Batch 1 | 2 | 4 | 10 | 32 | 100 | 1,000 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| SIFT, 4 | 1.40 | 1.07 | 1.26 | 1.38 | 2.06 | 2.31 | 2.21 |
-| SIFT, 16 | 1.41 | 1.24 | 1.01 | 1.15 | 1.70 | 2.01 | 2.83 |
-| GloVe, 4 | 2.18 | 1.09 | 1.04 | 1.13 | 1.09 | 1.11 | 1.11 |
-| GloVe, 16 | 2.14 | 1.20 | 0.99 | 0.98 | 1.05 | 1.51 | 1.73 |
-| Music-100, 4 | 0.61 | 0.78 | 0.75 | 0.81 | 0.90 | 1.25 | 1.79 |
-| Music-100, 16 | 0.66 | 0.87 | 0.60 | 0.62 | 0.96 | 1.29 | 2.24 |
+| SIFT, 4 | 1.67 | 1.19 | 1.40 | 1.48 | 2.13 | 2.62 | 2.69 |
+| SIFT, 16 | 1.68 | 1.35 | 1.06 | 1.25 | 1.81 | 2.40 | 3.47 |
+| GloVe, 4 | 2.28 | 1.10 | 1.09 | 1.15 | 1.17 | 1.18 | 1.17 |
+| GloVe, 16 | 2.33 | 1.23 | 1.00 | 1.02 | 1.06 | 1.49 | 1.79 |
+| Music-100, 4 | 0.85 | 0.90 | 0.88 | 0.95 | 1.11 | 1.64 | 2.16 |
+| Music-100, 16 | 0.92 | 0.99 | 0.63 | 0.79 | 1.39 | 1.84 | 2.75 |
 
 On Music-100 at nprobe 30 a query is cheap (FAISS answers single queries at about 31,000 per second), and
-below 100 queries siann.Index's fixed cost per call, in Python around the Rust search, decides it.
+FAISS leads below 32 queries.
 
 ## List storage
 

@@ -12,6 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
+from ._ivf import DEFAULT_ROUTES
+
 METRICS = ("l2", "l1", "linf", "cosine", "ip")
 DISTANCES = ("l2", "l1", "linf")          # smaller is nearer; cosine and ip are similarities
 FORMAT = "siann-index"
@@ -77,6 +79,10 @@ def _is_sparse(x) -> bool:
 
 
 def _as_matrix(x, name: str) -> np.ndarray:
+    if type(x) is np.ndarray and x.dtype == np.float32 and x.ndim == 2 and x.flags.c_contiguous:
+        if not np.isfinite(x).all():               # the common case, checked without conversions
+            raise ValueError(f"{name} holds infinity or NaN")
+        return x
     if _is_sparse(x):
         raise NotImplementedError(f"{name} is a sparse matrix: siann searches dense vectors; "
                                   "pass a NumPy array (x.toarray() for a small one)")
@@ -382,7 +388,6 @@ class Index:
 
     def _ivf_path(self, batch: int, device: str | None) -> str:
         """The IVF path a batch takes: by the device (given, or chosen by the profile) and the batch size."""
-        from ._ivf import DEFAULT_ROUTES
         r = {**DEFAULT_ROUTES, **self._routes}
         dev = device or (self._device if self._device != "auto" else
                          ("cpu" if batch < r["cpu_below"] else "gpu"))
@@ -443,7 +448,10 @@ class Index:
             raise ValueError(f"k must be a positive integer, not {k!r}")
         if nprobe is not None and (not isinstance(nprobe, (int, np.integer)) or nprobe < 1):
             raise ValueError(f"nprobe must be a positive integer, not {nprobe!r}")
-        dev = device or self.route(len(q))
+        if device not in (None, "gpu", "cpu"):
+            raise ValueError(f"device must be 'gpu' or 'cpu', not {device!r}")
+        path = self._ivf_path(len(q), device) if self._ivf is not None else None
+        dev = device or (path.split("-")[0] if path else self.route(len(q)))
         if dev not in ("gpu", "cpu"):
             raise ValueError(f"device must be 'gpu' or 'cpu', not {dev!r}")
         if dev == "gpu" and not _gpu_available():
@@ -454,7 +462,7 @@ class Index:
         if len(q) == 0:
             idx = np.empty((0, kk), dtype=np.int64)
         elif self._ivf is not None:
-            idx = self._ivf.search(q, kk, int(nprobe or self._nprobe), self._ivf_path(len(q), device))
+            idx = self._ivf.search(q, kk, int(nprobe or self._nprobe), path)
         else:
             idx = (self._search_gpu if dev == "gpu" else self._search_cpu)(q, kk)
         if kk < k:
@@ -487,21 +495,9 @@ class Index:
         qtile, block = default_tiles(len(q))
         return np.asarray(siann_l2(self._x, self._layouts["cpu"], q, k, qtile, block), dtype=np.int64)
 
-    def _scores(self, q: np.ndarray, idx: np.ndarray, chunk: int = 256) -> np.ndarray:
-        """Each returned neighbor's natural score, computed exactly from the vectors."""
-        out = np.empty(idx.shape, dtype=np.float32)
-        missing = idx < 0
-        for s in range(0, len(q), chunk):
-            i = np.where(missing[s:s + chunk], 0, idx[s:s + chunk])
-            v = self._x[i]                                   # (c, k, d)
-            qq = q[s:s + chunk, None, :]
-            if self.metric in ("cosine", "ip"):
-                out[s:s + chunk] = (v * qq).sum(axis=2)
-            elif self.metric == "l2":
-                out[s:s + chunk] = np.sqrt(((v - qq) ** 2).sum(axis=2))
-            elif self.metric == "l1":
-                out[s:s + chunk] = np.abs(v - qq).sum(axis=2)
-            else:
-                out[s:s + chunk] = np.abs(v - qq).max(axis=2)
-        out[missing] = np.inf if self.metric in DISTANCES else -np.inf
-        return out
+    def _scores(self, q: np.ndarray, idx: np.ndarray) -> np.ndarray:
+        """Each returned neighbor's natural score, computed from the vectors in float32 (in Rust, for every
+        path alike); infinity, or minus infinity for similarities, where an index is -1."""
+        from ._cpu import scores
+        return scores(self._x, np.ascontiguousarray(q, dtype=np.float32), np.ascontiguousarray(idx, dtype=np.int64),
+                      self._kernel_metric)
