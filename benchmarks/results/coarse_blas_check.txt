@@ -1,0 +1,3 @@
+  sift l2, nprobe 40: identical at 12 of 12 (scan, batch) pairs
+  glove cosine, nprobe 281: identical at 12 of 12 (scan, batch) pairs
+  music100 ip, nprobe 30: identical at 12 of 12 (scan, batch) pairs

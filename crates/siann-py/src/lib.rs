@@ -12,7 +12,7 @@
 //!   blocks. A query finds its `nprobe` nearest centroids, then scans their lists. One thread per
 //!   query, so that single queries are cheap and batches spread across cores.
 
-use numpy::{PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -378,7 +378,8 @@ fn block_dists_one_direct<M: Metric, T: Elem>(q: &[f32], blk: &[[T; L]]) -> [f32
     out
 }
 
-/// The k smallest distances seen so far, in increasing order.
+/// The k smallest distances seen so far, in increasing order; equal distances by increasing id, so that
+/// the result does not depend on the order in which vectors are pushed.
 struct TopK {
     dist: Vec<f32>,
     idx: Vec<u32>,
@@ -395,11 +396,12 @@ impl TopK {
     #[inline]
     fn push(&mut self, v: f32, i: u32) {
         let k = self.dist.len();
-        if v >= self.dist[k - 1] {
+        let last = self.dist[k - 1];
+        if v > last || (v == last && i >= self.idx[k - 1]) {
             return;
         }
         let mut p = k - 1;
-        while p > 0 && self.dist[p - 1] > v {
+        while p > 0 && (self.dist[p - 1] > v || (self.dist[p - 1] == v && self.idx[p - 1] > i)) {
             self.dist[p] = self.dist[p - 1];
             self.idx[p] = self.idx[p - 1];
             p -= 1;
@@ -554,6 +556,54 @@ fn parse_metric(metric: &str) -> PyResult<Kind> {
     }
 }
 
+/// Each query's nearest `nprobe` lists from `products` (nq, nlist), its products with the centroids, as
+/// BLAS computes them for a batch: ranked by |c|^2 - 2 q.c for L2 (the same order as the distance) and by
+/// -q.c for inner product, selected as the Rust coarse step selects (in linear time, in no set order).
+fn probes_from_products(
+    products: &PyReadonlyArray2<'_, f32>,
+    nq: usize,
+    cnorms: &[f32],
+    metric: Kind,
+    nprobe: usize,
+) -> PyResult<Vec<u32>> {
+    let nlist = cnorms.len();
+    let (rows, cols) = products.as_array().dim();
+    let p = products
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("products must be C-contiguous"))?;
+    if rows != nq || cols != nlist {
+        return Err(PyValueError::new_err("products must be (nq, nlist)"));
+    }
+    let l2 = match metric {
+        Kind::L2 => true,
+        Kind::Ip => false,
+        _ => {
+            return Err(PyValueError::new_err(
+                "products give the coarse step for L2 and inner product only",
+            ));
+        }
+    };
+    let nprobe = nprobe.min(nlist);
+    let mut out = vec![0u32; nq * nprobe];
+    out.par_chunks_mut(nprobe)
+        .zip(p.par_chunks(nlist))
+        .for_each(|(o, row)| {
+            let mut dist: Vec<(f32, u32)> = row
+                .iter()
+                .zip(cnorms)
+                .enumerate()
+                .map(|(c, (&pv, &n))| (if l2 { n - 2.0 * pv } else { -pv }, c as u32))
+                .collect();
+            if nprobe < nlist {
+                dist.select_nth_unstable_by(nprobe - 1, |a, b| a.0.total_cmp(&b.0));
+            }
+            for (o, &(_, c)) in o.iter_mut().zip(&dist[..nprobe]) {
+                *o = c;
+            }
+        });
+    Ok(out)
+}
+
 fn read(py: Python<'_>, buf: &Bound<'_, PyAny>, d: usize) -> PyResult<Vec<f32>> {
     let buf = PyBuffer::<f32>::get(buf)?;
     let v = buf.to_vec(py)?;
@@ -596,21 +646,22 @@ impl FlatIndex {
     /// Each thread takes `chunk` queries at a time; with `split`, a batch of fewer chunks than threads
     /// also divides the base among threads (the same results).
     #[pyo3(signature = (xq, k, chunk = 32, split = true))]
-    fn search(
+    fn search<'py>(
         &self,
-        py: Python<'_>,
+        py: Python<'py>,
         xq: &Bound<'_, PyAny>,
         k: usize,
         chunk: usize,
         split: bool,
-    ) -> PyResult<Vec<u32>> {
+    ) -> PyResult<Bound<'py, PyArray1<u32>>> {
         if k == 0 || k > self.n || chunk == 0 {
             return Err(PyValueError::new_err("need 0 < k <= n and chunk > 0"));
         }
         let v = read(py, xq, self.d)?;
-        Ok(py.detach(
+        let out = py.detach(
             || with_metric!(self.metric, M => flat_search::<M>(&self.blocks, self.d, self.n, &v, k, chunk, split)),
-        ))
+        );
+        Ok(out.into_pyarray(py))
     }
 }
 
@@ -654,6 +705,8 @@ struct IvfIndex {
     metric: Kind,
     nlist: usize,
     centroids: Vec<[f32; L]>,
+    /// The centroids' squared norms, for a coarse step from BLAS products.
+    cnorms: Vec<f32>,
     lists: Lists,
     /// For a two-level coarse step (`set_coarse_groups`), the centroids clustered into groups.
     groups: Option<Groups>,
@@ -793,15 +846,15 @@ impl IvfIndex {
 
     /// One query. With `tasks` above one (run on a split pool of that many threads), the coarse step
     /// and the list scans are spread over that many parallel tasks, each scanning a contiguous run of
-    /// the probed lists, and the tasks' best k are merged in probe order, which gives the same result
-    /// as one thread scanning the lists in that order, ties included: each task's best k keeps the
-    /// earliest of tied vectors, as one scan would.
+    /// the probed lists, and the tasks' best k merged: the same result as one thread, ties included,
+    /// as a best k breaks ties by id whatever the order of the scan.
     fn search_one<M: Metric, T: Elem>(
         &self,
         lists: &[List<T>],
         q: &[f32],
         k: usize,
         how: Probe,
+        given: Option<&[u32]>,
         out: &mut [u32],
     ) {
         let Probe {
@@ -815,21 +868,30 @@ impl IvfIndex {
         } else {
             None
         };
-        // The nearest nprobe centroids (among those the two-level step examined, with gprobe).
-        let mut coarse = self.coarse::<M>(q, tasks, gprobe);
-        let nprobe = nprobe.min(coarse.len());
-        if nprobe < coarse.len() {
-            coarse.select_nth_unstable_by(nprobe - 1, |a, b| a.0.total_cmp(&b.0));
-        }
+        // The nearest nprobe centroids (among those the two-level step examined, with gprobe), unless
+        // the caller found them (a batch's coarse step through BLAS).
+        let found: Vec<u32>;
+        let probes: &[u32] = match given {
+            Some(p) => p,
+            None => {
+                let mut coarse = self.coarse::<M>(q, tasks, gprobe);
+                let nprobe = nprobe.min(coarse.len());
+                if nprobe < coarse.len() {
+                    coarse.select_nth_unstable_by(nprobe - 1, |a, b| a.0.total_cmp(&b.0));
+                }
+                found = coarse[..nprobe].iter().map(|&(_, c)| c).collect();
+                &found
+            }
+        };
         // Scan their lists.
         let mut top = TopK::new(k);
         if tasks > 1 {
-            let parts: Vec<TopK> = coarse[..nprobe]
-                .par_chunks(nprobe.div_ceil(tasks))
+            let parts: Vec<TopK> = probes
+                .par_chunks(probes.len().div_ceil(tasks).max(1))
                 .map(|run| {
                     let mut t = TopK::new(k);
                     let mut buf = Vec::new();
-                    for &(_, c) in run {
+                    for &c in run {
                         self.scan_one::<M, T>(
                             &lists[c as usize],
                             q,
@@ -848,7 +910,7 @@ impl IvfIndex {
             }
         } else {
             let mut buf = Vec::new();
-            for &(_, c) in &coarse[..nprobe] {
+            for &c in probes {
                 self.scan_one::<M, T>(&lists[c as usize], q, q8.as_deref(), &mut top, &mut buf);
             }
         }
@@ -902,12 +964,19 @@ impl IvfIndex {
         xq: &[f32],
         k: usize,
         nprobe: usize,
+        given: Option<&[u32]>,
     ) -> Vec<u32> {
         let d = self.d;
         let nq = xq.len() / d;
-        let nprobe = nprobe.min(self.nlist);
-        // Each query's nearest nprobe centroids, by exact search over the centroids.
-        let probes = flat_search::<M>(&self.centroids, d, self.nlist, xq, nprobe, 32, false);
+        // Each query's nearest nprobe centroids, by exact search over the centroids, unless given.
+        let (nprobe, probes) = match given {
+            Some(p) => (p.len() / nq.max(1), p.to_vec()),
+            None => {
+                let nprobe = nprobe.min(self.nlist);
+                let found = flat_search::<M>(&self.centroids, d, self.nlist, xq, nprobe, 32, false);
+                (nprobe, found)
+            }
+        };
         // For each list, the queries that probe it.
         let mut members: Vec<Vec<u32>> = vec![Vec::new(); self.nlist];
         for (qi, ps) in probes.chunks_exact(nprobe).enumerate() {
@@ -1035,11 +1104,18 @@ impl IvfIndex {
                 Stored::F16(h) => Lists::F16(make_lists(members, h, d)),
                 Stored::U8(h) => Lists::U8(make_lists(members, h, d)),
             };
+            let cnorms = (0..nlist)
+                .map(|c| {
+                    let (b, l) = (c / L, c % L);
+                    centroids[b * d..(b + 1) * d].iter().map(|v| v[l] * v[l]).sum()
+                })
+                .collect();
             IvfIndex {
                 d,
                 metric: kind,
                 nlist,
                 centroids,
+                cnorms,
                 lists,
                 groups: None,
             }
@@ -1055,18 +1131,22 @@ impl IvfIndex {
     /// query's `gprobe` nearest groups of centroids, then the nearest `nprobe` of their centroids.
     /// With `threads` above zero, a batch (one query per thread) runs on a pool of that many threads
     /// of its own instead of rayon's global pool (all cores).
-    #[pyo3(signature = (xq, k, nprobe, split = 1, gprobe = 0, threads = 0))]
+    /// With `products` ((nq, nlist) float32, the queries' products with the centroids, as a BLAS
+    /// matrix multiply gives them for a batch), the coarse step ranks those instead of computing each
+    /// query's distances (L2 and inner product).
+    #[pyo3(signature = (xq, k, nprobe, split = 1, gprobe = 0, threads = 0, products = None))]
     #[allow(clippy::too_many_arguments)]
-    fn search(
+    fn search<'py>(
         &self,
-        py: Python<'_>,
+        py: Python<'py>,
         xq: &Bound<'_, PyAny>,
         k: usize,
         nprobe: usize,
         split: usize,
         gprobe: usize,
         threads: usize,
-    ) -> PyResult<Vec<u32>> {
+        products: Option<PyReadonlyArray2<'_, f32>>,
+    ) -> PyResult<Bound<'py, PyArray1<u32>>> {
         if gprobe > 0 && self.groups.is_none() {
             return Err(PyValueError::new_err(
                 "gprobe needs set_coarse_groups first",
@@ -1077,6 +1157,18 @@ impl IvfIndex {
         }
         let v = read(py, xq, self.d)?;
         let d = self.d;
+        let given = match &products {
+            Some(p) => Some(probes_from_products(
+                p,
+                v.len() / d,
+                &self.cnorms,
+                self.metric,
+                nprobe,
+            )?),
+            None => None,
+        };
+        let per = nprobe.min(self.nlist);
+        let probe = |i: usize| given.as_ref().map(|g| &g[i * per..(i + 1) * per]);
         let pool = if split > 1 {
             Some(split_pool(split)?)
         } else {
@@ -1087,19 +1179,20 @@ impl IvfIndex {
         } else {
             None
         };
-        Ok(py.detach(|| {
+        let out = py.detach(|| {
             let mut out = vec![u32::MAX; (v.len() / d) * k];
             with_lists!(&self.lists, lists => with_metric!(self.metric, M => if let Some(pool) = &pool {
                 pool.install(|| {
-                    for (o, q) in out.chunks_mut(k).zip(v.chunks(d)) {
-                        self.search_one::<M, _>(lists, q, k, Probe { nprobe, tasks: split, gprobe }, o);
+                    for (i, (o, q)) in out.chunks_mut(k).zip(v.chunks(d)).enumerate() {
+                        self.search_one::<M, _>(lists, q, k, Probe { nprobe, tasks: split, gprobe }, probe(i), o);
                     }
                 });
             } else {
                 let batch = |out: &mut [u32]| {
                     out.par_chunks_mut(k)
                         .zip(v.par_chunks(d))
-                        .for_each(|(o, q)| self.search_one::<M, _>(lists, q, k, Probe { nprobe, tasks: 1, gprobe }, o))
+                        .enumerate()
+                        .for_each(|(i, (o, q))| self.search_one::<M, _>(lists, q, k, Probe { nprobe, tasks: 1, gprobe }, probe(i), o))
                 };
                 match &batch_pool {
                     Some(bp) => bp.install(|| batch(&mut out)),
@@ -1107,26 +1200,40 @@ impl IvfIndex {
                 }
             }));
             out
-        }))
+        });
+        Ok(out.into_pyarray(py))
     }
 
     /// The same search, list-major: queries are grouped by the lists they probe, and each list is
     /// scanned once for all of them, `QB` queries at a time, so that it is read from memory once per
-    /// batch rather than once per query. For large batches.
-    fn search_list_major(
+    /// batch rather than once per query. For large batches. `products`, as for `search`.
+    #[pyo3(signature = (xq, k, nprobe, products = None))]
+    fn search_list_major<'py>(
         &self,
-        py: Python<'_>,
+        py: Python<'py>,
         xq: &Bound<'_, PyAny>,
         k: usize,
         nprobe: usize,
-    ) -> PyResult<Vec<u32>> {
+        products: Option<PyReadonlyArray2<'_, f32>>,
+    ) -> PyResult<Bound<'py, PyArray1<u32>>> {
         if k == 0 || nprobe == 0 {
             return Err(PyValueError::new_err("need k > 0 and nprobe > 0"));
         }
         let v = read(py, xq, self.d)?;
-        Ok(py.detach(
-            || with_lists!(&self.lists, lists => with_metric!(self.metric, M => self.search_list_major_impl::<M, _>(lists, &v, k, nprobe))),
-        ))
+        let given = match &products {
+            Some(p) => Some(probes_from_products(
+                p,
+                v.len() / self.d,
+                &self.cnorms,
+                self.metric,
+                nprobe,
+            )?),
+            None => None,
+        };
+        let out = py.detach(
+            || with_lists!(&self.lists, lists => with_metric!(self.metric, M => self.search_list_major_impl::<M, _>(lists, &v, k, nprobe, given.as_deref()))),
+        );
+        Ok(out.into_pyarray(py))
     }
 
     /// Clusters the centroids into groups for a two-level coarse step: `centres` (ngroups, d), the
@@ -1309,11 +1416,13 @@ impl L2TopK {
     }
 
     /// The indices of each query's k nearest, flattened (nq * k), nearest first.
-    fn result(&self) -> Vec<u32> {
-        self.tops
+    fn result<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u32>> {
+        let out: Vec<u32> = self
+            .tops
             .iter()
             .flat_map(|t| t.idx.iter().copied())
-            .collect()
+            .collect();
+        out.into_pyarray(py)
     }
 }
 

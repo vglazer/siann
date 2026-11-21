@@ -69,7 +69,9 @@ index = siann.Index(xb, "l2", recall=0.95, profile=p)
 
 `cpu_below` is the batch size from which searches go to the GPU (a single query on the CPU is split over 4
 threads), and `gpu_list_from` and `cpu_list_from` the sizes from which each device reads each list once
-for all the queries that probe it.
+for all the queries that probe it. `cpu_blas_from` (L2, cosine and inner product) is the size from which the
+CPU's other scan finds each query's lists with one BLAS matrix multiply for the batch; it pays on machines
+with few cores, so a profile tuned on one machine may not suit another.
 
 ## Exact search: GPU or CPU
 

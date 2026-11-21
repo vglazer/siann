@@ -37,7 +37,8 @@ def test_every_path_gives_the_same_neighbors():
     q = x[:200] + 1
     index = siann.Index(x, "l2", recall=0.9, kind="ivf")
     assert "bytes" in str(index.plan)
-    paths = ["cpu-query", "cpu-list", "cpu-split"] + (["gpu-query", "gpu-list"] if siann.gpu_available() else [])
+    paths = ["cpu-query", "cpu-query-blas", "cpu-list", "cpu-split"] + (
+        ["gpu-query", "gpu-list"] if siann.gpu_available() else [])
     results = {}
     for path in paths:
         qq = q[:1] if path == "cpu-split" else q
@@ -52,12 +53,44 @@ def test_routes_are_measured_at_build():
     index = siann.Index(clustered(30_000, 16, 3), "l2", recall=0.9, kind="ivf")
     assert "routing measured" in str(index.plan)
     r = index._routes
-    assert {"cpu_below", "gpu_list_from", "cpu_list_from"} <= set(r)
+    assert {"cpu_below", "gpu_list_from", "cpu_list_from", "cpu_blas_from"} <= set(r)
     assert index._ivf_path(1, None) in ("cpu-split", "gpu-query", "gpu-list")
     for b in (1, 16, 300, 5000):                                   # every batch has a path, on its device
         path = index._ivf_path(b, None)
         assert path.split("-")[0] == ("cpu" if b < r["cpu_below"] else "gpu") or not siann.gpu_available()
-    assert index._ivf_path(10, "cpu") in ("cpu-query", "cpu-list")
+    assert index._ivf_path(10, "cpu") in ("cpu-query", "cpu-query-blas", "cpu-list")
+
+
+@pytest.mark.parametrize("metric", ["l2", "ip", "cosine"])
+def test_the_coarse_step_through_blas_finds_the_same_lists(metric):
+    x = clustered(30_000, 24, 4)
+    q = clustered(300, 24, 5) + 0.05
+    if metric == "cosine":
+        q = q / np.linalg.norm(q, axis=1, keepdims=True)
+    index = siann.Index(x, metric, recall=0.9, kind="ivf", device="cpu")
+    ivf = index._ivf
+    for path in ("cpu-query", "cpu-list"):
+        rust = ivf.search(q, 10, index.nprobe, path, coarse="rust")
+        np.testing.assert_array_equal(ivf.search(q, 10, index.nprobe, path, coarse="blas"), rust)
+    np.testing.assert_array_equal(ivf.search(q, 10, index.nprobe, "cpu-query-blas"),
+                                  ivf.search(q, 10, index.nprobe, "cpu-query"))
+
+
+def test_ties_go_to_the_smaller_id_on_every_cpu_path():
+    x = np.repeat(clustered(2_000, 8, 6, integer=True), 3, axis=0)    # every vector three times, in a row
+    q = x[::50] + 1
+    index = siann.Index(x, "l1", recall=0.9, kind="ivf", device="cpu")
+    ivf, nprobe = index._ivf, index.nprobe
+    full = ivf.search(q, 9, nprobe, "cpu-query")
+    np.testing.assert_array_equal(ivf.search(q, 9, nprobe, "cpu-list"), full)
+    split = np.concatenate([ivf.search(q[i:i + 1], 9, nprobe, "cpu-split") for i in range(len(q))])
+    np.testing.assert_array_equal(split, full)
+    dist = np.abs(x[full] - q[:, None, :]).sum(axis=2)
+    for drow, row in zip(dist, full):                              # equal distances: ids increasing
+        for a in range(8):
+            if drow[a] == drow[a + 1]:
+                assert row[a] < row[a + 1]
+
 
 
 @gpu_only

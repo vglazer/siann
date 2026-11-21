@@ -447,6 +447,45 @@ help (one thread, median microseconds; `coarse_two_level_*.txt`):
 Probing 16 of 64 groups makes single queries 1.1-2.1x faster, most at low nprobe and with many lists,
 and costs at most 0.011 in recall; 16 of 128 groups cost up to 0.022 on GloVe, and 8 groups up to 0.03.
 
+**For a batch, through BLAS** (`coarse_blas.py`; `coarse_blas_4threads.txt`, `coarse_blas_16threads.txt`).
+By L2, cosine and inner product, a batch's coarse step can be one matrix multiply of the queries against
+the centroids, ranked in Rust. It finds the same lists: on 1,000 queries of each dataset, on both batch scans at
+batch sizes from 2 to 1,000, its neighbors are identical to those of the Rust coarse step
+(`coarse_blas.py --check`, `coarse_blas_check.txt`). Its speed against
+the Rust coarse step, path by path, on the first 200,000 vectors of each dataset (1,789 lists, nprobe
+calibrated to recall 0.95 on 1,000 other queries: SIFT 40, GloVe 281, Music-100 30), median of 5
+alternating rounds, with every thread pool held to 4 threads and with all 16:
+
+| Scan, threads | Batch 2 | 4 | 10 | 32 | 100 | 1,000 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Query-major, 4 | 0.80-0.93 | 0.74-0.93 | 0.68-0.97 | 1.00-1.29 | 1.03-1.57 | 1.03-1.79 |
+| Query-major, 16 | 0.55-0.79 | 0.61-0.87 | 0.44-0.84 | 0.64-0.95 | 0.80-1.00 | 0.99-1.05 |
+| List-major, 4 | 1.07-1.51 | 1.05-1.31 | 1.25-1.54 | 1.32-1.62 | 1.13-1.24 | 1.16-1.24 |
+| List-major, 16 | 0.91-1.58 | 0.92-1.35 | 1.10-1.70 | 1.38-2.03 | 1.20-1.47 | 0.96-1.17 |
+
+The list-major scan gains on every dataset but Music-100 at 16 threads at batches of 2, 4 and 1,000
+(0.91-0.96, within the timings' spread), so it always takes the BLAS coarse step. For the query-major scan
+the gain depends on the cores: with 16, each query's own coarse step is already spread over all of them and
+the multiply does not pay; with 4 it pays from about 32 queries. Each index therefore measures it as a
+route (`cpu_blas_from`), and takes it with 4 threads from 32 queries on SIFT and 16 on Music-100, and not on
+GloVe, whose nprobe of 281 makes the coarse step a small share. FAISS's IVF does its coarse step for a
+batch through BLAS too.
+
+`siann.Index`, routed as it measured at build, against FAISS's IVF-Flat on the same lists at the same
+nprobe, on the CPU, median of 3 alternating passes:
+
+| Dataset, threads | Batch 1 | 2 | 4 | 10 | 32 | 100 | 1,000 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| SIFT, 4 | 1.40 | 1.07 | 1.26 | 1.38 | 2.06 | 2.31 | 2.21 |
+| SIFT, 16 | 1.41 | 1.24 | 1.01 | 1.15 | 1.70 | 2.01 | 2.83 |
+| GloVe, 4 | 2.18 | 1.09 | 1.04 | 1.13 | 1.09 | 1.11 | 1.11 |
+| GloVe, 16 | 2.14 | 1.20 | 0.99 | 0.98 | 1.05 | 1.51 | 1.73 |
+| Music-100, 4 | 0.61 | 0.78 | 0.75 | 0.81 | 0.90 | 1.25 | 1.79 |
+| Music-100, 16 | 0.66 | 0.87 | 0.60 | 0.62 | 0.96 | 1.29 | 2.24 |
+
+On Music-100 at nprobe 30 a query is cheap (FAISS answers single queries at about 31,000 per second), and
+below 100 queries siann.Index's fixed cost per call, in Python around the Rust search, decides it.
+
 ## List storage
 
 *Reproduce with `fp16_lists.py --storages float32,float16,uint8 --faiss`, `single_query.py`,

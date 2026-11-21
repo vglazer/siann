@@ -25,7 +25,8 @@ class Profile:
     search's thresholds for every index given the profile: ``cpu_below``, the batch size below which an IVF
     search runs on the CPU (a single query split over 4 threads), and ``gpu_list_from`` and
     ``cpu_list_from``, the batch sizes from which a scan reads each list once for all the queries that
-    probe it. Without them (siann's default), each index measures its own when it is built: they depend
+    probe it, and ``cpu_blas_from``, the batch size from which the CPU's other scan finds each query's lists
+    through BLAS (L2, cosine and inner product). Without them (siann's default), each index measures its own when it is built: they depend
     on how many lists its queries probe.
     """
     cpu_below: dict[str, int | None]
@@ -71,10 +72,10 @@ class Profile:
             rate = {(p, b): r for _, p, b, r in ivf_rates}
             lines.append(f"  approximate search, queries per second by path and batch size "
                          f"({self.ivf.get('metric')}, recall {self.ivf.get('recall')}, nprobe {self.ivf.get('nprobe')}):")
-            lines.append("    " + " " * 10 + "".join(f"{b:>10,}" for b in batches))
-            for p in ("cpu-split", "cpu-query", "cpu-list", "gpu-query", "gpu-list"):
+            lines.append("    " + " " * 14 + "".join(f"{b:>10,}" for b in batches))
+            for p in ("cpu-split", "cpu-query", "cpu-query-blas", "cpu-list", "gpu-query", "gpu-list"):
                 if any((p, b) in rate for b in batches):
-                    lines.append(f"    {p:10s}" + "".join(f"{rate[(p, b)]:>10,.0f}" if (p, b) in rate else f"{'':>10s}"
+                    lines.append(f"    {p:14s}" + "".join(f"{rate[(p, b)]:>10,.0f}" if (p, b) in rate else f"{'':>10s}"
                                                        for b in batches))
         return "\n".join(lines)
 

@@ -48,6 +48,6 @@ def test_rust_ivf_takes_the_shared_lists(metric):
     assert list(shared.list_sizes()) == list(built.sizes())
     own = IvfIndex(X, built.centroids, 24, metric)      # its own assignment, the same metric
     assert list(own.list_sizes()) == list(built.sizes())
-    assert shared.search(Q, 10, 4) == own.search(Q, 10, 4)
+    assert np.array_equal(shared.search(Q, 10, 4), own.search(Q, 10, 4))
     with pytest.raises(ValueError, match="lists"):
         IvfIndex(X, built.centroids, 24, metric, lists=np.full(len(X), 99, dtype=np.int64))

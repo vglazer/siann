@@ -97,8 +97,8 @@ seconds for a million vectors:
    10th, so that ties broken differently are not misses.
 3. **IVF or exact:** the IVF at the calibrated nprobe is timed against exact search on the same sample, and
    the index keeps whichever is faster.
-4. **Routing:** the index times its CPU scans (one query split over 4 threads, one thread per query, and
-   list-major) and its GPU scans (query-major and list-major) on 1 to 4,096 of the calibration queries,
+4. **Routing:** the index times its CPU scans (one query split over 4 threads, one thread per query with
+   its coarse step in Rust or through BLAS, and list-major) and its GPU scans (query-major and list-major) on 1 to 4,096 of the calibration queries,
    each path by itself, back to back, after a warm-up pass on the GPU (right after calls on the CPU, GPU
    calls run up to 40% slower, which would favor the CPU). A measured route replaces the default one
    (single queries on the CPU, the GPU's query-major scan below 1,000 queries, its list-major scan from
@@ -194,7 +194,7 @@ flowchart TB
     mode -- "split, one query" --> sp["one query's lists over a small<br/>pool of its own, 4 threads"]
     qm --> merge["each query's best k"]
     lm --> merge
-    sp --> merge2["merge the threads' best k<br/>in probe order: same result"] --> merge
+    sp --> merge2["merge the threads' best k:<br/>the same result"] --> merge
 ```
 
 - **Query-major:** each query walks its own lists. Cheap for a single query, but in a batch every query
@@ -204,17 +204,31 @@ flowchart TB
   all of them, then each query's results from its lists are merged. In a batch of 10,000 queries at
   nprobe 64, each list is probed by about 160 of them, and read once instead of 160 times.
 - **Split single queries:** a single query's coarse step and lists divided among a few threads (a pool of
-  their own, 4 by default), each keeping its own best k, merged in probe order so that the result is the
-  one-thread result, ties included. This cuts a single query's latency, 1.3-2.0 times, at the cost of
+  their own, 4 by default), each keeping its own best k, merged into the one-thread result, ties included. This cuts a single query's latency, 1.3-2.0 times, at the cost of
   occupying the threads.
 
-Which scan pays depends on the batch and on nprobe, which is why each index measures its routing.
+Which scan pays depends on the batch and on nprobe, which is why each index measures its routing. Every
+scan returns the same neighbors: among vectors at exactly the same distance, the one with the smaller id
+comes first, whatever order the lists were scanned in (ties are common on integer data such as SIFT's).
 
 **The coarse step.** Finding the nearest nprobe centroids is itself a small exact search (4,000
 centroids), and for a single query it is half the work at nprobe 16. A two-level coarse step cuts it:
 the centroids are clustered into groups (64 for 4,000 lists), and a query is compared with the groups'
 centres, then only with the centroids of its nearest groups (16 of 64): single queries 1.1-2.1 times
 faster on one thread, with at most 0.011 less recall.
+
+For a batch on the CPU, by L2, cosine or inner product, the coarse step can instead be one BLAS matrix
+multiply of the queries against the centroids, whose products Rust ranks as it ranks its own distances,
+finding the same lists. The list-major scan always does it this way (1.04-2.0 times faster). For the
+query-major scan it depends on the machine: with 4 threads it pays from about 32 queries (up to 1.6 times
+faster), with 16 it does not, as each query's own coarse step is already spread over 16 cores. So it is a
+route each index measures (BENCHMARKS, [The coarse step](BENCHMARKS.md#the-coarse-step)).
+
+```mermaid
+flowchart LR
+    b(["a batch, L2 / cosine / ip"]) --> mm["NumPy's BLAS:<br/>queries @ centroids.T"] --> rank["Rust: |c|² - 2 q·c,<br/>each query's nprobe smallest"] --> scan["scan those lists"]
+    b2(["L1, L-infinity, or<br/>routed so"]) --> own["Rust: each query's distances<br/>to every centroid"] --> scan
+```
 
 **List storage.** The scan reads every vector of every probed list, so in a batch of queries scanned one
 by one it is limited by memory traffic, not arithmetic. The lists can therefore be stored in a smaller

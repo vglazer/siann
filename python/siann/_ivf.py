@@ -9,6 +9,13 @@ import numpy as np
 
 CALIBRATION_SAMPLE = 1000
 CALIBRATION_K = 10
+# For L2, cosine and inner product, the CPU's coarse step for a batch can go through BLAS: one matrix
+# multiply of the batch against the centroids, whose products Rust ranks as its own coarse step ranks
+# distances, with the same results. The list-major scan always takes it; the query-major one takes it as
+# the path "cpu-query-blas", from the batch size routing measures it faster (route cpu_blas_from), as that
+# depends on the machine: on 4 threads it pays from about 32 queries, on 16 hardly at all (BENCHMARKS,
+# "The coarse step"). For L1 and L-infinity each query finds its lists in Rust.
+BLAS_CHUNK = 2048        # queries per matrix multiply: products of at most 2,048 x nlist floats
 
 
 def default_nlist(n: int) -> int:
@@ -34,7 +41,7 @@ class IVF:
         t = time.perf_counter()
         self.built = built if built is not None else build_lists(x, nlist, metric, device=device_for_build)
         self.build_seconds = time.perf_counter() - t
-        self._gpu = self._cpu = None
+        self._gpu = self._cpu = self._coarse = None
 
     @property
     def nlist(self) -> int:
@@ -58,16 +65,34 @@ class IVF:
                 self._cpu = IvfIndex(self.x, self.built.centroids, d, self.metric, lists=self.built.assign)
         return self._cpu
 
-    def search(self, q: np.ndarray, k: int, nprobe: int, path: str) -> np.ndarray:
-        """The k nearest by one path: "gpu-query", "gpu-list", "cpu-query", "cpu-list" or "cpu-split"
-        (one query at a time, spread over 4 threads); -1 where fewer than k were found."""
+    def centroids(self) -> np.ndarray:
+        """The centroids as C-contiguous float32, for the coarse step's matrix multiply."""
+        if self._coarse is None:
+            self._coarse = np.ascontiguousarray(self.built.centroids, dtype=np.float32)
+        return self._coarse
+
+    def search(self, q: np.ndarray, k: int, nprobe: int, path: str, coarse: str = "auto") -> np.ndarray:
+        """The k nearest by one path: "gpu-query", "gpu-list", "cpu-query", "cpu-query-blas" (its coarse
+        step through BLAS), "cpu-list" or "cpu-split" (one query at a time, spread over 4 threads); -1 where
+        fewer than k were found. ``coarse`` ("auto", "blas" or "rust") overrides how the CPU's batch paths
+        find each query's lists ("auto": as the path says; the list-major scan through BLAS).
+        All return the same neighbors."""
         nprobe = min(nprobe, self.nlist)
         if path == "gpu-query":
             return np.asarray(self.gpu().search(q, k, nprobe), dtype=np.int64)
         if path == "gpu-list":
             return np.asarray(self.gpu().search_list_major(q, k, nprobe), dtype=np.int64)
         index = self.cpu()
-        if path == "cpu-list":
+        blas = path != "cpu-split" and self.metric in ("l2", "ip") and (
+            coarse == "blas" or (coarse == "auto" and path in ("cpu-query-blas", "cpu-list")))
+        if blas:
+            # the coarse step's products by BLAS, BLAS_CHUNK queries at a time (each query's result
+            # depends on it alone), ranked in Rust as its own coarse step ranks distances
+            c = self.centroids()
+            scan = index.search_list_major if path == "cpu-list" else index.search
+            flat = np.concatenate([scan(q[s:s + BLAS_CHUNK], k, nprobe, products=q[s:s + BLAS_CHUNK] @ c.T)
+                                   for s in range(0, len(q), BLAS_CHUNK)])
+        elif path == "cpu-list":
             flat = index.search_list_major(q, k, nprobe)
         else:
             flat = index.search(q, k, nprobe, split=4 if path == "cpu-split" else 1)
@@ -122,7 +147,7 @@ NEVER = 10 ** 9          # a threshold no batch reaches
 CPU_GIVE_UP = 0.3        # seconds: a CPU call this slow at one batch size is not timed at larger ones
 
 
-DEFAULT_ROUTES = {"cpu_below": 2, "gpu_list_from": 1000, "cpu_list_from": NEVER}
+DEFAULT_ROUTES = {"cpu_below": 2, "gpu_list_from": 1000, "cpu_list_from": NEVER, "cpu_blas_from": NEVER}
 MARGIN = 1.1             # a measured path replaces the default one only where it is this much faster
 
 
@@ -147,7 +172,8 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
     longer timed once the GPU has beaten it at two sizes in a row, or once one of its calls takes 0.3 s.
     Returns the thresholds (``cpu_below``: from which batch size the GPU's best scan beats the CPU's at every
     larger size measured; ``gpu_list_from`` and ``cpu_list_from``: from which the list-major scan beats the
-    query-major one), each departing from ``DEFAULT_ROUTES`` only where the other path is at least 10%
+    query-major one; ``cpu_blas_from``, for L2, cosine and inner product: from which the CPU's query-major
+    scan does its coarse step through BLAS), each departing from ``DEFAULT_ROUTES`` only where the other path is at least 10%
     faster (about the timings' run-to-run spread), and the rates, as {(path, batch): rate}."""
 
     def time_paths(b, paths):
@@ -176,8 +202,9 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
                 ivf.search(q[:b], k, nprobe, path)
     rates = {}
     cpu_on, gpu_wins = True, 0
+    blas = ("cpu-query-blas",) if ivf.metric in ("l2", "ip") else ()
     for b in batches:
-        paths = (("cpu-split",) if b == 1 else ("cpu-query", "cpu-list")) if cpu_on else ()
+        paths = (("cpu-split",) if b == 1 else ("cpu-query",) + blas + ("cpu-list",)) if cpu_on else ()
         measured, slowest = time_paths(b, paths + (("gpu-query", "gpu-list") if gpu else ()))
         rates.update({(path, b): r for path, r in measured.items()})
         if cpu_on:
@@ -190,7 +217,12 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
     many = [b for b in cpu_batches if b > 1]
     cq = {b: rates[("cpu-query", b)] for b in many}
     cl = {b: rates[("cpu-list", b)] for b in many}
-    routes = {"cpu_list_from": crossover_with_margin(cq, cl, DEFAULT_ROUTES["cpu_list_from"]) if cq else NEVER}
+    routes = {"cpu_blas_from": NEVER}
+    if blas and cq:
+        cqb = {b: rates[("cpu-query-blas", b)] for b in many}
+        routes["cpu_blas_from"] = crossover_with_margin(cq, cqb, DEFAULT_ROUTES["cpu_blas_from"])
+        cq = {b: cqb[b] if b >= routes["cpu_blas_from"] else cq[b] for b in many}    # the query-major scan as routed
+    routes["cpu_list_from"] = crossover_with_margin(cq, cl, DEFAULT_ROUTES["cpu_list_from"]) if cq else NEVER
     if gpu:
         gq = {b: rates[("gpu-query", b)] for b in batches}
         gl = {b: rates[("gpu-list", b)] for b in batches}
@@ -206,7 +238,10 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
 def describe_routes(routes: dict, gpu: bool) -> str:
     """The routes, in words."""
     c, gl, cl = routes["cpu_below"], routes["gpu_list_from"], routes["cpu_list_from"]
-    cpu_list = "" if cl >= NEVER else f" (list-major from {cl:,})"
+    cb = routes.get("cpu_blas_from", NEVER)
+    notes = ([] if cb >= NEVER or cb >= min(cl, c) else [f"coarse step through BLAS from {cb:,}"]) + \
+        ([] if cl >= NEVER else [f"list-major from {cl:,}"])
+    cpu_list = f" ({'; '.join(notes)})" if notes else ""
     if not gpu or c >= NEVER:
         return f"single queries split over 4 threads, batches on the CPU{cpu_list}"
     parts = ["single queries on the CPU, split over 4 threads"] if c <= 2 else \

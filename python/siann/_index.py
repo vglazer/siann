@@ -383,7 +383,11 @@ class Index:
                          ("cpu" if batch < r["cpu_below"] else "gpu"))
         if dev == "gpu":
             return "gpu-list" if batch >= r["gpu_list_from"] else "gpu-query"
-        return "cpu-split" if batch == 1 else ("cpu-list" if batch >= r["cpu_list_from"] else "cpu-query")
+        if batch == 1:
+            return "cpu-split"
+        if batch >= r["cpu_list_from"]:
+            return "cpu-list"
+        return "cpu-query-blas" if batch >= r["cpu_blas_from"] else "cpu-query"
 
     @property
     def kind(self) -> str:
