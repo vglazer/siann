@@ -13,6 +13,13 @@ the same Mac, [FAISS](https://github.com/facebookresearch/faiss) on the CPU and
 [mlxvs](https://github.com/mikepapadim/mlxvs) on the GPU, and recommends the fastest for each
 workload, naming the other library where it is faster.
 
+![One query (a red star) among 600 points, and its 25 nearest by three metrics, found by siann: under L2 they fill a circle around the query, under L1 a diamond, under L-infinity a square](https://raw.githubusercontent.com/vglazer/siann/main/assets/metrics.png)
+
+*One query's 25 nearest points under three of siann's metrics: L2 (straight-line distance), L1 (the sum
+of the coordinate differences) and L-infinity (the largest single difference). L1 and L-infinity have no
+matrix-multiply form, so FAISS computes them with plain loops; siann runs them as fast as L2. Drawn by
+`examples/make_figures.py`.*
+
 ## Use
 
 siann builds from source, with [Rust](https://rustup.rs) and [uv](https://docs.astral.sh/uv/) installed

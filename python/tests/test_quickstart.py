@@ -27,3 +27,14 @@ def test_quickstart_notebook_is_up_to_date():
 def test_quickstart_runs():
     nb = nbformat.read(NOTEBOOK, as_version=4)
     nbclient.NotebookClient(nb, timeout=600, kernel_name="python3").execute()
+
+
+# CI turns EncodingWarning into an error; matplotlib's font cache raises one, not the script
+@pytest.mark.filterwarnings("ignore::EncodingWarning:matplotlib")
+def test_make_figures_draws_the_readme_figures(tmp_path):
+    pytest.importorskip("matplotlib")
+    spec = importlib.util.spec_from_file_location("make_figures", ROOT / "examples" / "make_figures.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.main(tmp_path)
+    assert (tmp_path / "metrics.png").stat().st_size > 0
