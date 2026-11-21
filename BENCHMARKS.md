@@ -57,7 +57,7 @@ mlxvs 0.16.1 (NVIDIA cuVS's methods on MLX, CAGRA graphs included):
 | Exact search, L2 or cosine, batches of 10,000 | its GPU (in calls of 1,000, as larger ones exhaust memory) | **5.6-6.0x** |
 | Exact search, inner product, batches of 10,000 | its CPU | **3.5x** |
 | Exact search, L1 or L-infinity | its CPU (its GPU path has neither) | L1 **18.5-25x**, L-infinity **47-49x** |
-| Approximate, single queries | HNSW on the CPU | as above: GloVe **1.5-1.65x**, Music-100 0.85-1.4x, SIFT 0.69-0.77x |
+| Approximate, single queries | HNSW on the CPU | GloVe **1.5-1.65x**, Music-100 0.85-1.4x, SIFT 0.69-0.77x; split over 4 threads, GloVe **1.5-3.1x**, SIFT **1.2-1.6x** from recall 0.97 |
 | Approximate, batches of 100 | HNSW on the CPU | GloVe **1.2-1.8x**, Music-100 0.77-1.05x, SIFT 0.67-0.84x below recall 0.99, level at 0.99 |
 | Approximate, batches of 10,000 | HNSW on the CPU | GloVe **5.0x**, Music-100 **2.1-2.3x**, SIFT **1.2-1.3x** |
 
