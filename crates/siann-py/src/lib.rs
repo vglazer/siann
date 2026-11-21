@@ -889,9 +889,11 @@ impl IvfIndex {
     /// with "float16", rounded to float16 (a C-contiguous uint16 array of their bits, such as NumPy's
     /// `xb.astype(np.float16).view(np.uint16)`), half the memory traffic; with "uint8", as bytes (a
     /// uint8 array), a quarter, which needs every coordinate of `xb` to be an integer from 0 to 255,
-    /// so that nothing is lost. Distances are computed in f32 from the stored values.
+    /// so that nothing is lost. Distances are computed in f32 from the stored values. `lists`, if given
+    /// (int64, one list per base vector, as `siann.ivf_build` assigns them), replaces the assignment,
+    /// so that the CPU and GPU IVFs hold the same lists, near-ties included.
     #[new]
-    #[pyo3(signature = (xb, centroids, d, metric = "l1", stored = None, storage = "float32", assign = None))]
+    #[pyo3(signature = (xb, centroids, d, metric = "l1", stored = None, storage = "float32", assign = None, lists = None))]
     #[allow(clippy::too_many_arguments)] // PyO3 takes the keyword arguments as parameters
     fn py_new(
         py: Python<'_>,
@@ -902,6 +904,7 @@ impl IvfIndex {
         stored: Option<&Bound<'_, PyAny>>,
         storage: &str,
         assign: Option<&str>,
+        lists: Option<PyReadonlyArray1<'_, i64>>,
     ) -> PyResult<Self> {
         let kind = parse_metric(metric)?;
         let assign_kind = match assign {
@@ -948,10 +951,25 @@ impl IvfIndex {
         if nlist == 0 {
             return Err(PyValueError::new_err("need at least one centroid"));
         }
+        let given: Option<Vec<u32>> = match lists {
+            Some(a) => {
+                let a = a
+                    .as_slice()
+                    .map_err(|_| PyValueError::new_err("lists must be contiguous"))?;
+                if a.len() != xb.len() / d || a.iter().any(|&l| l < 0 || l as usize >= nlist) {
+                    return Err(PyValueError::new_err(
+                        "lists must give each base vector a list in range",
+                    ));
+                }
+                Some(a.iter().map(|&l| l as u32).collect())
+            }
+            None => None,
+        };
         Ok(py.detach(|| {
             let centroids = to_blocks(cents.chunks_exact(d), d);
-            let assign =
-                with_metric!(assign_kind, M => flat_search::<M>(&centroids, d, nlist, &xb, 1, 256));
+            let assign = given.unwrap_or_else(|| {
+                with_metric!(assign_kind, M => flat_search::<M>(&centroids, d, nlist, &xb, 1, 256))
+            });
             let mut members: Vec<Vec<u32>> = vec![Vec::new(); nlist];
             for (i, &c) in assign.iter().enumerate() {
                 members[c as usize].push(i as u32);

@@ -235,6 +235,28 @@ lists), the strongest alternative, at the nearest recall (`faiss_sq_sift_l2.txt`
   list-major is slower for single queries (it pays for grouping), wins in batches of 100 from nprobe 64
   (32 on SIFT L1), and always wins at 10,000.
 
+### The IVF's k-means
+
+*Reproduce with `kmeans_check.py --dataset sift|glove|music100` and `kmeans_check.py --dataset dbpedia
+--base 100000 --nlist 1000 --queries 1000`.*
+
+siann trains the IVF's centroids with its own k-means (`siann.kmeans`: 10 iterations of Lloyd's algorithm
+on 100 sample vectors per list, nearest centroids found by the exact kernels on the GPU). The measurements
+on this page use lists from FAISS's k-means with the same settings; siann's give the same recall within
+the spread between seeds, and better on Music-100. Recall@10 by nprobe, GPU IVF, list-major scan, every
+query (`kmeans_check_*.txt`):
+
+| Dataset | k-means | nprobe 8 | 16 | 32 | 64 | 128 | Training |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| SIFT | FAISS / siann | 0.716 / 0.718 | 0.840 / 0.839 | 0.925 / 0.924 | 0.973 / 0.974 | 0.993 / 0.993 | 12.9 / 3.5 s |
+| GloVe | FAISS / siann | 0.631 / 0.631 | 0.712 / 0.712 | 0.780 / 0.780 | 0.839 / 0.839 | 0.890 / 0.889 | 13.1 / 2.9 s |
+| Music-100 | FAISS / siann | 0.850 / **0.866** | 0.911 / **0.922** | 0.948 / **0.957** | 0.967 / **0.976** | 0.978 / **0.987** | 12.4 / 2.9 s |
+| DBpedia, 100,000 (1,000 lists) | FAISS / siann | 0.847 / 0.850 | 0.902 / 0.904 | 0.943 / 0.945 | 0.969 / 0.972 | 0.987 / 0.988 | 2.0 / 4.5 s |
+
+A second seed moves siann's recall by up to 0.004. Training takes a third to a quarter of FAISS's time on a
+million vectors, but more than twice as long at 1,536 dimensions with 1,000 lists, where finding each
+vector's one nearest centroid goes through the top-k selection built for many.
+
 ### Where a GPU call's time goes
 
 *Reproduce with `gpu_small_batch.py`, `gpu_select_ab.py`.*

@@ -9,6 +9,7 @@ import numpy as np
 import torch
 
 from . import torch_kernels as tk
+from .ivf_build import build_lists
 from .knn_kernels import COMBINE
 
 SCAN = """
@@ -136,21 +137,20 @@ def _lib(source: str, metric: str, **sizes: int):
 
 
 class TorchIVF:
-    def __init__(self, xb: np.ndarray, centroids: np.ndarray, metric: str):
+    def __init__(self, xb: np.ndarray, centroids: np.ndarray, metric: str, built=None):
+        """The lists come from ``built`` (a ``siann.ivf_build.Lists``, the same for every backend), or are
+        built from ``centroids``, assigned as siann.ivf_build assigns them."""
         self.metric = metric
         dev = "mps"
-        self.centroids = torch.from_numpy(np.ascontiguousarray(centroids)).to(dev)
+        if built is None:
+            built = build_lists(xb, len(centroids), metric, centroids=centroids, device="cpu")
+        self.built = built
+        self.centroids = torch.from_numpy(built.centroids).to(dev)
         self.cnorms = (self.centroids * self.centroids).sum(1)
-        self.nlist = len(centroids)
-        # lists assigned by L2 for inner product, as siann.ivf_gpu's (queries still probe by inner product)
-        by = "l2" if metric == "ip" else metric
-        assign = np.concatenate([self._nearest(torch.from_numpy(xb[i:i + 4096]).to(dev), 1, metric=by)[:, 0].cpu().numpy()
-                                 for i in range(0, len(xb), 4096)])
-        order = np.argsort(assign, kind="stable")
-        self.ids = torch.from_numpy(order.astype(np.int64)).to(dev)
-        self.x = torch.from_numpy(np.ascontiguousarray(xb[order])).to(dev)
-        counts = np.bincount(assign, minlength=self.nlist)
-        self.offsets = torch.from_numpy(np.concatenate([[0], np.cumsum(counts)]).astype(np.int32)).to(dev)
+        self.nlist = built.nlist
+        self.ids = torch.from_numpy(built.order).to(dev)
+        self.x = torch.from_numpy(np.ascontiguousarray(xb[built.order])).to(dev)
+        self.offsets = torch.from_numpy(built.offsets.astype(np.int32)).to(dev)
 
     def _to_ids(self, local: torch.Tensor) -> np.ndarray:
         """Positions in the lists to base ids; -1 (fewer than k found) stays -1."""

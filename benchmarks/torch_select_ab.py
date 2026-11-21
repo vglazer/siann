@@ -5,8 +5,8 @@ two-stage selection, 64 threads per query and the separate merge ("earlier"); Py
 the ordered selection up to nprobe 16); MLX with the same defaults. Float32 lists (the PyTorch IVF has
 no others), the centroids of ivf_gpu.py's k-means for both, so the lists are the same; the results are
 compared index for index (they can differ only where two centroids tie at the nprobe-th place).
-FAISS (whose k-means ivf_gpu.py uses) and PyTorch cannot share a process on macOS, so the MLX part runs
-first in a process of its own and saves the centroids and its results for the PyTorch part.
+The MLX part runs first in a process of its own and saves the centroids and its results for the PyTorch
+part.
 
 Queries per second: single queries (one call each), batches of 100 (query-major scan) and one batch
 of 10,000 (list-major scan), median of three after a warm-up (single queries: one pass).

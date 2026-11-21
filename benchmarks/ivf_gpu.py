@@ -1,6 +1,6 @@
 """The GPU IVF (siann.ivf_gpu) against exact search: --check runs both scans, probing every list,
 against NumPy on small random data, for every metric and list storage (run by check_kernels.py in a
-process of its own, since FAISS, whose k-means GpuIVF uses, and PyTorch cannot share one); without it,
+process of its own); without it,
 recall and queries per second at a range of nprobe.
 
     uv run --group bench python ivf_gpu.py [--metric l1|l2|linf] [--batch 1000]
@@ -19,8 +19,8 @@ from datasets import load
 
 def check() -> bool:
     """Both scans, probing every list, against exact search (NumPy) on small random data, for every
-    metric and both list storages; with fewer probes, the two scans must agree. Run by check_kernels.py in its own process,
-    since FAISS (the k-means here) and PyTorch cannot share one."""
+    metric and every list storage; with fewer probes, the two scans must agree. Run by check_kernels.py
+    in its own process."""
     ok = True
     rng = np.random.default_rng(2)
     for n, d, nq, k, nlist in ((5000, 32, 9, 10, 37), (3001, 37, 70, 10, 16), (4000, 100, 20, 1, 50)):

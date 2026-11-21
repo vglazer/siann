@@ -1,0 +1,6 @@
+glove, l2: 1,183,514 vectors, 100 dimensions, 4000 lists, k-means on 400,000 sample vectors, 10 iterations
+
+  centroids                   train s  largest  empty    np 8   np 16   np 32   np 64  np 128
+  FAISS k-means                  13.1    1,504   0.0%   0.631   0.712   0.780   0.839   0.890
+  siann k-means, seed 1           2.9    1,320   0.0%   0.631   0.712   0.780   0.839   0.889
+  siann k-means, seed 2           3.0    1,482   0.0%   0.631   0.712   0.779   0.838   0.889

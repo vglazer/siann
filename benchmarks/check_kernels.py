@@ -149,6 +149,6 @@ for n, d, nq, k in ((5000, 32, 9, 10), (20011, 128, 33, 1), (3000, 7, 5, 32), (3
     ok &= all(results.values())
     print(f"n={n} d={d} q={nq} k={k}: " + ", ".join(f"{name} {r}" for name, r in results.items())
           + "; tiled distance error " + ", ".join(f"{name} {e:.1e}" for name, e in errs.items()), flush=True)
-# MLX's IVF (ivf_gpu.py) in its own process: its k-means is FAISS's, which cannot share one with PyTorch.
+# MLX's IVF (ivf_gpu.py --check), in its own process.
 ok &= subprocess.run([sys.executable, str(Path(__file__).with_name("ivf_gpu.py")), "--check"]).returncode == 0
 sys.exit(0 if ok else 1)

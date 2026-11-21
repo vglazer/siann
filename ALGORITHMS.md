@@ -92,7 +92,8 @@ An IVF (inverted file) index clusters the base vectors and searches only the clu
 query. It trades a little recall (the share of the true k nearest neighbors found) for a large cut in
 work.
 
-**Building.** k-means (FAISS's, 10 iterations, on a sample of 100 vectors per cluster) finds the
+**Building.** k-means (siann's own, on the GPU where there is one: 10 iterations of Lloyd's algorithm on a
+sample of 100 vectors per cluster, from randomly chosen starting vectors) finds the
 cluster centers, the centroids; siann uses 4,000 for a million vectors. Each base vector then goes to
 the list of its nearest centroid in the search metric, found by exact search, except for inner
 product, whose lists are assigned by L2 (by inner product, centroids pointing towards long vectors

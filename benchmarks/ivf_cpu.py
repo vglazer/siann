@@ -2,7 +2,7 @@
 as recall at 10 against queries per second, at three batch sizes: single queries (one call per query),
 batches of 100, and one batch of all the queries.
 
-All three IVFs use the same k-means centroids (GpuIVF's: FAISS k-means, 10 iterations, seed 1), so
+All three IVFs use the same k-means centroids (GpuIVF's: siann's k-means, 10 iterations, seed 1), so
 that they differ only in how they search. Recall counts a returned neighbor as correct when it is no
 farther than the exact k-th nearest, so that ties (common in L1 on SIFT's integer data) are not
 misses. Exact neighbors from the Rust flat index.

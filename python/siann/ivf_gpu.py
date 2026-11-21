@@ -1,7 +1,8 @@
 """IVF on the GPU (MLX) for L1, L2, L-infinity and inner product.
 
-Build: k-means centroids (in L2), each vector assigned to its nearest centroid in the search metric by
-the exact GPU kernel, vectors stored grouped by list (float32, float16 or uint8). Search, a batch of
+Build (siann.ivf_build): siann's k-means centroids (in L2), each vector assigned to its nearest centroid
+by the exact kernels (in the search metric; in L2 for inner product), vectors stored grouped by list
+(float32, float16 or uint8). Search, a batch of
 queries at a time: each query's nprobe nearest centroids, then either the query-major scan (128
 threads per query walk its lists and merge their best k inside the kernel) or the list-major scan
 (queries grouped by list, each list read once for all the queries that probe it).
@@ -9,7 +10,7 @@ threads per query walk its lists and merge their best k inside the kernel) or th
 import mlx.core as mx
 import numpy as np
 
-from .exact import knn
+from .ivf_build import build_lists
 from .knn_kernels import COMBINE, _finish, dist, select_k
 
 SCAN = """
@@ -163,32 +164,29 @@ def probe_lists(dist: mx.array, nprobe: int, select: str = "argpartition") -> mx
 
 class GpuIVF:
     def __init__(self, xb: np.ndarray, nlist: int, metric: str, lists: str = "float32",
-                 assign: str | None = None, probe: str | None = None):
+                 assign: str | None = None, probe: str | None = None, centroids: np.ndarray | None = None,
+                 built=None):
         """``lists`` is the storage of the inverted lists: "float32"; "float16", half the memory
         traffic, distances still computed in float32 from the rounded vectors; or "uint8", a quarter,
         for vectors whose coordinates are integers from 0 to 255 (SIFT's), so that nothing is lost.
         ``assign`` is the metric that puts each vector in its list and ``probe`` the one that picks a
         query's lists (the coarse step); both default to ``metric``, which the scan always uses, except
         that for inner product the lists are assigned by L2 (by inner product, centroids pointing
-        towards long vectors attract much of the data: BENCHMARKS.md, "Inner product")."""
+        towards long vectors attract much of the data: BENCHMARKS.md, "Inner product"). ``built`` is a
+        ``siann.ivf_build.Lists`` to take the lists from (the same lists for every backend);
+        otherwise they are built here, from ``centroids`` if given."""
         if lists == "uint8" and not np.array_equal(xb.astype(np.uint8).astype(np.float32), xb):
             raise ValueError("uint8 lists need coordinates that are integers from 0 to 255")
         self.metric = metric
         self.probe_metric = probe or metric   # the coarse step's metric; the scan uses `metric`
-        sample = xb[np.random.default_rng(0).choice(len(xb), min(len(xb), 100 * nlist), replace=False)]
-        import faiss   # k-means only
-
-        km = faiss.Kmeans(xb.shape[1], nlist, niter=10, seed=1)
-        km.train(sample)
-        self.centroids = mx.array(km.centroids)
+        if built is None:
+            built = build_lists(xb, nlist, metric, centroids=centroids, assign=assign, device="gpu")
+        self.built = built
+        self.centroids = mx.array(built.centroids)
         self.cnorms = mx.sum(self.centroids * self.centroids, axis=1)
-        assign = np.concatenate([np.array(knn(mx.array(xb[i:i + 4096]), self.centroids, self.cnorms, 1, assign or ('l2' if metric == 'ip' else metric)))[:, 0]
-                                 for i in range(0, len(xb), 4096)])
-        order = np.argsort(assign, kind="stable")
-        self.ids = mx.array(order.astype(np.int32))
-        self.x = mx.array(xb[order]).astype(getattr(mx, lists))
-        counts = np.bincount(assign, minlength=nlist)
-        self.offsets = mx.array(np.concatenate([[0], np.cumsum(counts)]).astype(np.int32))
+        self.ids = mx.array(built.order.astype(np.int32))
+        self.x = mx.array(xb[built.order]).astype(getattr(mx, lists))
+        self.offsets = mx.array(built.offsets.astype(np.int32))
         mx.eval(self.x, self.ids, self.offsets)
 
     def search(self, xq: np.ndarray, k: int, nprobe: int, threads: int = 128,
