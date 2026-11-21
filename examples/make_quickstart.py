@@ -243,11 +243,28 @@ recall(truth, truth)
     md("""
 ## Approximate search
 
-With a recall target, siann builds an IVF: it clusters the vectors into lists (with its own k-means),
-finds how many lists each query must probe (nprobe) to reach the target on a sample of queries, times that
-against exact search on the sample, and keeps whichever is faster. The sample should look like the real
-queries: here, 1,000 of them, passed as `calibration_queries`. The plan reports every choice.
-"""),
+Exact search compares each query with every vector. Approximate search compares it with only some of them,
+trading a little accuracy for a lot of speed.
+
+**IVF.** siann does this with an [inverted file]({W}Inverted_index) (IVF). When the index is built, the
+vectors are grouped into *lists* by [k-means clustering]({W}K-means_clustering): each list holds the vectors
+nearest one cluster centre, its *centroid*. A search compares the query with the centroids, picks the lists
+of the nearest few, and scans only their vectors. Most of a query's true neighbors are in those lists; a few
+sit just across a list's boundary, in a list that was not scanned, and are missed.
+
+**nprobe** is how many lists a search scans. Scanning more lists finds more of the true neighbors and takes
+longer; scanning all of them is exact search.
+
+**Recall** measures what is missed. Recall@10 is the share of each query's true 10 nearest neighbors that the
+search returns, averaged over the queries: at 0.95, 95 of every 100 true neighbors are found. It is how
+approximate search is judged: a faster search at lower recall is not a better one, so methods are compared
+at the same recall, as in siann's benchmarks.
+
+With a recall target, siann builds an IVF, finds the smallest nprobe that reaches the target on a sample of
+queries (*calibration*), times that against exact search on the sample, and keeps whichever is faster. The
+sample should look like the real queries: here, 1,000 of them, passed as `calibration_queries`. The plan
+reports every choice.
+""".format(W=W)),
     code("""
 approx = siann.Index(xb, "l2", recall=0.95, calibration_queries=xq[:1000])
 print(approx.plan)
@@ -288,8 +305,10 @@ ax.set_xlabel("queries per batch"); ax.set_ylabel("queries per second"); ax.lege
 fig.tight_layout()
 """),
     md("""
-nprobe trades recall for speed. Below, a batch of 9,000 queries at nprobe from 1 to 128 (`search(...,
-nprobe=)` overrides the calibrated value), with the calibrated point and exact search marked.
+nprobe trades recall for speed. Below, recall against queries per second for a batch of 9,000 queries at
+nprobe from 1 to 128 (`search(..., nprobe=)` overrides the calibrated value). Each step doubles the lists
+scanned: recall climbs towards 1.0 and speed falls towards exact search's (in red, the dashed line its
+speed). The calibrated nprobe is ringed: the fewest lists that reach the target.
 """),
     code("""
 curve = []
@@ -298,17 +317,20 @@ for p in (1, 2, 4, 8, 16, 32, 64, 128):
     start = time.perf_counter()
     found = approx.search(rest, 10, nprobe=p).indices
     curve.append((recall(found, truth[1000:]), len(rest) / (time.perf_counter() - start), p))
-fig, ax = plt.subplots(figsize=(6, 3.6))
-ax.plot([r for r, _, _ in curve], [q for _, q, _ in curve], marker="o", label="IVF, by nprobe")
+fig, ax = plt.subplots(figsize=(7, 4.2))
+ax.plot([r for r, _, _ in curve], [q for _, q, _ in curve], marker="o", c="tab:blue", label="IVF, by nprobe")
 for r, q, p in curve:
-    ax.annotate(str(p), (r, q), textcoords="offset points", xytext=(4, 4), fontsize=8)
+    ax.annotate(f"nprobe {p}", (r, q), textcoords="offset points", xytext=(-8, 2), ha="right", fontsize=8,
+                color="tab:blue")
 calibrated = [c for c in curve if c[2] == approx.nprobe]
 if calibrated:
-    ax.scatter([calibrated[0][0]], [calibrated[0][1]], s=120, facecolors="none", edgecolors="black",
-               label=f"calibrated, nprobe {approx.nprobe}")
-ax.scatter([1.0], [exact_rate[-1]], marker="s", label="exact")
-ax.set_yscale("log"); ax.set_xlabel("recall@10"); ax.set_ylabel("queries per second (batch of 9,000)")
-ax.legend(); fig.tight_layout()
+    ax.scatter([calibrated[0][0]], [calibrated[0][1]], s=260, facecolors="none", edgecolors="tab:orange",
+               linewidths=2.5, zorder=3, label=f"calibrated to recall 0.95 (nprobe {approx.nprobe})")
+ax.axhline(exact_rate[-1], color="tab:red", linestyle="--", linewidth=1)
+ax.scatter([1.0], [exact_rate[-1]], marker="s", s=90, c="tab:red", zorder=3, label="exact search (recall 1.0)")
+ax.set_yscale("log"); ax.set_xlabel("recall@10 (share of the true 10 nearest found)")
+ax.set_ylabel("queries per second, batch of 9,000")
+ax.legend(loc="center left"); fig.tight_layout()
 """),
     md("""
 Without `calibration_queries`, siann calibrates on a sample of the index's own vectors, and the target
