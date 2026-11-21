@@ -794,6 +794,48 @@ On batches of 10,000 the two run level up to nprobe 16, and PyTorch is up to 1.1
 batches of 100 PyTorch reaches 0.84-0.97x MLX's speed, and on single queries 0.50-0.88x, from its fixed
 cost of about 0.2 ms per call.
 
+## On Linux
+
+*Reproduce with the `x86_bench.yml` workflow (Actions, CPU benchmark on Linux, Run workflow), which runs
+`x86_cpu.py` on GitHub's Linux runners; raw output in `results/x86_cpu_linux_*.txt`.*
+
+Every other number here is from an M3 Max. This one runs siann's CPU path against FAISS on GitHub's Linux
+runners, 4 threads each: an Intel Xeon 6975P-C (x86-64) and an ARM processor. The data are synthetic,
+since the datasets are too large for a runner: 200,000 vectors of 128 dimensions, drawn from 100 clusters
+in 16 dimensions and projected to 128, so that an IVF at recall 0.95 probes 9 of 1,789 lists, as on SIFT.
+The queries are 1,000 more from the same clusters, k is 10, and siann's exact neighbors are FAISS's in
+every case.
+
+Exact search, siann's queries per second as a multiple of FAISS's flat index, by batch size:
+
+| Metric | x86-64: 1 | 10 | 100 | 1,000 | ARM: 1 | 10 | 100 | 1,000 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| L2 | 2.35 | 1.92 | 2.03 | 2.38 | 3.24 | 1.34 | 0.97 | 0.88 |
+| inner product | 2.08 | 1.46 | 1.80 | 2.32 | 2.29 | 1.09 | 0.81 | 0.78 |
+| L1 | 1.55 | 2.71 | 2.96 | 3.72 | 1.77 | 1.92 | 1.65 | 2.07 |
+| L-infinity | 20 | 30 | 35 | 43 | 16 | 16 | 14 | 17 |
+
+The x86-64 wheels are compiled for x86-64-v3 (AVX2 and FMA). Built for any x86-64 processor instead, siann
+runs L1 and L-infinity 1.9-2.4x slower, single L1 queries at 0.65x FAISS's speed; L2 and inner product do
+not change, as NumPy's BLAS does their arithmetic. On ARM, NumPy's BLAS trails FAISS's for L2 and inner
+product from batches of 100.
+
+Approximate search by L2: `siann.Index(recall=0.95)` calibrated on 1,000 separate queries reaches recall
+0.961 at nprobe 9. FAISS's IVF-Flat, on the same number of lists, reaches 0.972 at nprobe 10, and its HNSW
+(M 32) 0.968 at efSearch 12, the first settings at or above siann's recall. siann's queries per second as a
+multiple of each:
+
+| Against | x86-64: 1 | 10 | 100 | 1,000 | ARM: 1 | 10 | 100 | 1,000 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| FAISS IVF-Flat | 2.37 | 0.77 | 0.63 | 1.12 | 2.25 | 0.65 | 0.56 | 0.54 |
+| FAISS HNSW | 0.15 | 0.26 | 0.31 | 0.55 | 0.29 | 0.31 | 0.41 | 0.43 |
+
+On these 4-thread machines siann's IVF leads FAISS's only on single queries and, on x86-64, on batches of
+1,000; on the M3 Max's 16 threads the same script has it ahead at batches of 100 and 1,000 too (1.22x and
+1.32x). These synthetic vectors suit a graph index more than SIFT does: HNSW leads siann's IVF 1.8-6.7x
+here, against 1.2-1.8x for siann's CPU IVF on SIFT1M on the M3 Max, single queries and batches of 10,000
+([Approximate search: batches](#approximate-search-batches)).
+
 ## Reproducing
 
 With [Rust](https://rustup.rs) and [uv](https://docs.astral.sh/uv/) installed, `uv sync --group bench`

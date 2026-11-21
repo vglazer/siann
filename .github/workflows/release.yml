@@ -2,7 +2,8 @@ name: Release
 
 # Runs the CI tests, builds wheels for Linux (x86-64 and ARM), macOS (Apple silicon) and Windows (x86-64)
 # plus a source distribution, smoke-tests each wheel on its own platform, then publishes them with PyPI's
-# trusted publishing (no stored tokens). Each wheel is abi3: built against Python's stable interface, so one
+# trusted publishing (no stored tokens). The x86-64 wheels require AVX2 and FMA (x86-64-v3); the source
+# distribution builds for the machine it is installed on. Each wheel is abi3: built against Python's stable interface, so one
 # wheel per platform serves Python 3.12 and later.
 #
 # - To release: set the version in crates/siann-py/Cargo.toml, commit and push, then create a release on
@@ -52,12 +53,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # each wheel is built on a runner of its own architecture, so that it can be smoke-tested there;
-          # x86-64 wheels target baseline x86-64, so they run on any x86-64 processor
-          - { os: ubuntu-latest, target: x86_64 }
+          # each wheel is built on a runner of its own architecture, so that it can be smoke-tested there.
+          # x86-64 wheels target x86-64-v3 (AVX2 and FMA: Intel from Haswell, AMD from Excavator), which
+          # makes L1 and L-infinity search 1.9-2.4x faster (x86_bench.yml measures it); siann._build
+          # refuses to load them on older processors, with a message saying to build from source
+          - { os: ubuntu-latest, target: x86_64, v3: true }
           - { os: ubuntu-24.04-arm, target: aarch64 }
           - { os: macos-latest, target: aarch64 }
-          - { os: windows-latest, target: x64 }
+          - { os: windows-latest, target: x64, v3: true }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -68,11 +71,30 @@ jobs:
       - name: Give a TestPyPI rehearsal its own version (VERSION.devRUN)
         if: github.event_name == 'workflow_dispatch'
         run: python scripts/set_dev_version.py ${{ github.run_number }}
+      - name: Record that the x86-64 wheel requires AVX2 and FMA
+        if: matrix.v3
+        shell: bash
+        run: |
+          sed -i.bak 's/^X86_FEATURES: tuple\[str, \.\.\.\] = ()$/X86_FEATURES: tuple[str, ...] = ("AVX2", "FMA3")/' python/siann/_build.py
+          grep -q '^X86_FEATURES: tuple\[str, ...\] = ("AVX2", "FMA3")$' python/siann/_build.py
+          rm python/siann/_build.py.bak
       - uses: PyO3/maturin-action@v1
+        env:
+          RUSTFLAGS: ${{ matrix.v3 && '-C target-cpu=x86-64-v3' || '' }}
         with:
           target: ${{ matrix.target }}
           manylinux: auto
           args: --release --out dist
+      - name: Check that the x86-64 wheel uses AVX
+        # proves the x86-64-v3 target reached the build (Windows has no objdump on the runner)
+        if: matrix.v3 && runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir wheel && cd wheel && python -m zipfile -e ../dist/*.whl .
+          grep -q '"AVX2", "FMA3"' siann/_build.py
+          count=$(objdump -d $(find . -name '_cpu*.so') | grep -c ymm || true)
+          echo "256-bit (AVX) instructions: $count"
+          test "$count" -gt 0
       - name: Check that the wheel is abi3
         shell: bash
         run: ls dist/*-cp312-abi3-*.whl

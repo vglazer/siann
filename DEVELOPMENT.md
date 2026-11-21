@@ -61,9 +61,15 @@ for each platform:
 
 | Platform | Wheel |
 | --- | --- |
-| Linux, x86-64 and ARM | manylinux: glibc-based distributions (most; not Alpine) |
+| Linux, x86-64 and ARM | manylinux: glibc-based distributions (most; not Alpine); x86-64 needs AVX2 |
 | macOS, Apple silicon | macOS 11 or later; installs MLX, the GPU backend |
-| Windows, x86-64 | |
+| Windows, x86-64 | needs AVX2 |
+
+The x86-64 wheels are compiled for x86-64-v3, which requires AVX2 and FMA (Intel processors from Haswell,
+2013, and AMD's from Excavator, 2015): that makes L1 and L-infinity search 1.9-2.4x faster than a build for
+any x86-64 processor (BENCHMARKS, [On Linux](BENCHMARKS.md#on-linux)). On an older processor, `import
+siann` raises an ImportError saying so (`siann._build`, checked before the Rust extension loads), and
+`pip install --no-binary siann siann` builds siann for that machine from the source distribution.
 
 and a source distribution, and smoke-tests each (`scripts/smoke_test.py`: exact search by every metric
 against NumPy, an IVF reaching its recall target, a save and load) on its own platform on Python 3.12

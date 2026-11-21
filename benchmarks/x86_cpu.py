@@ -2,8 +2,9 @@
 installed: exact search by L2, inner product, L1 and L-infinity, and approximate search (siann's IVF at a
 recall target against FAISS's IVF-Flat and HNSW at matched recall), at batch sizes from 1 to 1,000, on
 synthetic vectors of low intrinsic dimension (the datasets are too large for a CI runner). siann's
-neighbors are checked against FAISS's exact search. The workflow x86_bench.yml runs it on GitHub's x86-64 runners, once per
-build of siann (baseline x86-64, as the published wheels are built, and x86-64-v3, with AVX2).
+neighbors are checked against FAISS's exact search. The workflow x86_bench.yml runs it on GitHub's
+Linux runners; on x86-64, once per build of siann (x86-64-v3, with AVX2 and FMA, as the published wheels
+are built, and baseline x86-64).
 
     uv run --group bench python x86_cpu.py [--n 200000] [--d 128] [--siann-only]
 """

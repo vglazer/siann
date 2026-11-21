@@ -1,0 +1,14 @@
+Intel(R) Xeon(R) 6975P-C, 4 threads, Linux; siann 0.1.0, FAISS 1.16.0
+200,000 x 128 clustered vectors, 1,000 queries, k = 10; queries per second by batch size
+
+exact search, siann / FAISS (ratio); siann's neighbors against FAISS's
+  metric                         1                        10                       100                     1,000   agree
+  l2                           406                     1,159                     2,454                     3,138   1.0000
+  ip                           424                     1,082                     2,410                     3,302   1.0000
+  l1                           216                     1,082                     1,401                     1,757   1.0000
+  linf                         222                     1,063                     1,389                     1,701   1.0000
+
+approximate search, L2: siann.Index(recall=0.95) calibrated on 1,000 separate queries
+  siann IVF (1,789 lists, nprobe 9, built in 12.3 s): recall 0.961
+           1        10       100     1,000
+       5,942    18,826    30,085    55,211
