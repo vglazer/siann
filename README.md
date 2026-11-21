@@ -3,26 +3,48 @@
 [![CI](https://github.com/vglazer/siann/actions/workflows/ci.yml/badge.svg)](https://github.com/vglazer/siann/actions/workflows/ci.yml)
 [![Documentation](https://img.shields.io/readthedocs/siann/latest)](https://siann.readthedocs.io)
 
-*Pronounced like "cyan".*
+**Fast nearest-neighbor search on Apple silicon,** for dense NumPy vectors, on the GPU and the CPU,
+by Euclidean (L2), cosine, inner product, Manhattan (L1) and Chebyshev (L-infinity) distance. Each search
+runs where it is fastest for its batch size and metric, and `index.plan` says why; `siann.tune` measures
+the choice on your own data and hardware.
 
-**si**licon **a**pproximate **n**earest **n**eighbors: fast similarity search on Apple silicon, for
-dense NumPy vectors, across metrics (L1, L2, L-infinity, cosine, inner product). siann has three
-backends: the CPU (its own Rust code, and BLAS through NumPy) and two GPU backends running the same
-kernels, [MLX](https://github.com/ml-explore/mlx) and PyTorch, of which MLX is the faster on Apple
-silicon and the one `siann.Index` uses. It routes each search to the CPU or the GPU, measures every path against the strongest
-alternative on the same Mac, [FAISS](https://github.com/facebookresearch/faiss) on the CPU and
-[mlxvs](https://github.com/mikepapadim/mlxvs) on the GPU, and recommends the fastest for each
-workload, naming the other library where it is faster.
+Exact search beats FAISS on the CPU and mlxvs on the GPU almost everywhere, most of all for L1 and
+L-infinity. Where another library is faster, as graph indexes are for approximate search on some data,
+[Which to use](#which-to-use-and-how-it-compares) says so.
+
+Start with the [quickstart notebook](https://github.com/vglazer/siann/blob/main/examples/quickstart.ipynb).
 
 ![One query (an orange dot) among 600 points, and its 25 nearest by three metrics, found by siann: under L2 they fill a circle around the query, under L1 a diamond, under L-infinity a square](https://raw.githubusercontent.com/vglazer/siann/main/assets/metrics.png)
 
 *One query's 25 nearest points by Euclidean (L2), Manhattan (L1) and Chebyshev (L-infinity) distance.*
 
-## Use
+## Install
 
-siann builds from source, with [Rust](https://rustup.rs) and [uv](https://docs.astral.sh/uv/) installed
-(`git clone https://github.com/vglazer/siann && cd siann && uv sync`). Exact search, on any of the five
-metrics:
+siann requires a Mac with Apple silicon, Python 3.12 or later, and a [Rust](https://rustup.rs)
+toolchain to build it from source:
+
+```sh
+uv add git+https://github.com/vglazer/siann         # with uv
+pip install git+https://github.com/vglazer/siann    # with pip
+```
+
+To run the quickstart notebook, clone the repository and, from its folder,
+`uv run --group dev --with jupyterlab jupyter lab examples/quickstart.ipynb`.
+
+## Documentation
+
+| Document | What it covers |
+| --- | --- |
+| [Quickstart notebook](https://github.com/vglazer/siann/blob/main/examples/quickstart.ipynb) | The metrics, scores, plans, devices and tuning, hands-on |
+| [siann.readthedocs.io](https://siann.readthedocs.io) | These pages, online |
+| [ARCHITECTURE](ARCHITECTURE.md) | Why siann is faster than FAISS (and where it is not), with diagrams of how the pieces fit and which path a search takes |
+| [ALGORITHMS](ALGORITHMS.md) | How exact search and IVF work on the GPU and the CPU, and what does not pay |
+| [BACKENDS](BACKENDS.md) | MLX, PyTorch MPS, FAISS and siann's Rust code: what each offers, and their pitfalls |
+| [DATASETS](DATASETS.md) | SIFT1M, GloVe-100, Music-100, DBpedia OpenAI and Gaussian vectors: sources, preparation and quirks |
+| [BENCHMARKS](BENCHMARKS.md) | Which path to use for each workload, and every measurement behind it, with the scripts that reproduce them |
+| [TUNING](TUNING.md) | The routing thresholds siann uses, where its defaults come from, and how to measure them on your data and hardware |
+
+## Python
 
 ```python
 import numpy as np
@@ -30,18 +52,16 @@ import siann
 
 xb = np.random.default_rng(0).standard_normal((100_000, 128), dtype=np.float32)
 index = siann.Index(xb, metric="cosine")     # or "l2", "l1", "linf", "ip"
-res = index.search(xb[:5], k=10)             # on the GPU or the CPU, by batch size
-res.indices, res.scores                      # (5, 10) each, best first: similarities for cosine
+res = index.search(xb[:5], k=10)             # exact, on the GPU or the CPU by batch size
+res.indices, res.scores                      # (5, 10) each, best first
 print(index.plan)                            # what was chosen, and why
-profile = siann.tune(xb)                     # optional: measure the GPU/CPU routing on your data
+profile = siann.tune(xb)                     # measure the GPU/CPU choice on your data
 ```
 
 Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, the
-similarity for cosine and inner product. Each search goes to the GPU or the CPU by its batch size, from
-thresholds measured on an M3 Max; `siann.tune` measures them on your own data and hardware
-([TUNING](TUNING.md)), and `device="cpu"` or `"gpu"` overrides the choice, for the index or for one
-search. The [quickstart notebook](examples/quickstart.ipynb) walks through every metric, the
-scores, the plan and the devices; `examples/make_quickstart.py` rebuilds it.
+similarity for cosine and inner product. `device="cpu"` or `"gpu"` overrides the choice of device, for the
+index or for one search; a profile from `siann.tune` changes it for the indexes it is given to
+([TUNING](TUNING.md)).
 
 ## Which to use, and how it compares
 
@@ -103,17 +123,6 @@ there.
 
 [BENCHMARKS](BENCHMARKS.md) has the measurements behind each row and how to rerun them, and
 [ARCHITECTURE](ARCHITECTURE.md) explains where the speed comes from.
-
-## Documentation
-
-| Document | What it covers |
-| --- | --- |
-| [ARCHITECTURE](ARCHITECTURE.md) | Why siann is faster than FAISS (and where it is not), with diagrams of how the pieces fit and which path a search takes |
-| [ALGORITHMS](ALGORITHMS.md) | How exact search and IVF work on the GPU and the CPU, and what does not pay |
-| [BACKENDS](BACKENDS.md) | MLX, PyTorch MPS, FAISS and siann's Rust code: what each offers, and their pitfalls |
-| [DATASETS](DATASETS.md) | SIFT1M, GloVe-100, Music-100, DBpedia OpenAI and Gaussian vectors: sources, preparation and quirks |
-| [BENCHMARKS](BENCHMARKS.md) | Which path to use for each workload, and every measurement behind it, with the scripts that reproduce them |
-| [TUNING](TUNING.md) | The routing thresholds siann uses, where its defaults come from, and how to measure them on your data and hardware |
 
 ## License
 
