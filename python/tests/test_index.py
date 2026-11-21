@@ -105,5 +105,5 @@ def test_plan_explains_the_choice():
 
 
 @gpu_only
-def test_gpu_plan_by_default():
-    assert siann.Index(np.ones((6, 4), dtype=np.float32), "l2").plan.device == "gpu"
+def test_auto_routing_by_default():
+    assert siann.Index(np.ones((6, 4), dtype=np.float32), "l2").plan.device == "auto"

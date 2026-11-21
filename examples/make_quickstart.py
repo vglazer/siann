@@ -26,8 +26,8 @@ it finds each query's nearest neighbors, on the GPU (through MLX) or the CPU (BL
 siann's own Rust kernels), choosing the device itself unless you tell it which.
 
 This notebook covers exact search: what each metric means and how to choose one, the scores siann returns
-and how it explains its choices, how the GPU and the CPU compare as batches grow, and exact search as the
-ground truth for checking an approximate index.
+and how it explains its choices, how the GPU and the CPU compare as batches grow, tuning siann's routing to
+your own data and hardware, and exact search as the ground truth for checking an approximate index.
 """),
     code("""
 import time
@@ -127,8 +127,8 @@ res = index.search(xq[:1000], k=5)
 res.indices[:3], res.scores[:3]
 """),
     md("""
-`index.plan` says what was chosen and why: here, which device runs the search and how each device would
-compute it.
+`index.plan` says what was chosen and why: here, how a search is routed to the GPU or the CPU by its batch
+size, under which profile, and how each device computes it.
 """),
     code("""
 print(index.plan)
@@ -163,7 +163,7 @@ second of two identical calls: the first builds the device's copy and, on the GP
 that batch size.
 """),
     code("""
-devices = ["cpu", "gpu"] if index.plan.device == "gpu" else ["cpu"]
+devices = ["cpu", "gpu"] if siann.gpu_available() else ["cpu"]
 batches = [1, 10, 100, 1000, 10_000]
 rate = {}
 for metric in siann.METRICS:
@@ -191,11 +191,33 @@ for metric in siann.METRICS:
           if "gpu" in devices else metric)
 """),
     md("""
-The table gives the GPU's speed over the CPU's at each batch size; below 1, the CPU is faster. On an
-Apple M3 Max, single queries by L2, cosine and inner product run faster on the CPU, the two are about level
-at 10 queries, and the GPU leads from about 100; for L1 and L-infinity the GPU leads at every batch size.
-`siann.Index` runs exact search on the GPU whenever it finds one, so for single queries by L2, cosine or
-inner product, `device="cpu"` is the faster choice.
+The table gives the GPU's speed over the CPU's at each batch size; below 1, the CPU is faster. Where the
+two cross depends on the metric, the hardware and the size of the collection: the CPU's cost grows with the
+number of vectors, the GPU's cost per call does not.
+"""),
+    md("""
+## Tuning siann to your data and machine
+
+`siann.Index` sends each search to the GPU or the CPU by its batch size, from a *profile*'s threshold for
+the metric. siann's default profile was tuned on an Apple M3 Max with collections of about a million
+vectors. For other hardware or other sizes, `siann.tune` measures both devices on your own vectors and
+returns a profile for them; here, for two metrics on this notebook's 200,000 vectors (about half a minute):
+"""),
+    code("""
+print(siann.DEFAULT_PROFILE)
+profile = siann.tune(xb, metrics=("l2", "cosine"), budget=30)
+print(profile)
+"""),
+    md("""
+A profile is used only where you pass it, so results never depend on a file you forgot about: give it to
+one index with `profile=`, or to every index in the process with `siann.use_profile(profile)`. It saves to
+JSON with `profile.save(path)`, and `siann.Profile.load(path)` reads it back. The plan names the profile
+and its threshold, and `index.route(batch)` says where a batch of that size goes:
+"""),
+    code("""
+tuned = siann.Index(xb, "l2", profile=profile)
+print(tuned.plan)
+{b: tuned.route(b) for b in (1, 8, 64, 1000)}
 """),
     md("""
 ## Exact search as ground truth

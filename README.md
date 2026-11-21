@@ -35,11 +35,14 @@ index = siann.Index(xb, metric="cosine")     # or "l2", "l1", "linf", "ip"
 res = index.search(xb[:5], k=10)             # on the GPU where MLX finds one, otherwise the CPU
 res.indices, res.scores                      # (5, 10) each, best first: similarities for cosine
 print(index.plan)                            # what was chosen, and why
+profile = siann.tune(xb)                     # optional: measure the GPU/CPU routing on your data
 ```
 
 Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, the
-similarity for cosine and inner product. `device="cpu"` or `"gpu"` overrides the choice, for the index
-or for one search. The [quickstart notebook](examples/quickstart.ipynb) walks through every metric, the
+similarity for cosine and inner product. Each search goes to the GPU or the CPU by its batch size, from
+thresholds measured on an M3 Max; `siann.tune` measures them on your own data and hardware
+([TUNING](TUNING.md)), and `device="cpu"` or `"gpu"` overrides the choice, for the index or for one
+search. The [quickstart notebook](examples/quickstart.ipynb) walks through every metric, the
 scores, the plan and the devices; `examples/make_quickstart.py` rebuilds it.
 
 ## Which to use, and how it compares
@@ -121,3 +124,4 @@ the nearest recall):
 | [BACKENDS](BACKENDS.md) | MLX, PyTorch MPS, FAISS and siann's Rust code: what each offers, and their pitfalls |
 | [DATASETS](DATASETS.md) | SIFT1M, GloVe-100, Music-100, DBpedia OpenAI and Gaussian vectors: sources, preparation and quirks |
 | [BENCHMARKS](BENCHMARKS.md) | Which path to use for each workload, and every measurement behind it, with the scripts that reproduce them |
+| [TUNING](TUNING.md) | The routing thresholds siann uses, where its defaults come from, and how to measure them on your data and hardware |

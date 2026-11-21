@@ -79,12 +79,16 @@ class Index:
     """An index over base vectors ``xb`` (n, d), searched by ``metric``: "l2", "l1", "linf", "cosine"
     or "ip" (inner product).
 
-    Search is exact: the results are the true k nearest neighbors. ``device`` is "auto" (the GPU
-    where MLX finds one, otherwise the CPU), "gpu" or "cpu". Each device's copy of the vectors is
-    built the first time a search needs it. ``index.plan`` says what was chosen and why.
+    Search is exact: the results are the true k nearest neighbors. ``device`` is "auto" (where MLX finds
+    a GPU, each search goes to the GPU or the CPU by its batch size, from ``profile``'s threshold for the
+    metric; otherwise the CPU), "gpu" or "cpu". ``profile`` is a ``siann.Profile`` (from ``siann.tune``),
+    by default the one set by ``siann.use_profile`` or siann's own; it is fixed when the index is built.
+    Each device's copy of the vectors is built the first time a search needs it. ``index.plan`` says
+    what was chosen and why.
     """
 
-    def __init__(self, xb, metric: str = "l2", recall: float | None = None, *, device: str = "auto"):
+    def __init__(self, xb, metric: str = "l2", recall: float | None = None, *, device: str = "auto",
+                 profile=None):
         if metric not in METRICS:
             raise ValueError(f"metric must be one of {', '.join(METRICS)}, not {metric!r}")
         if recall is not None:
@@ -102,15 +106,20 @@ class Index:
         self._x = _normalized(x, "xb") if metric == "cosine" else x
         # cosine ranks as inner product on unit vectors
         self._kernel_metric = "ip" if metric == "cosine" else metric
-        self._device = device if device != "auto" else ("gpu" if gpu else "cpu")
+        from ._profile import Profile, current_profile
+        if profile is not None and not isinstance(profile, Profile):
+            raise TypeError("profile must be a siann.Profile (from siann.tune or siann.Profile.load)")
+        self._profile = profile if profile is not None else current_profile()
+        self._device = device if device != "auto" else ("auto" if gpu else "cpu")
         self._layouts: dict[str, object] = {}
         reasons = ["exact search (no recall target): the results are the true nearest neighbors"]
-        if device == "auto":
-            reasons.append("GPU found: exact search on the GPU, measured faster than the CPU in batches "
-                           "(1,000 queries, every metric; 100, L2 and inner product)" if gpu
-                           else "no GPU found: exact search on the CPU")
-        else:
+        if device != "auto":
             reasons.append(f"device={device!r} given")
+        elif gpu:
+            reasons.append(f"GPU found: {self._profile.describe(metric)} "
+                           f"(profile: {self._profile.source})")
+        else:
+            reasons.append("no GPU found: exact search on the CPU")
         cpu_path = ("siann's Rust kernel" if self._kernel_metric in ("l1", "linf")
                     else "a BLAS matrix multiply through NumPy and siann's Rust top-k")
         reasons.append(f"on the CPU: {cpu_path}")
@@ -126,6 +135,18 @@ class Index:
     def d(self) -> int:
         return self._x.shape[1]
 
+    @property
+    def profile(self):
+        """The ``siann.Profile`` whose thresholds this index routes by."""
+        return self._profile
+
+    def route(self, batch: int) -> str:
+        """The device ("gpu" or "cpu") a search of ``batch`` queries goes to."""
+        if self._device != "auto":
+            return self._device
+        t = self._profile.threshold(self.metric)
+        return "cpu" if t is None or batch < t else "gpu"
+
     def __repr__(self) -> str:
         return f"siann.Index({self.n:,} vectors, {self.d} dimensions, metric={self.metric!r}, device={self._device!r})"
 
@@ -140,7 +161,7 @@ class Index:
             raise ValueError(f"xq has {q.shape[1]} dimensions, the index {self.d}")
         if not isinstance(k, (int, np.integer)) or k < 1:
             raise ValueError(f"k must be a positive integer, not {k!r}")
-        dev = device or self._device
+        dev = device or self.route(len(q))
         if dev not in ("gpu", "cpu"):
             raise ValueError(f"device must be 'gpu' or 'cpu', not {dev!r}")
         if dev == "gpu" and not _gpu_available():
