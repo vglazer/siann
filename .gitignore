@@ -16,3 +16,6 @@ site/
 
 # the Rust extension, built into the package by maturin
 python/siann/*.so
+
+# PyPI's copy of the README, written by scripts/make_pypi_readme.py
+python/PYPI_README.md

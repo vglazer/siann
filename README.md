@@ -22,8 +22,8 @@ Start with the [quickstart notebook](https://github.com/vglazer/siann/blob/main/
 
 ## Install
 
-siann requires a Mac with Apple silicon, Python 3.12 or later, and a [Rust](https://rustup.rs)
-toolchain to build it from source:
+siann runs on Python 3.12 or later: on the CPU on Linux, macOS and Windows, and on the GPU too on Macs with
+Apple silicon. Building it from source takes a [Rust](https://rustup.rs) toolchain:
 
 ```sh
 uv add git+https://github.com/vglazer/siann         # with uv

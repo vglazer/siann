@@ -1,0 +1,149 @@
+name: Release
+
+# Runs the CI tests, builds wheels for Linux (x86-64 and ARM), macOS (Apple silicon) and Windows (x86-64)
+# plus a source distribution, smoke-tests each wheel on its own platform, then publishes them with PyPI's
+# trusted publishing (no stored tokens). Each wheel is abi3: built against Python's stable interface, so one
+# wheel per platform serves Python 3.12 and later.
+#
+# - To release: set the version in crates/siann-py/Cargo.toml, commit and push, then create a release on
+#   GitHub (https://github.com/vglazer/siann/releases/new) with the tag `v` followed by that version, e.g.
+#   v0.1.0. Publishing the release publishes to PyPI.
+# - To rehearse: run it by hand (Actions > Release > Run workflow), which publishes to TestPyPI. Each
+#   rehearsal publishes its own development release, VERSION.devN with N the run number, since an index
+#   accepts each version only once.
+#
+# One-time setup: this repository is a trusted publisher on pypi.org (environment pypi) and must be one on
+# test.pypi.org too (owner vglazer, repository siann, workflow release.yml, environment testpypi).
+# The siann crate on crates.io is a name placeholder: the Rust code ships inside the wheels.
+
+on:
+  release:
+    types: [published]
+  # a rehearsal that publishes to TestPyPI
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-version:
+    name: Check that the release tag matches the package version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(grep -m1 '^version = ' crates/siann-py/Cargo.toml | cut -d'"' -f2)
+          if [ "v${version}" != "${TAG}" ]; then
+            echo "::error::crates/siann-py/Cargo.toml has version ${version}, but the release tag is ${TAG}"
+            exit 1
+          fi
+
+  tests:
+    uses: ./.github/workflows/ci.yml
+
+  wheels:
+    needs: [check-version, tests]
+    name: Wheel (${{ matrix.os }}, ${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # each wheel is built on a runner of its own architecture, so that it can be smoke-tested there;
+          # x86-64 wheels target baseline x86-64, so they run on any x86-64 processor
+          - { os: ubuntu-latest, target: x86_64 }
+          - { os: ubuntu-24.04-arm, target: aarch64 }
+          - { os: macos-latest, target: aarch64 }
+          - { os: windows-latest, target: x64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Use PyPI's copy of the README (links to GitHub)
+        run: python scripts/make_pypi_readme.py --apply
+      - name: Give a TestPyPI rehearsal its own version (VERSION.devRUN)
+        if: github.event_name == 'workflow_dispatch'
+        run: python scripts/set_dev_version.py ${{ github.run_number }}
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: --release --out dist
+      - name: Check that the wheel is abi3
+        shell: bash
+        run: ls dist/*-cp312-abi3-*.whl
+      - name: Smoke-test the wheel on Python 3.12
+        shell: bash
+        run: |
+          python -m pip install dist/*.whl
+          python scripts/smoke_test.py
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Smoke-test the wheel on Python 3.14
+        shell: bash
+        run: |
+          python -m pip install dist/*.whl
+          python scripts/smoke_test.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.os }}-${{ matrix.target }}
+          path: dist
+
+  sdist:
+    name: Source distribution
+    needs: [check-version, tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Use PyPI's copy of the README (links to GitHub)
+        run: python scripts/make_pypi_readme.py --apply
+      - name: Give a TestPyPI rehearsal its own version (VERSION.devRUN)
+        if: github.event_name == 'workflow_dispatch'
+        run: python scripts/set_dev_version.py ${{ github.run_number }}
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - name: Build and smoke-test the package from the source distribution
+        run: |
+          python -m pip install dist/*.tar.gz
+          python scripts/smoke_test.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sdist
+          path: dist
+
+  publish:
+    name: Publish to ${{ github.event_name == 'release' && 'PyPI' || 'TestPyPI' }}
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    # must match the environment names in the trusted publisher settings on pypi.org and test.pypi.org
+    environment:
+      name: ${{ github.event_name == 'release' && 'pypi' || 'testpypi' }}
+      url: ${{ github.event_name == 'release' && 'https://pypi.org/project/siann/' || 'https://test.pypi.org/project/siann/' }}
+    permissions:
+      id-token: write # for trusted publishing
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      - name: Check the package metadata
+        run: pipx run twine check dist/*
+      - name: Publish to TestPyPI
+        if: github.event_name == 'workflow_dispatch'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+      - name: Publish to PyPI
+        if: github.event_name == 'release'
+        uses: pypa/gh-action-pypi-publish@release/v1
