@@ -6,9 +6,10 @@
 
 **Nearest-neighbor search that decides how to search, on Apple silicon.** Tell siann what you need, exact
 neighbors or a recall target, for dense NumPy vectors by Euclidean (L2), cosine, inner product, Manhattan
-(L1) or Chebyshev (L-infinity) distance. It chooses the method (exact search, or an IVF calibrated to the
-target) and the device for each batch size (the CPU or the Apple GPU) from measurements on your data and
-machine, says why in `index.plan`, and keeps choosing as the index grows and changes.
+(L1) or Chebyshev (L-infinity) distance. It chooses the method (exact search, or an IVF, an index that
+clusters the vectors and scans only the clusters nearest each query, calibrated to the target) and the
+device for each batch size (the CPU or the Apple GPU) from measurements on your data and machine, says why
+in `index.plan`, and keeps choosing as the index grows and changes.
 
 Each path it chooses between is fast in its own right, through custom GPU kernels and CPU code laid out for
 the hardware ([IMPLEMENTATION](IMPLEMENTATION.md)); where another library is faster,
@@ -26,11 +27,11 @@ uv add siann            # or: pip install siann
 ```
 
 siann runs on Python 3.12 or later: on the CPU on Linux, macOS and Windows, and on the GPU too on Macs with
-Apple silicon, where it installs MLX for it. Wheels (built packages) cover Linux on x86-64 and ARM, macOS on
-Apple silicon and Windows on x86-64. The x86-64 wheels need a processor with AVX2 (Intel from 2013, AMD
-from 2015); on an older one, `pip install --no-binary siann siann` builds from source, which takes a
-[Rust](https://rustup.rs) toolchain. On Linux and Windows, import siann before NumPy
-([TUNING](TUNING.md#numpys-blas-on-linux-and-windows)).
+Apple silicon, where it installs [MLX](https://github.com/ml-explore/mlx), Apple's array framework, for it.
+Wheels (built packages) cover Linux on x86-64 and ARM, macOS on Apple silicon and Windows on x86-64. The
+x86-64 wheels need a processor with AVX2 (Intel from 2013, AMD from 2015); on an older one, `pip install
+--no-binary siann siann` builds from source, which takes a [Rust](https://rustup.rs) toolchain. On Linux and
+Windows, import siann before NumPy ([TUNING](TUNING.md#numpys-blas-on-linux-and-windows)).
 
 ## Python
 
@@ -53,10 +54,11 @@ approx.save("approx.siann")                  # siann.Index.load("approx.siann"),
 grown = siann.Index(np.empty((0, 128), np.float32), metric="l2", recall=0.95)  # start empty, grow by add()
 ```
 
-Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, the
-similarity for cosine and inner product. Every choice can be overridden: `device=`, `kind="exact"` or
-`"ivf"`, `nlist=`, `storage=`, `nprobe=` for one search, `gpu="torch"` for PyTorch's MPS backend instead of
-MLX, and a profile from `siann.tune` for the routing ([TUNING](TUNING.md)).
+Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, the similarity
+for cosine and inner product. Every choice can be overridden: `device=`, `kind="exact"` or `"ivf"`,
+`nlist=`, `storage=`, `nprobe=` for one search, `gpu="torch"` for [PyTorch](https://pytorch.org)'s MPS
+backend (its Apple GPU backend) instead of MLX, and a profile from `siann.tune` for the routing
+([TUNING](TUNING.md)).
 
 ## What siann does for you
 
@@ -86,10 +88,13 @@ the Mac, and an index too large for the GPU stays on the CPU ([IMPLEMENTATION](I
 
 Measured on an Apple M3 Max: queries per second of siann's routed path divided by the other's, above 1 where
 siann is faster, with exact search returning the same neighbors and approximate search compared at matched
-recall. Against FAISS 1.16 (its faster path, CPU or Metal GPU), and on the GPU against mlxvs 0.16.1 (NVIDIA
-cuVS's methods on MLX, CAGRA graphs included). SIFT1M (image descriptors, L2),
-GloVe-100 (word embeddings, cosine), Music-100 (inner product) and DBpedia OpenAI embeddings (1,536
-dimensions) favor different methods ([DATASETS](DATASETS.md)).
+recall. Against [FAISS](https://github.com/facebookresearch/faiss) 1.16, Meta's similarity-search library,
+the standard on the CPU (its faster path, CPU or Metal GPU); and on the GPU against
+[mlxvs](https://github.com/mikepapadim/mlxvs) 0.16.1, NVIDIA's [cuVS](https://github.com/rapidsai/cuvs) GPU
+search methods ported to MLX. FAISS's HNSW and mlxvs's CAGRA are graph indexes: each vector is linked to
+near neighbors, and a search walks the links, touching far fewer vectors than an IVF. SIFT1M (image
+descriptors, L2), GloVe-100 (word embeddings, cosine), Music-100 (inner product) and DBpedia OpenAI
+embeddings (1,536 dimensions) favor different methods ([DATASETS](DATASETS.md)).
 
 | Workload | Against FAISS | Against mlxvs |
 | --- | --- | --- |

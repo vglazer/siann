@@ -3,7 +3,8 @@
 *Part of the [siann documentation](README.md#documentation).*
 
 For each kind of similarity search on a Mac, which path is fastest, and by how much? Every comparison
-is against FAISS's strongest option for the case, its compressed indexes included, with exact search
+is against the strongest option for the case in [FAISS](https://github.com/facebookresearch/faiss) (Meta's similarity-search library), its
+compressed indexes included, with exact search
 returning exactly FAISS's neighbors and approximate search compared at matched recall. Each section
 names the scripts that reproduce it; they are in [benchmarks/](benchmarks/), and their raw output is in
 [benchmarks/results/](benchmarks/results/). The [README](README.md#how-it-compares) sums up the

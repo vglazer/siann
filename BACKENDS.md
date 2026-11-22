@@ -24,7 +24,8 @@ each supports them, and of the speed of its built-in matrix multiply.
 
 ## MLX
 
-Apple's array framework for its own chips, and siann's default GPU backend. It evaluates lazily:
+Apple's array framework for its own chips ([ml-explore/mlx](https://github.com/ml-explore/mlx)), and siann's default GPU
+backend. It evaluates lazily:
 operations build a graph, which runs when a result is needed (`mx.eval`). Custom Metal kernels (Metal
 is Apple's GPU programming language) are written as source strings through `mx.fast.metal_kernel`. Sizes
 compiled in as template arguments make each new value compile a new kernel, so siann compiles in only the
@@ -56,7 +57,7 @@ costs](BENCHMARKS.md#what-a-new-batch-size-costs)).
 
 ## PyTorch (MPS)
 
-PyTorch's Metal backend, called MPS after Apple's Metal Performance Shaders.
+PyTorch's Metal backend, called MPS after Apple's Metal Performance Shaders ([pytorch.org](https://pytorch.org)).
 `torch.mps.compile_shader` (in PyTorch 2.15) compiles Metal source into callable kernels, so siann's
 kernels run on it with the Metal code unchanged (`siann.torch_kernels`, `siann.ivf_torch`).
 `siann.Index(..., gpu="torch")` uses it for every GPU step, building included, without importing MLX
@@ -82,7 +83,7 @@ kernels run on it with the Metal code unchanged (`siann.torch_kernels`, `siann.i
 
 ## FAISS
 
-Meta's similarity-search library, the standard to beat. siann compares against its CPU indexes: the
+Meta's similarity-search library ([facebookresearch/faiss](https://github.com/facebookresearch/faiss)), the standard to beat. siann compares against its CPU indexes: the
 flat index for exact search, IVF-Flat and IVF with scalar quantization, and HNSW (a graph index, its
 strongest CPU method for approximate search), plain and compressed.
 

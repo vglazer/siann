@@ -31,7 +31,8 @@ target ([TUNING](TUNING.md#approximate-search-where-each-batch-runs) has the cro
 [Approximate search through siann.Index](BENCHMARKS.md#approximate-search-through-siannindex) measures what
 the choices gain.
 
-Other libraries leave these choices to you: FAISS and mlxvs offer a family of indexes and their parameters,
+Other libraries leave these choices to you: [FAISS](https://github.com/facebookresearch/faiss) (Meta's similarity-search library) and [mlxvs](https://github.com/mikepapadim/mlxvs)
+(NVIDIA's cuVS methods on MLX) offer a family of indexes and their parameters,
 and you pick the index, its settings and, for FAISS, the device. FAISS's auto-tuning (`ParameterSpace`)
 explores one index's parameters on one device against ground truth you compute; it does not choose between
 exact and approximate search, between scans, or between the CPU and the GPU.

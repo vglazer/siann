@@ -34,7 +34,7 @@ an image. It is the classic benchmark for L2 search, and siann also uses it for 
   broken differently is not a miss (`agreement` in `benchmarks/backends.py`).
 - **The vectors are nearly normalized:** every length is between 506 and 512. L2 search on SIFT
   therefore ranks almost as cosine search would.
-- **128 dimensions,** a multiple of the kernels' 16-dimension tiles, and the size at which FAISS's
+- **128 dimensions,** a multiple of the kernels' 16-dimension tiles, and the size at which [FAISS](https://github.com/facebookresearch/faiss)'s
   L2 is fast by default (see below).
 - **The coordinates fit in a byte,** so IVF lists can be stored as uint8 (a quarter of float32's
   memory) or float16 with nothing lost (see [IMPLEMENTATION](IMPLEMENTATION.md), "List storage").
