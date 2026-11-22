@@ -214,6 +214,7 @@ class Index:
         self._ids = ids                                    # each row's id; None: the row number
         self._next_id = int(ids.max()) + 1 if ids is not None and len(ids) else n
         self._buf = None                                   # added vectors not yet merged: x, ids, lists
+        self._buf_store = None                             # the buffer's arrays, with room to grow (views: _buf)
         self._buf_layouts: dict[str, object] = {}
         self._dead = None                                  # rows removed, masked until compacted
         self._ndead = 0                                    # how many (the mask's sum, kept: it is searched often)
@@ -626,7 +627,6 @@ class Index:
             raise ValueError(f"x has {a.shape[1]} dimensions, the index {self.d}")
         if self.metric == "cosine":
             a = _normalized(a, "x")
-        live = self._live_ids()
         if ids is None:
             new = np.arange(self._next_id, self._next_id + len(a), dtype=np.int64)
         else:
@@ -636,30 +636,42 @@ class Index:
             new = new.astype(np.int64)
             if len(np.unique(new)) != len(new):
                 raise ValueError("ids must be distinct")
-            taken = new[np.isin(new, live)]
+            # every id so far is below _next_id, so only lower ids need checking against the index's
+            taken = new[np.isin(new, self._live_ids())] if len(new) and new.min() < self._next_id else new[:0]
             if len(taken):
                 raise ValueError(f"ids already in the index: {', '.join(map(str, taken[:5]))}"
                                  + (", ..." if len(taken) > 5 else ""))
         if len(a) == 0:
             return new
-        assign = None
-        if self._ivf is not None:
-            from .ivf_build import assign_metric, nearest
-            dev = "gpu" if _gpu_available() and self._device != "cpu" else "cpu"
-            assign = nearest(a, self._ivf.built.centroids, assign_metric(self._ivf.metric), dev)
-        if self._buf is None:
-            self._buf = {"x": a, "ids": new, "assign": assign}
-        else:
-            b = self._buf
-            self._buf = {"x": np.concatenate([b["x"], a]), "ids": np.concatenate([b["ids"], new]),
-                         "assign": None if assign is None else np.concatenate([b["assign"], assign])}
-        self._buf_layouts = {}
+        assign = self._ivf.nearest_lists(a, _gpu_available() and self._device != "cpu") if self._ivf is not None else None
+        self._buf_append(a, new, assign)
         self._next_id = max(self._next_id, int(new.max()) + 1)
         self._added += len(a)
         if len(self._buf["x"]) >= self._buffer_limit():
             self._merge(f"the buffer reached {self._buffer_limit():,} vectors")
         self._refresh_plan()
         return new
+
+    def _buf_append(self, a: np.ndarray, new: np.ndarray, assign) -> None:
+        """Appends to the buffer, into arrays with room to grow (doubling), so that adding one vector at a time
+        does not copy the buffer each time."""
+        nb = 0 if self._buf is None else len(self._buf["x"])
+        need = nb + len(a)
+        st = self._buf_store
+        if st is None or need > len(st["x"]):
+            cap = max(need, 2 * (len(st["x"]) if st is not None else 0), 256)
+            grown = {"x": np.empty((cap, self.d), dtype=np.float32), "ids": np.empty(cap, dtype=np.int64),
+                     "assign": None if assign is None else np.empty(cap, dtype=np.int64)}
+            if nb:
+                for key in ("x", "ids", "assign"):
+                    if grown[key] is not None:
+                        grown[key][:nb] = self._buf[key]
+            st = self._buf_store = grown
+        st["x"][nb:need], st["ids"][nb:need] = a, new
+        if assign is not None:
+            st["assign"][nb:need] = assign
+        self._buf = {key: None if st[key] is None else st[key][:need] for key in ("x", "ids", "assign")}
+        self._buf_layouts = {}
 
     def _live_ids(self) -> np.ndarray:
         main = self._row_ids() if self._dead is None else self._row_ids()[~self._dead]
@@ -684,6 +696,7 @@ class Index:
             b = self._buf
             self._buf = None if not keep.any() else {
                 "x": b["x"][keep], "ids": b["ids"][keep], "assign": None if b["assign"] is None else b["assign"][keep]}
+            self._buf_store = None
             self._buf_layouts = {}
         self._removed += len(gone)
         if self._ndead > DEAD_MAX:
@@ -712,7 +725,7 @@ class Index:
                 assign = np.concatenate([assign, b["assign"]])
         self._x = np.ascontiguousarray(x, dtype=np.float32)
         self._ids = None if np.array_equal(ids, np.arange(len(ids))) else ids
-        self._buf, self._dead, self._ndead = None, None, 0
+        self._buf, self._buf_store, self._dead, self._ndead = None, None, None, 0
         self._layouts, self._buf_layouts = {}, {}
         self._merges += 1
         if self._ivf is None:

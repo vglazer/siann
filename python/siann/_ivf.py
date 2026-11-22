@@ -15,6 +15,7 @@ CALIBRATION_K = 10
 # the path "cpu-query-blas", from the batch size routing measures it faster (route cpu_blas_from), as that
 # depends on the machine: on 4 threads it pays from about 32 queries, on 16 hardly at all (BENCHMARKS,
 # "The coarse step"). For L1 and L-infinity each query finds its lists in Rust.
+FEW_ON_CPU = 32          # adding fewer vectors finds their lists on the CPU: faster than a GPU call for a few
 BLAS_CHUNK = 2048        # queries per matrix multiply: products of at most 2,048 x nlist floats
 
 
@@ -43,6 +44,7 @@ class IVF:
         self.built = built if built is not None else build_lists(x, nlist, metric, device=device_for_build)
         self.build_seconds = time.perf_counter() - t
         self._gpu = self._cpu = self._coarse = None
+        self._centroid_flat = None                     # the centroids in Rust's exact kernel, for nearest_lists
 
     @property
     def nlist(self) -> int:
@@ -65,6 +67,21 @@ class IVF:
             else:
                 self._cpu = IvfIndex(self.x, self.built.centroids, d, self.metric, lists=self.built.assign)
         return self._cpu
+
+    def nearest_lists(self, x: np.ndarray, gpu: bool) -> np.ndarray:
+        """Each vector's list: its nearest centroid by the metric the lists were assigned by. Below
+        FEW_ON_CPU vectors, or without a GPU, siann's Rust exact kernel on the centroids (kept), faster for a
+        few than a GPU call; otherwise the GPU's exact kernels."""
+        from .ivf_build import assign_metric, nearest
+        metric = assign_metric(self.metric)
+        if gpu and len(x) >= FEW_ON_CPU:
+            return nearest(x, self.built.centroids, metric, "gpu")
+        if self._centroid_flat is None:
+            from ._cpu import FlatIndex
+            c = self.centroids()
+            self._centroid_flat = FlatIndex(c, c.shape[1], metric)
+        return np.asarray(self._centroid_flat.search(np.ascontiguousarray(x, dtype=np.float32), 1),
+                          dtype=np.int64)
 
     def centroids(self) -> np.ndarray:
         """The centroids as C-contiguous float32, for the coarse step's matrix multiply."""

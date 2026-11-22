@@ -240,3 +240,18 @@ def test_plan_describes_the_index_as_it_is(small_limits):
     plan = str(index.plan)
     assert f"an IVF of {index._ivf.nlist:,} lists (about 4 sqrt(n)), re-clustered" in plan
     assert f"calibrated: nprobe {index.nprobe} reaches" in plan
+
+
+@pytest.mark.parametrize("kind", ["exact", "ivf"])
+def test_adding_one_at_a_time_matches_adding_at_once(kind, small_limits):
+    x = clustered(12_000, 16, 20)
+    q = x[:40] + 0.02
+    opts = {} if kind == "exact" else {"recall": 0.9, "kind": "ivf"}
+    one, many = siann.Index(x[:10_000], "l2", **opts), siann.Index(x[:10_000], "l2", **opts)
+    for i in range(10_000, 10_700):                                   # past a merge at 500, the buffer growing
+        one.add(x[i])
+    many.add(x[10_000:10_500])
+    many.add(x[10_500:10_700])
+    np.testing.assert_array_equal(one.search(q, 10).indices, many.search(q, 10).indices)
+    with pytest.raises(ValueError, match="already in the index"):
+        one.add(x[:1], ids=[10_100])                                  # below the largest: checked

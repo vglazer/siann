@@ -685,23 +685,24 @@ inserting all of them, inserted / re-clustered:
 
 | State | Batch 1 | 100 | 1,000 |
 | --- | ---: | ---: | ---: |
-| As built | 12,447 | 90,979 | 184,192 |
-| 1,000 added, in the buffer | 10,107 | 72,054 | 144,774 |
-| 10,000 added, in the buffer | 7,296 | 54,850 | 109,333 |
-| Merged | 11,863 | 88,571 | 179,305 |
-| 64 removed, masked | 11,387 | 81,669 | 191,372 |
-| 512 removed, masked | 11,256 | 82,629 | 182,058 |
-| Compacted | 12,013 | 93,486 | 191,020 |
+| As built | 12,277 | 95,011 | 189,810 |
+| 1,000 added, in the buffer | 10,039 | 70,977 | 150,434 |
+| 10,000 added, in the buffer | 7,371 | 56,129 | 116,073 |
+| Merged | 12,699 | 91,194 | 195,684 |
+| 64 removed, masked | 11,340 | 85,155 | 186,299 |
+| 512 removed, masked | 11,587 | 83,589 | 187,232 |
+| Compacted | 11,880 | 87,888 | 188,734 |
 
-While added vectors wait in the buffer, searches run at 0.59-0.81 times full speed: the buffer is searched
+While added vectors wait in the buffer, searches run at 0.59-0.82 times full speed: the buffer is searched
 exactly, and the two sets of results scored and merged in Rust. The buffer is searched on the CPU, whatever
 device the main search runs on: for 1,000-10,000 vectors the CPU is faster than the GPU at nearly every
 batch size, as a GPU call's fixed cost outweighs so small a search (the last table of
-`add_remove_sift.txt`). With removed vectors masked, searches run at 0.90-1.04 times full speed, against a
-spread of 0.95-1.04 between single runs here (merged and compacted, which should match as built). A merge of
-10,000 added vectors takes 0.68 s (the lists and each device's copy rebuilt, nprobe recalibrated), a
-compaction 0.66 s. Adding runs at about a million vectors per second in one call, and about 1 millisecond per
-call one vector at a time.
+`add_remove_sift.txt`). With removed vectors masked, searches run at 0.88-0.99 times full speed, against a
+spread of 0.93-1.03 between single runs here (merged and compacted, which should match as built). A merge of
+10,000 added vectors takes 0.67 s (the lists and each device's copy rebuilt, nprobe recalibrated), a
+compaction 0.68 s. Adding runs at 1.3 million vectors per second in one call, and at about
+110 microseconds per call one vector at a time: a few vectors find their lists with siann's Rust kernel on
+the centroids, and the buffer grows with room to spare, so an add does not copy it.
 
 ## Against mlxvs on the GPU
 
