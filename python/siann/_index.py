@@ -127,18 +127,19 @@ def _exact_cpu(x: np.ndarray, layouts: dict, q: np.ndarray, k: int, metric: str)
         return np.asarray(flat, dtype=np.int64).reshape(len(q), k)
     from .blas_l2 import default_tiles, siann_l2
     if "cpu" not in layouts:
-        norms = np.einsum("ij,ij->i", x, x) if metric == "l2" else np.zeros(len(x), dtype=np.float32)
+        from ._cpu import sq_norms
+        norms = sq_norms(x) if metric == "l2" else np.zeros(len(x), dtype=np.float32)
         layouts["cpu"] = np.ascontiguousarray(norms, dtype=np.float32)
     qtile, block = default_tiles(len(q))
     return np.asarray(siann_l2(x, layouts["cpu"], q, k, qtile, block), dtype=np.int64)
 
 
 def _normalized(a: np.ndarray, name: str) -> np.ndarray:
-    lengths = np.linalg.norm(a, axis=1, keepdims=True)
-    if (lengths == 0).any():
-        raise ValueError(f"cosine is undefined for a zero vector, and {name} holds "
-                         f"{int((lengths == 0).sum())}")
-    return np.ascontiguousarray(a / lengths, dtype=np.float32)
+    from ._cpu import normalize
+    out, zeros = normalize(np.ascontiguousarray(a, dtype=np.float32))
+    if zeros:
+        raise ValueError(f"cosine is undefined for a zero vector, and {name} holds {zeros}")
+    return out
 
 
 class Index:
@@ -333,9 +334,10 @@ class Index:
         t = time.perf_counter()
         exact_search(q, k1)
         exact_seconds = time.perf_counter() - t
-        if ids is not None:
-            rows = [r[r != own][:CALIBRATION_K] for r, own in zip(exact, ids)]
-            truth = np.array([np.concatenate([r, np.full(CALIBRATION_K - len(r), -1)]) for r in rows], dtype=np.int64)
+        if ids is not None:                                               # leave the vector itself out
+            from ._cpu import without_own
+            truth = without_own(np.ascontiguousarray(exact, dtype=np.int64), np.ascontiguousarray(ids, dtype=np.int64),
+                                CALIBRATION_K)
         else:
             truth = exact
         larger = self.metric in ("cosine", "ip")

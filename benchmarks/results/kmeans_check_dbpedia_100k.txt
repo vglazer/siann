@@ -1,10 +1,6 @@
-   Building siann @ file:///Users/glazer/repos/siann
-      Built siann @ file:///Users/glazer/repos/siann
-Uninstalled 1 package in 0.81ms
-Installed 1 package in 1ms
 dbpedia, l2: 100,000 vectors, 1536 dimensions, 1000 lists, k-means on 100,000 sample vectors, 10 iterations
 
   centroids                   train s  largest  empty    np 8   np 16   np 32   np 64  np 128
   FAISS k-means                   2.0      413   0.0%   0.847   0.902   0.943   0.969   0.987
-  siann k-means, seed 1           4.5      445   0.0%   0.850   0.904   0.945   0.972   0.988
-  siann k-means, seed 2           4.5      406   0.0%   0.851   0.904   0.942   0.971   0.988
+  siann k-means, seed 1           0.7      445   0.0%   0.850   0.904   0.945   0.972   0.988
+  siann k-means, seed 2           0.7      406   0.0%   0.851   0.904   0.942   0.971   0.988

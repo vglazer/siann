@@ -1,6 +1,6 @@
 sift, l2: 1,000,000 vectors, 128 dimensions, 4000 lists, k-means on 400,000 sample vectors, 10 iterations
 
   centroids                   train s  largest  empty    np 8   np 16   np 32   np 64  np 128
-  FAISS k-means                  12.9    1,318   0.0%   0.716   0.840   0.925   0.973   0.993
-  siann k-means, seed 1           3.5    1,266   0.0%   0.718   0.839   0.924   0.974   0.993
-  siann k-means, seed 2           3.4    1,512   0.0%   0.717   0.840   0.925   0.973   0.993
+  FAISS k-means                  13.0    1,318   0.0%   0.716   0.840   0.925   0.973   0.993
+  siann k-means, seed 1           1.3    1,266   0.0%   0.718   0.839   0.924   0.974   0.993
+  siann k-means, seed 2           1.3    1,512   0.0%   0.717   0.840   0.925   0.973   0.993

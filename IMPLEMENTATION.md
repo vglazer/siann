@@ -132,7 +132,7 @@ machine and re-measured on another (`remeasure=` forces either). A file of a lat
 
 `index.add(x, ids=)` adds vectors and `index.remove(ids)` removes them. Each vector has an id, which searches
 return: its row number unless `ids=` names it. Rebuilding each device's copy of the index for every change
-would cost about a second per million vectors, so changes are gathered first:
+would cost under a second per million vectors, but each time, so changes are gathered first:
 
 ```mermaid
 flowchart LR

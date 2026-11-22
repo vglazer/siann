@@ -18,13 +18,10 @@ def kmeans(x: np.ndarray, k: int, niter: int = 10, seed: int = 1, device: str = 
         raise ValueError(f"need 1 <= k <= {n} (the rows given), not {k}")
     rng = np.random.default_rng(seed)
     c = x[rng.choice(n, size=k, replace=False)].copy()
+    from ._cpu import centroid_means
     for _ in range(niter):
         assign = nearest(x, c, "l2", device)
-        order = np.argsort(assign, kind="stable")
-        counts = np.bincount(assign, minlength=k)
-        present = np.flatnonzero(counts)
-        starts = np.concatenate([[0], np.cumsum(counts)[:-1]])[present]
-        c[present] = np.add.reduceat(x[order], starts, axis=0) / counts[present, None]
+        counts = centroid_means(x, np.ascontiguousarray(assign, dtype=np.int64), c)   # c updated in place
         # empty clusters: split a large one (chosen with probability growing with its size)
         for j in np.flatnonzero(counts == 0):
             weights = np.maximum(counts - 1, 0).astype(np.float64)

@@ -1,6 +1,6 @@
 music100, ip: 1,000,000 vectors, 100 dimensions, 4000 lists, k-means on 400,000 sample vectors, 10 iterations
 
   centroids                   train s  largest  empty    np 8   np 16   np 32   np 64  np 128
-  FAISS k-means                  12.4    1,402   0.0%   0.850   0.911   0.948   0.967   0.978
-  siann k-means, seed 1           2.9    1,435   0.0%   0.866   0.922   0.957   0.976   0.987
-  siann k-means, seed 2           2.9    1,453   0.0%   0.870   0.926   0.960   0.978   0.988
+  FAISS k-means                  12.6    1,402   0.0%   0.850   0.911   0.948   0.967   0.978
+  siann k-means, seed 1           1.3    1,435   0.0%   0.866   0.922   0.957   0.976   0.987
+  siann k-means, seed 2           1.2    1,453   0.0%   0.870   0.926   0.960   0.978   0.988

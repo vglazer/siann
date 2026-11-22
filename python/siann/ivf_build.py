@@ -54,19 +54,20 @@ def nearest(x: np.ndarray, c: np.ndarray, metric: str, device: str = "auto", til
     if metric in ("l1", "linf"):
         from ._cpu import FlatIndex
         return np.asarray(FlatIndex(c, c.shape[1], metric).search(x, 1), dtype=np.int64)
+    from ._cpu import sq_norms
     from .blas_l2 import default_tiles, siann_l2
-    norms = (np.einsum("ij,ij->i", c, c) if metric == "l2" else np.zeros(len(c))).astype(np.float32)
+    c = np.ascontiguousarray(c, dtype=np.float32)
+    norms = sq_norms(c) if metric == "l2" else np.zeros(len(c), dtype=np.float32)
     qtile, block = default_tiles(len(x))
     return siann_l2(c, norms, x, 1, qtile, min(block, len(c)))[:, 0]
 
 
 def lists_from_assign(centroids: np.ndarray, assign: np.ndarray) -> Lists:
     """The lists given each base vector's list: the base ids sorted by list (stably), and the offsets."""
-    a = np.asarray(assign, dtype=np.int64)
-    order = np.argsort(a, kind="stable")
-    counts = np.bincount(a, minlength=len(centroids))
-    offsets = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
-    return Lists(np.ascontiguousarray(centroids, dtype=np.float32), a, order.astype(np.int64), offsets)
+    from ._cpu import group_by_list
+    a = np.ascontiguousarray(assign, dtype=np.int64)
+    order, offsets = group_by_list(a, len(centroids))          # a counting sort: stable, linear in n
+    return Lists(np.ascontiguousarray(centroids, dtype=np.float32), a, order, offsets)
 
 
 def build_lists(xb: np.ndarray, nlist: int, metric: str, centroids: np.ndarray | None = None,

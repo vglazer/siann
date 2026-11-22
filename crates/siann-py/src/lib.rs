@@ -1706,6 +1706,231 @@ fn merge_results<'py>(
     ))
 }
 
+/// The rows of `x` scaled to unit length (for cosine), and how many rows were zero (left as they are).
+#[pyfunction]
+fn normalize<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray2<'_, f32>,
+) -> PyResult<(Bound<'py, PyArray2<f32>>, usize)> {
+    let (n, d) = x.as_array().dim();
+    let mut v = x
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("x must be C-contiguous"))?
+        .to_vec();
+    let zeros = py.detach(|| {
+        v.par_chunks_mut(d.max(1))
+            .map(|row| {
+                let len = row.iter().map(|a| a * a).sum::<f32>().sqrt();
+                if len == 0.0 {
+                    return 1usize;
+                }
+                for a in row.iter_mut() {
+                    *a /= len;
+                }
+                0
+            })
+            .sum()
+    });
+    Ok((PyArray1::from_vec(py, v).reshape([n, d])?, zeros))
+}
+
+/// Each row's squared Euclidean norm (for ranking L2 by |x|^2 - 2 q.x).
+#[pyfunction]
+fn sq_norms<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray2<'_, f32>,
+) -> PyResult<Bound<'py, PyArray1<f32>>> {
+    let (_, d) = x.as_array().dim();
+    let xs = x
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("x must be C-contiguous"))?;
+    let out: Vec<f32> = py.detach(|| {
+        xs.par_chunks(d.max(1))
+            .map(|row| row.iter().map(|a| a * a).sum())
+            .collect()
+    });
+    Ok(PyArray1::from_vec(py, out))
+}
+
+/// Whether every value of `x` is an integer from 0 to 255 (so that storing it as bytes loses nothing).
+#[pyfunction]
+fn is_bytes(py: Python<'_>, x: PyReadonlyArray2<'_, f32>) -> PyResult<bool> {
+    let xs = x
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("x must be C-contiguous"))?;
+    Ok(py.detach(|| {
+        xs.par_iter()
+            .all(|&a| (0.0..=255.0).contains(&a) && a == a.round())
+    }))
+}
+
+/// The ids sorted by list and the lists' offsets.
+type Grouped<'py> = (Bound<'py, PyArray1<i64>>, Bound<'py, PyArray1<i64>>);
+
+/// The base vectors grouped by list: given each one's list (`assign`, int64, each below `nlist`), the ids sorted
+/// by list, stably (a counting sort), and the offsets where each list starts (nlist + 1). Returns
+/// (order, offsets).
+#[pyfunction]
+fn group_by_list<'py>(
+    py: Python<'py>,
+    assign: PyReadonlyArray1<'_, i64>,
+    nlist: usize,
+) -> PyResult<Grouped<'py>> {
+    let a = assign
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("assign must be contiguous"))?;
+    if a.iter().any(|&c| c < 0 || c as usize >= nlist) {
+        return Err(PyValueError::new_err("each list must be below nlist"));
+    }
+    let mut offsets = vec![0i64; nlist + 1];
+    for &c in a {
+        offsets[c as usize + 1] += 1;
+    }
+    for i in 0..nlist {
+        offsets[i + 1] += offsets[i];
+    }
+    let mut next: Vec<i64> = offsets[..nlist].to_vec();
+    let mut order = vec![0i64; a.len()];
+    for (i, &c) in a.iter().enumerate() {
+        order[next[c as usize] as usize] = i as i64;
+        next[c as usize] += 1;
+    }
+    Ok((
+        PyArray1::from_vec(py, order),
+        PyArray1::from_vec(py, offsets),
+    ))
+}
+
+/// k-means' update: each cluster's mean (its rows of `x` summed in row order in f32, then divided in f64, as
+/// NumPy's `add.reduceat` and division compute it), and how many rows each has. Rows of `c` for empty
+/// clusters are left as they are. Returns the counts; `c` (k, d) is updated in place.
+#[pyfunction]
+fn centroid_means<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray2<'_, f32>,
+    assign: PyReadonlyArray1<'_, i64>,
+    c: &Bound<'py, PyArray2<f32>>,
+) -> PyResult<Bound<'py, PyArray1<i64>>> {
+    let (n, d) = x.as_array().dim();
+    let xs = x
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("x must be C-contiguous"))?;
+    let a = assign
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("assign must be contiguous"))?;
+    let k = c.readonly().as_array().dim().0;
+    if a.len() != n
+        || a.iter().any(|&j| j < 0 || j as usize >= k)
+        || c.readonly().as_array().dim().1 != d
+    {
+        return Err(PyValueError::new_err(
+            "assign must give each row of x a cluster of c, and c be (k, d)",
+        ));
+    }
+    let mut sums = vec![0.0f32; k * d];
+    let mut counts = vec![0i64; k];
+    for (row, &j) in xs.chunks_exact(d.max(1)).zip(a) {
+        let j = j as usize;
+        counts[j] += 1;
+        for (s, &v) in sums[j * d..(j + 1) * d].iter_mut().zip(row) {
+            *s += v;
+        }
+    }
+    let mut cw = c.readwrite();
+    let cs = cw
+        .as_slice_mut()
+        .map_err(|_| PyValueError::new_err("c must be C-contiguous"))?;
+    for j in 0..k {
+        if counts[j] > 0 {
+            let m = counts[j] as f64;
+            for (o, &s) in cs[j * d..(j + 1) * d]
+                .iter_mut()
+                .zip(&sums[j * d..(j + 1) * d])
+            {
+                *o = (s as f64 / m) as f32;
+            }
+        }
+    }
+    Ok(PyArray1::from_vec(py, counts))
+}
+
+/// Recall for calibration: the share of `found` (nq, k) neighbors, -1 a miss, whose `scores` are at least as
+/// good as each query's true k-th score `kth` (nq,), with a relative tolerance of 1e-6 (ties count as found).
+#[pyfunction]
+fn recall_of(
+    found: PyReadonlyArray2<'_, i64>,
+    scores: PyReadonlyArray2<'_, f32>,
+    kth: PyReadonlyArray1<'_, f32>,
+    larger_better: bool,
+) -> PyResult<f64> {
+    let contiguous = || PyValueError::new_err("arrays must be C-contiguous");
+    let (f, s, t) = (
+        found.as_slice().map_err(|_| contiguous())?,
+        scores.as_slice().map_err(|_| contiguous())?,
+        kth.as_slice().map_err(|_| contiguous())?,
+    );
+    let (nq, k) = found.as_array().dim();
+    if s.len() != f.len() || t.len() != nq {
+        return Err(PyValueError::new_err(
+            "found and scores must be (nq, k), kth (nq,)",
+        ));
+    }
+    let mut ok = 0usize;
+    for ((fr, sr), &tq) in f.chunks(k.max(1)).zip(s.chunks(k.max(1))).zip(t) {
+        let bound = if larger_better {
+            tq - 1e-6 * tq.abs() - 1e-9
+        } else {
+            tq + 1e-6 * tq.abs() + 1e-9
+        };
+        ok += fr
+            .iter()
+            .zip(sr)
+            .filter(|&(&id, &v)| {
+                id >= 0
+                    && if larger_better {
+                        v >= bound
+                    } else {
+                        v <= bound
+                    }
+            })
+            .count();
+    }
+    Ok(if f.is_empty() {
+        0.0
+    } else {
+        ok as f64 / f.len() as f64
+    })
+}
+
+/// Each row of `rows` (nq, m) without the query's own id `own` (nq,), its first `k` kept and -1 after: the truth
+/// and the results when the calibration sample is the index's own vectors.
+#[pyfunction]
+fn without_own<'py>(
+    py: Python<'py>,
+    rows: PyReadonlyArray2<'_, i64>,
+    own: PyReadonlyArray1<'_, i64>,
+    k: usize,
+) -> PyResult<Bound<'py, PyArray2<i64>>> {
+    let (nq, m) = rows.as_array().dim();
+    let (r, o) = (
+        rows.as_slice()
+            .map_err(|_| PyValueError::new_err("rows must be C-contiguous"))?,
+        own.as_slice()
+            .map_err(|_| PyValueError::new_err("own must be contiguous"))?,
+    );
+    if o.len() != nq {
+        return Err(PyValueError::new_err("own must have one id per row"));
+    }
+    let mut out = vec![-1i64; nq * k];
+    for q in 0..nq {
+        let kept = r[q * m..(q + 1) * m].iter().filter(|&&v| v != o[q]).take(k);
+        for (slot, &v) in out[q * k..(q + 1) * k].iter_mut().zip(kept) {
+            *slot = v;
+        }
+    }
+    PyArray1::from_vec(py, out).reshape([nq, k])
+}
+
 /// float16 values (their bits, a uint16 buffer) widened to f32 as the lists widen them: for
 /// check_kernels.py, which compares every finite float16 with NumPy's conversion.
 #[pyfunction]
@@ -1722,5 +1947,12 @@ fn _cpu(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(scores, m)?)?;
     m.add_function(wrap_pyfunction!(rank, m)?)?;
     m.add_function(wrap_pyfunction!(merge_results, m)?)?;
+    m.add_function(wrap_pyfunction!(normalize, m)?)?;
+    m.add_function(wrap_pyfunction!(sq_norms, m)?)?;
+    m.add_function(wrap_pyfunction!(is_bytes, m)?)?;
+    m.add_function(wrap_pyfunction!(group_by_list, m)?)?;
+    m.add_function(wrap_pyfunction!(centroid_means, m)?)?;
+    m.add_function(wrap_pyfunction!(recall_of, m)?)?;
+    m.add_function(wrap_pyfunction!(without_own, m)?)?;
     m.add_class::<IvfIndex>()
 }

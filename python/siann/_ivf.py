@@ -26,7 +26,8 @@ def default_nlist(n: int) -> int:
 
 def default_storage(x: np.ndarray) -> str:
     """uint8 where every coordinate is an integer from 0 to 255 (lossless), else float."""
-    return "uint8" if (x.min() >= 0 and x.max() <= 255 and np.array_equal(np.rint(x), x)) else "float"
+    from ._cpu import is_bytes
+    return "uint8" if is_bytes(np.ascontiguousarray(x, dtype=np.float32)) else "float"
 
 
 class IVF:
@@ -103,12 +104,9 @@ class IVF:
 
 def recall_of(found: np.ndarray, truth_scores_kth: np.ndarray, found_scores: np.ndarray, larger_better: bool) -> float:
     """The share of found neighbors at least as near as the true k-th nearest (ties count as found)."""
-    ok = found >= 0
-    if larger_better:
-        ok &= found_scores >= truth_scores_kth[:, None] - 1e-6 * np.abs(truth_scores_kth[:, None]) - 1e-9
-    else:
-        ok &= found_scores <= truth_scores_kth[:, None] + 1e-6 * np.abs(truth_scores_kth[:, None]) + 1e-9
-    return float(ok.mean())
+    from ._cpu import recall_of as rust_recall
+    return rust_recall(np.ascontiguousarray(found, dtype=np.int64), np.ascontiguousarray(found_scores, dtype=np.float32),
+                       np.ascontiguousarray(truth_scores_kth, dtype=np.float32), larger_better)
 
 
 def calibrate(search, scores, truth_kth: np.ndarray, sample_ids: np.ndarray, target: float, nlist: int,
@@ -119,12 +117,9 @@ def calibrate(search, scores, truth_kth: np.ndarray, sample_ids: np.ndarray, tar
     Returns (nprobe, recall at it)."""
     def recall_at(nprobe):
         found = search(nprobe)
-        if sample_ids is not None:
-            rows = []
-            for r, own in zip(found, sample_ids):
-                r = r[r != own][:k]                                      # leave the vector itself out
-                rows.append(np.concatenate([r, np.full(k - len(r), -1)]))
-            found = np.array(rows, dtype=np.int64)
+        if sample_ids is not None:                                       # leave the vector itself out
+            from ._cpu import without_own
+            found = without_own(np.ascontiguousarray(found, dtype=np.int64), np.ascontiguousarray(sample_ids, dtype=np.int64), k)
         return recall_of(found, truth_kth, scores(found), larger_better)
 
     hi, r_hi = 1, recall_at(1)

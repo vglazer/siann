@@ -1,19 +1,19 @@
-music100, ip, target 0.95, calibrated on own: built in 6.0 s, nprobe 129
-  routing measured in 1.8 s: below 9 queries on the CPU (single queries split over 4 threads) (list-major from 64); on the GPU query-major up to 511 queries, list-major from 512
+music100, ip, target 0.95, calibrated on own: built in 3.8 s, nprobe 129
+  routing measured in 1.6 s: below 9 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 511 queries, list-major from 512
 
    batch fixed path       q/s   measured path       q/s    ratio
-       1  cpu-split    16,830       cpu-split    16,830     1.00
-       2  gpu-query     2,564       cpu-query    15,684     6.12
-       4  gpu-query     4,961       cpu-query    21,090     4.25
-       8  gpu-query     9,958       cpu-query    25,189     2.53
-      16  gpu-query    19,225       gpu-query    19,225     1.00
-      32  gpu-query    26,964       gpu-query    26,964     1.00
-      64  gpu-query    40,638       gpu-query    40,638     1.00
-     100  gpu-query    61,400       gpu-query    61,400     1.00
-     128  gpu-query    75,468       gpu-query    75,468     1.00
-     256  gpu-query   122,973       gpu-query   122,973     1.00
-     512  gpu-query   152,709        gpu-list   117,897     0.77
-   1,000   gpu-list   143,454        gpu-list   143,454     1.00
-   2,048   gpu-list   167,678        gpu-list   167,678     1.00
-   4,096   gpu-list   187,047        gpu-list   187,047     1.00
-   9,000   gpu-list   190,455        gpu-list   190,455     1.00
+       1  cpu-split    15,605       cpu-split    15,605     1.00
+       2  gpu-query     2,560       cpu-query    15,789     6.17
+       4  gpu-query     5,006       cpu-query    20,019     4.00
+       8  gpu-query     9,929       cpu-query    24,709     2.49
+      16  gpu-query    19,256       gpu-query    19,256     1.00
+      32  gpu-query    26,780       gpu-query    26,780     1.00
+      64  gpu-query    40,468       gpu-query    40,468     1.00
+     100  gpu-query    61,137       gpu-query    61,137     1.00
+     128  gpu-query    75,423       gpu-query    75,423     1.00
+     256  gpu-query   122,198       gpu-query   122,198     1.00
+     512  gpu-query   152,952        gpu-list   117,101     0.77
+   1,000   gpu-list   141,870        gpu-list   141,870     1.00
+   2,048   gpu-list   167,623        gpu-list   167,623     1.00
+   4,096   gpu-list   181,575        gpu-list   181,575     1.00
+   9,000   gpu-list   188,444        gpu-list   188,444     1.00

@@ -336,14 +336,14 @@ query (`kmeans_check_*.txt`):
 
 | Dataset | k-means | nprobe 8 | 16 | 32 | 64 | 128 | Training |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| SIFT | FAISS / siann | 0.716 / 0.718 | 0.840 / 0.839 | 0.925 / 0.924 | 0.973 / 0.974 | 0.993 / 0.993 | 12.9 / 3.5 s |
-| GloVe | FAISS / siann | 0.631 / 0.631 | 0.712 / 0.712 | 0.780 / 0.780 | 0.839 / 0.839 | 0.890 / 0.889 | 13.1 / 2.9 s |
-| Music-100 | FAISS / siann | 0.850 / **0.866** | 0.911 / **0.922** | 0.948 / **0.957** | 0.967 / **0.976** | 0.978 / **0.987** | 12.4 / 2.9 s |
-| DBpedia, 100,000 (1,000 lists) | FAISS / siann | 0.847 / 0.850 | 0.902 / 0.904 | 0.943 / 0.945 | 0.969 / 0.972 | 0.987 / 0.988 | 2.0 / 4.5 s |
+| SIFT | FAISS / siann | 0.716 / 0.718 | 0.840 / 0.839 | 0.925 / 0.924 | 0.973 / 0.974 | 0.993 / 0.993 | 13.0 / 1.3 s |
+| GloVe | FAISS / siann | 0.631 / 0.631 | 0.712 / 0.712 | 0.780 / 0.780 | 0.839 / 0.839 | 0.890 / 0.889 | 12.8 / 1.3 s |
+| Music-100 | FAISS / siann | 0.850 / **0.866** | 0.911 / **0.922** | 0.948 / **0.957** | 0.967 / **0.976** | 0.978 / **0.987** | 12.6 / 1.3 s |
+| DBpedia, 100,000 (1,000 lists) | FAISS / siann | 0.847 / 0.850 | 0.902 / 0.904 | 0.943 / 0.945 | 0.969 / 0.972 | 0.987 / 0.988 | 2.0 / 0.7 s |
 
-A second seed moves siann's recall by up to 0.004. Training takes a third to a quarter of FAISS's time on a
-million vectors, but more than twice as long at 1,536 dimensions with 1,000 lists, where finding each
-vector's one nearest centroid goes through the top-k selection built for many.
+A second seed moves siann's recall by up to 0.004. Training takes a tenth of FAISS's time on a million
+vectors, and a third at 1,536 dimensions with 1,000 lists: each iteration finds every vector's nearest
+centroid with the exact kernels and updates the centroids in one pass in Rust.
 
 ### Where a GPU call's time goes
 
@@ -598,18 +598,18 @@ queries (ties counted as found), and its speed at the batch sizes it routes (`in
 
 | Dataset | Calibrated on | nprobe | Recall on the queries | Build | Queries/s: 1 / 100 / 10,000 |
 | --- | --- | ---: | ---: | ---: | ---: |
-| SIFT, L2 | its own vectors | 38 | 0.940 | 6.1 s | 12,991 / 108,880 / 263,708 |
-| SIFT, L2 | 1,000 of the queries (recall on the other 9,000) | 46 | **0.955** | 6.1 s | 12,564 / 100,081 / 235,178 |
-| GloVe, cosine | its own vectors | 364 | 0.947 | 8.8 s | 2,412 / 21,583 / 49,425 |
-| Music-100, inner product | its own vectors | 129 | 0.986 | 5.9 s | 10,261 / 62,212 / 184,307 |
-| Music-100, inner product | 1,000 of the queries (recall on the other 9,000) | 25 | **0.946** | 5.0 s | 18,292 / 166,167 / 438,664 |
+| SIFT, L2 | its own vectors | 38 | 0.940 | 3.6 s | 12,836 / 109,967 / 262,376 |
+| SIFT, L2 | 1,000 of the queries (recall on the other 9,000) | 46 | **0.955** | 3.6 s | 12,387 / 100,533 / 230,865 |
+| GloVe, cosine | its own vectors | 360 | 0.946 | 6.5 s | 2,480 / 20,095 / 49,496 |
+| Music-100, inner product | its own vectors | 129 | 0.986 | 3.9 s | 10,256 / 59,671 / 184,685 |
+| Music-100, inner product | 1,000 of the queries (recall on the other 9,000) | 25 | **0.946** | 2.9 s | 18,011 / 167,574 / 433,851 |
 
 - **Calibrate on queries like the real ones.** A sample of the index's own vectors misses the target on
   real queries, either way: SIFT's queries are harder than its base vectors (0.940 against 0.95), Music-100's
   much easier (0.986, at five times the nprobe it needs). Calibrated on 1,000 of the queries, the other
   9,000 land within 0.005 of the target.
-- **The IVF is chosen on every dataset,** 2-12 times faster than exact search on the calibration sample.
-- **The build takes 5-9 seconds for a million vectors:** k-means and the lists (3.5-4.0 s), calibration,
+- **The IVF is chosen on every dataset,** 2-11 times faster than exact search on the calibration sample.
+- **The build takes 3-7 seconds for a million vectors:** k-means and the lists (1.6-1.9 s), calibration,
   then the routing measurement (1.0-3.7 s).
 
 ### Routing approximate search
@@ -625,14 +625,14 @@ second of the measured route over the fixed one, at the batch sizes where the tw
 
 | Dataset, calibrated on | 2-8 queries | 16-64 | 100-512 | 1,000-2,048 |
 | --- | ---: | ---: | ---: | ---: |
-| SIFT, its own vectors | 2.3-3.9x (CPU) | 1.4x at 16 (CPU) | same | 1.1-1.3x (query-major) |
-| SIFT, queries | 2.5-3.6x (CPU) | 1.6x at 16 (CPU) | same | 1.2x at 1,000 (query-major) |
-| GloVe, its own vectors | 1.5-3.7x | 1.2-1.3x (list-major) | 1.3-1.9x (list-major) | same |
-| Music-100, its own vectors | 2.5-6.1x (CPU) | same | **0.77x at 512** (list-major) | same |
-| Music-100, queries | 3.3-5.2x (CPU) | 1.3-2.0x (CPU) | same | 1.5-1.6x (query-major) |
+| SIFT, its own vectors | 2.3-3.9x (CPU) | 1.4x at 16, 0.99x at 32 (CPU) | same | 1.15-1.3x (query-major) |
+| SIFT, queries | 2.5-3.9x (CPU) | 1.6x at 16, 0.99x at 32 (CPU) | same | 1.1-1.2x (query-major) |
+| GloVe, its own vectors | 1.6-3.7x | 1.2-1.3x (list-major) | 1.3-1.9x (list-major) | same |
+| Music-100, its own vectors | 2.5-6.2x (CPU) | same | **0.77x at 512** (list-major) | same |
+| Music-100, queries | 3.3-5.3x (CPU) | 1.1-2.0x (CPU) | same | 1.5-1.6x (query-major) |
 
 - **Small batches gain most:** the GPU's fixed cost per call outweighs its speed below 8-64 queries,
-  depending on nprobe, and the CPU answers them 1.3-6.1 times faster.
+  depending on nprobe, and the CPU answers them 1.1-6.2 times faster.
 - **The crossovers move with nprobe** (`ivf_routing.txt`, `siann.tune` on each dataset's queries): at nprobe
   46 on SIFT the CPU wins up to 16 queries and the GPU's list-major scan beyond 1,024; at nprobe 370 on
   GloVe the GPU wins from 8 queries and its list-major scan at every size; at nprobe 25 on Music-100 the
@@ -663,43 +663,45 @@ inserting all of them, inserted / re-clustered:
 
 | Dataset, split | Recall at the nprobe calibrated when trained | Queries in the new regions | nprobe for 0.95 | Largest list / mean | Speed at 0.95, batches of 1,000 |
 | --- | --- | --- | --- | --- | ---: |
-| GloVe 200,000, growth | 0.967 / 0.961 (0.950 when trained) | | 98 / 108 | 4.6 / 2.8 | 0.82x |
-| GloVe 200,000, new regions | 0.958 / 0.959 | 0.937 / 0.953 | 261 / 255 | 5.4 / 3.4 | 0.85x |
-| SIFT1M, growth | 0.972 / 0.972 (0.951) | | 23 / 23 | 5.5 / 4.0 | 0.89x |
-| SIFT1M, new regions | 0.953 / 0.958 (0.951) | 0.957 / 0.964 | 43 / 40 | 23.6 / 5.9 | 0.52x |
+| GloVe 200,000, growth | 0.967 / 0.961 (0.950 when trained) | | 98 / 108 | 4.6 / 2.8 | 0.72x |
+| GloVe 200,000, new regions | 0.957 / 0.960 | 0.936 / 0.955 | 273 / 255 | 6.1 / 3.4 | 0.78x |
+| SIFT1M, growth | 0.972 / 0.972 (0.951) | | 23 / 23 | 5.5 / 4.0 | 0.93x |
+| SIFT1M, new regions | 0.953 / 0.958 (0.951) | 0.957 / 0.964 | 43 / 40 | 23.6 / 5.9 | 0.51x |
 
 - **Inserting keeps recall:** at the nprobe calibrated on the training set, recall holds or rises as the
-  collection grows. Queries in regions the centroids never saw can fall below the target (GloVe, 0.937
-  against 0.953 re-clustered), which is why siann recalibrates nprobe after changes.
+  collection grows. Queries in regions the centroids never saw can fall below the target (GloVe, 0.936
+  against 0.955 re-clustered), which is why siann recalibrates nprobe after changes.
 - **The cost is speed, through unbalanced lists:** new vectors crowd into the lists nearest them, and on
   SIFT's new regions the largest list reached 23.6 times the mean, halving the speed at matched recall.
   Growth alone barely moves the balance (5.4 to 5.5 on SIFT).
-- **Inserting is cheap and re-clustering fast:** siann assigns 2.3-3.8 million vectors per second to their
-  lists, against 91,000-108,000 per second for FAISS's HNSW `add` (16 threads); re-clustering from scratch
-  takes 0.24-0.9 s for 200,000 vectors and 1.1-3.4 s for a million.
+- **Inserting is cheap and re-clustering fast:** siann assigns 2.2-3.4 million vectors per second to their
+  lists, against 90,000-106,000 per second for FAISS's HNSW `add` (16 threads); re-clustering from scratch
+  takes 0.13-0.42 s for 200,000 vectors and 0.49-1.47 s for a million.
+- **The speed column is from 3 calls per index,** and varies between runs: the re-clustered index's own
+  speed has differed by up to a third. The large losses (SIFT's new regions, about half) repeat.
 
 **What changing an index costs** (`add_remove.py`): an IVF on 900,000 of SIFT1M's vectors (nprobe 48, recall
 0.95 on the queries), queries per second:
 
 | State | Batch 1 | 100 | 1,000 |
 | --- | ---: | ---: | ---: |
-| As built | 11,810 | 102,581 | 181,083 |
-| 1,000 added, in the buffer | 10,178 | 75,840 | 152,715 |
-| 10,000 added, in the buffer | 7,244 | 56,516 | 109,556 |
-| Merged | 11,208 | 89,872 | 188,976 |
-| 64 removed, masked | 11,491 | 85,531 | 200,677 |
-| 512 removed, masked | 11,399 | 85,636 | 187,159 |
-| Compacted | 11,738 | 89,617 | 187,534 |
+| As built | 12,447 | 90,979 | 184,192 |
+| 1,000 added, in the buffer | 10,107 | 72,054 | 144,774 |
+| 10,000 added, in the buffer | 7,296 | 54,850 | 109,333 |
+| Merged | 11,863 | 88,571 | 179,305 |
+| 64 removed, masked | 11,387 | 81,669 | 191,372 |
+| 512 removed, masked | 11,256 | 82,629 | 182,058 |
+| Compacted | 12,013 | 93,486 | 191,020 |
 
-While added vectors wait in the buffer, searches run at 0.55-0.86 times full speed: the buffer is searched
+While added vectors wait in the buffer, searches run at 0.59-0.81 times full speed: the buffer is searched
 exactly, and the two sets of results scored and merged in Rust. The buffer is searched on the CPU, whatever
 device the main search runs on: for 1,000-10,000 vectors the CPU is faster than the GPU at nearly every
 batch size, as a GPU call's fixed cost outweighs so small a search (the last table of
-`add_remove_sift.txt`). With removed vectors masked, searches run at full speed within the spread of single
-runs, which is about 13% here (merged and compacted, which should match as built, ran at 0.87-1.04 times
-it). A merge of 10,000 added vectors takes 0.85 s (the lists and each device's copy rebuilt, nprobe
-recalibrated), a compaction 0.83 s. Adding runs at about a million vectors per second in one call, and
-about 1 millisecond per call one vector at a time.
+`add_remove_sift.txt`). With removed vectors masked, searches run at 0.90-1.04 times full speed, against a
+spread of 0.95-1.04 between single runs here (merged and compacted, which should match as built). A merge of
+10,000 added vectors takes 0.68 s (the lists and each device's copy rebuilt, nprobe recalibrated), a
+compaction 0.66 s. Adding runs at about a million vectors per second in one call, and about 1 millisecond per
+call one vector at a time.
 
 ## Against mlxvs on the GPU
 
