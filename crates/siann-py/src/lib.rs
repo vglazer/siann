@@ -1,4 +1,6 @@
-//! Prototype: exact and IVF k-nearest neighbors on the CPU, for L1, L2 and L-infinity, in safe Rust.
+//! siann's CPU paths, in safe Rust: exact and IVF k-nearest neighbors for L1, L2, L-infinity and inner
+//! product, the top-k that ranks BLAS products for L2 and inner product, and the scores of returned
+//! neighbors. Built into the siann Python package as `siann._cpu`.
 //!
 //! Vectors are stored in blocks of `L`, dimension by dimension (`blocks[b * d + j][l]` is dimension
 //! `j` of vector `b * L + l`). The inner loop computes queries against one block, keeping one
@@ -1491,6 +1493,67 @@ fn scores<'py>(
     PyArray1::from_vec(py, out).reshape([nq, k])
 }
 
+/// Ids and scores, both (nq, k).
+type Ranked<'py> = (Bound<'py, PyArray2<i64>>, Bound<'py, PyArray2<f32>>);
+
+/// The results of a search, ranked: each row of `ids` (nq, k) int64 rows of `x`, with their scores as
+/// `scores` computes them, sorted best first by score (smallest for "l1", "l2", "linf"; largest for "ip"), ties
+/// by id, and -1 last. Returns (ids, scores). Searches return this order, so that it always agrees with the
+/// scores returned, whatever precision a path ranked in (the GPU's float16 lists).
+#[pyfunction]
+fn rank<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray2<'_, f32>,
+    q: PyReadonlyArray2<'_, f32>,
+    ids: PyReadonlyArray2<'_, i64>,
+    metric: &str,
+) -> PyResult<Ranked<'py>> {
+    let kind = parse_metric(metric)?;
+    let (nq, k) = ids.as_array().dim();
+    let s = scores(py, x, q, ids.clone(), metric)?;
+    let mut sv: Vec<f32> = s.readonly().as_slice()?.to_vec();
+    let mut iv: Vec<i64> = ids
+        .as_slice()
+        .map_err(|_| PyValueError::new_err("ids must be C-contiguous"))?
+        .to_vec();
+    let larger = matches!(kind, Kind::Ip);
+    let sort_row = |(ir, sr): (&mut [i64], &mut [f32])| {
+        let mut pairs: Vec<(f32, i64)> = sr.iter().copied().zip(ir.iter().copied()).collect();
+        pairs.sort_by(|a, b| {
+            (a.1 < 0)
+                .cmp(&(b.1 < 0))
+                .then_with(|| {
+                    if larger {
+                        b.0.total_cmp(&a.0)
+                    } else {
+                        a.0.total_cmp(&b.0)
+                    }
+                })
+                .then(a.1.cmp(&b.1))
+        });
+        for (j, (v, i)) in pairs.into_iter().enumerate() {
+            sr[j] = v;
+            ir[j] = i;
+        }
+    };
+    py.detach(|| {
+        // one thread for small batches: waking the pool costs more than sorting 10 values per row
+        if nq * k < 1 << 16 {
+            iv.chunks_mut(k.max(1))
+                .zip(sv.chunks_mut(k.max(1)))
+                .for_each(sort_row);
+        } else {
+            iv.par_chunks_mut(k.max(1))
+                .zip(sv.par_chunks_mut(k.max(1)))
+                .for_each(sort_row);
+        }
+    });
+    Ok((
+        PyArray1::from_vec(py, iv).reshape([nq, k])?,
+        PyArray1::from_vec(py, sv).reshape([nq, k])?,
+    ))
+}
+
 /// float16 values (their bits, a uint16 buffer) widened to f32 as the lists widen them: for
 /// check_kernels.py, which compares every finite float16 with NumPy's conversion.
 #[pyfunction]
@@ -1505,5 +1568,6 @@ fn _cpu(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<L2TopK>()?;
     m.add_function(wrap_pyfunction!(widen_f16, m)?)?;
     m.add_function(wrap_pyfunction!(scores, m)?)?;
+    m.add_function(wrap_pyfunction!(rank, m)?)?;
     m.add_class::<IvfIndex>()
 }

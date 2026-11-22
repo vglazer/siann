@@ -1,5 +1,7 @@
-"""siann.Index: exact search over dense vectors, on the GPU (through siann's GPU backend) or the CPU (BLAS through NumPy, and
-siann's Rust kernels), with natural scores and a plan that says what was chosen and why."""
+"""siann.Index: nearest-neighbor search over dense vectors, exact or to a recall target (an IVF calibrated to
+it), on the GPU (through siann's GPU backend) or the CPU (siann's Rust kernels, and BLAS through NumPy), routed
+by batch size; vectors added and removed; saved and loaded; natural scores; and a plan that says what was
+chosen and why."""
 from __future__ import annotations
 
 import functools
@@ -553,7 +555,10 @@ class Index:
                 idx = self._ivf.search(q, kk, int(nprobe or self._nprobe), path)
             else:
                 idx = (self._search_gpu if dev == "gpu" else self._search_cpu)(q, kk)
-            sc = self._scores(q, idx)
+            # best first by the exact scores returned, ties by row
+            from ._cpu import rank
+            idx, sc = rank(self._x, np.ascontiguousarray(q, dtype=np.float32), np.ascontiguousarray(idx, dtype=np.int64),
+                           self._kernel_metric)
             if self._ids is not None:
                 idx = np.where(idx >= 0, self._ids[np.maximum(idx, 0)], -1)
         if kk < k:
@@ -737,23 +742,40 @@ class Index:
             reason = f"as its largest list reached {imbalance:.1f} times the mean, against {imb0:.1f} when clustered"
         elif len(self._x) >= REGROW * n0:
             reason = f"as the index grew to {len(self._x):,} vectors from {n0:,} when clustered"
+        bytes_lost = storage != "uint8" and any(r.startswith("lists stored as bytes") for r in self._build_reasons)
         if reason:
             nlist = default_nlist(len(self._x))
             t = time.perf_counter()
             built = build_lists(self._x, nlist, self._ivf.metric, device=dev)
+            seconds = time.perf_counter() - t
             sizes = built.sizes()
             self._clustered = (len(self._x), float(sizes.max() / sizes.mean()))
             self._reclusters += 1
-            self._last_recluster = (f"{reason}: {nlist:,} lists in {time.perf_counter() - t:.1f} s")
+            self._last_recluster = f"{reason}: {nlist:,} lists in {seconds:.1f} s"
         self._ivf = IVF(self._x, self._ivf.metric, built.nlist, storage, dev, built=built)
         if self._cal_ids is not None:                  # calibrated on its own vectors: a fresh sample of them
             self._cal_q, self._cal_ids, k1, _ = self._calibration_sample()
         else:
             k1 = min(10, len(self._x))
         self._nprobe, reached, _, _ = self._calibrate(self._ivf, self._cal_q, self._cal_ids, k1, self.recall, dev)
-        self._last_merge = f"{why}; nprobe recalibrated to {self._nprobe} (recall {reached:.3f})"
-        if reason:
-            self._route()
+        self._last_merge = f"{why}; nprobe recalibrated"
+        routing = self._route() if reason else None
+
+        def now(line: str) -> str:
+            """A build line, as the index is now."""
+            if reason and line.startswith("approximate search: an IVF of "):
+                return (f"approximate search: an IVF of {built.nlist:,} lists (about 4 sqrt(n)), re-clustered in "
+                        f"{seconds:.1f} s (siann's k-means, 10 iterations)")
+            if line.startswith("calibrated: nprobe ") and " on " in line:
+                return (f"calibrated: nprobe {self._nprobe} reaches recall@10 {reached:.3f} (target {self.recall}) "
+                        f"on {line.split(' on ', 1)[1]}")
+            if bytes_lost and line.startswith("lists stored as bytes"):
+                return ("lists stored as float16 on the GPU and float32 on the CPU" if dev == "gpu" else
+                        "lists stored as float32") + " (added vectors are not all bytes)"
+            if routing and line.startswith("routing "):
+                return routing
+            return line
+        self._build_reasons = tuple(now(r) for r in self._build_reasons)
 
     def _search_gpu(self, q: np.ndarray, k: int) -> np.ndarray:
         return _exact_gpu(self._x, self._layouts, q, k, self._kernel_metric)

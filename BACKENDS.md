@@ -26,8 +26,11 @@ each supports them, and of the speed of its built-in matrix multiply.
 
 Apple's array framework for its own chips, and siann's default GPU backend. It evaluates lazily:
 operations build a graph, which runs when a result is needed (`mx.eval`). Custom Metal kernels (Metal
-is Apple's GPU programming language) are written as source strings through `mx.fast.metal_kernel`,
-with sizes passed as template arguments, so each new shape compiles once.
+is Apple's GPU programming language) are written as source strings through `mx.fast.metal_kernel`. Sizes
+compiled in as template arguments make each new value compile a new kernel, so siann compiles in only the
+sizes that set an array's length in registers or threadgroup memory (the dimension, k, threads per query)
+and reads the rest, such as the batch size, from a small buffer at run time ([What a new batch size
+costs](BENCHMARKS.md#what-a-new-batch-size-costs)).
 
 - **The fastest matrix multiply of the three:** 6.7 ms for 256 x 1M x 128, against PyTorch's 14.2 ms;
   fused with the norms through `mx.addmm`, 6.9 ms. This is why MLX leads on L2.

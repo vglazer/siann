@@ -218,3 +218,25 @@ def test_reads_format_1(tmp_path):
         np.savez(f, **data)
     loaded = siann.Index.load(tmp_path / "b.siann")
     assert loaded.add(x[:1])[0] == 2_000
+
+
+@pytest.mark.parametrize("metric", siann.METRICS)
+@pytest.mark.parametrize("kind", ["exact", "ivf"])
+def test_results_sorted_by_their_scores(metric, kind):
+    x = clustered(20_000, 16, 18)
+    q = x[:200] + 0.05
+    index = siann.Index(x, metric, **({} if kind == "exact" else {"recall": 0.9, "kind": "ivf"}))
+    for device in DEVICES:
+        for b in (1, 200):
+            s = index.search(q[:b], 10, device=device).scores
+            d = np.diff(s, axis=1)
+            assert ((d <= 0) if metric in ("cosine", "ip") else (d >= 0)).all(), (device, b)
+
+
+def test_plan_describes_the_index_as_it_is(small_limits):
+    x = clustered(20_000, 16, 19)
+    index = siann.Index(x[:8_000], "l2", recall=0.9, kind="ivf")
+    index.add(x[8_000:])                                              # more than doubles: re-clustered
+    plan = str(index.plan)
+    assert f"an IVF of {index._ivf.nlist:,} lists (about 4 sqrt(n)), re-clustered" in plan
+    assert f"calibrated: nprobe {index.nprobe} reaches" in plan
