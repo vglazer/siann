@@ -1,0 +1,9 @@
+music100, ip: 1,000,000 vectors, 100 dimensions; 1,000 calibration queries, recall@10 on 9,000 others; queries per second
+  graph index: CAGRA through mlxvs 0.16.1 (32 links per vector), built in 5.1 s; search width 65 reaches recall@10 0.953 (target 0.95) on the same sample
+  routing measured in 1.2 s: below 65 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 2,048 queries, list-major from 2,049; through the graph from 4,096
+
+                             build              batch 1: recall, path, q/s            batch 100: recall, path, q/s          batch 9,000: recall, path, q/s
+  siann, with the graph       8.7s    0.947      cpu-split        18,153    0.946      gpu-query       145,870    0.953      gpu-graph       483,477
+  siann, IVF only             2.9s    0.947      cpu-split        18,049    0.946      gpu-query       142,203    0.946       gpu-list       284,733
+  FAISS HNSW, float32         8.6s    0.947          ef 52        23,991    0.947          ef 52       130,454    0.953          ef 60       172,656
+  mlxvs CAGRA                 5.1s    0.947       itopk 60         1,792    0.947       itopk 60       136,541    0.953       itopk 66       510,627

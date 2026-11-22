@@ -20,7 +20,7 @@ from ._ivf import DEFAULT_ROUTES
 METRICS = ("l2", "l1", "linf", "cosine", "ip")
 DISTANCES = ("l2", "l1", "linf")          # smaller is nearer; cosine and ip are similarities
 FORMAT = "siann-index"
-FORMAT_VERSION = 2                        # files of a later version are refused; 2 adds the ids of added vectors
+FORMAT_VERSION = 3                        # files of a later version are refused; 2 adds ids, 3 a graph
 # Changing an index (BENCHMARKS, DESIGN): added vectors wait in a buffer, searched exactly, until it holds
 # BUFFER_SHARE of the index or BUFFER_MIN vectors, whichever is more; removed vectors are masked until DEAD_MAX
 # are: a search fetches FETCH_EXTRA more and drops them, and searches again, fetching as many more as are
@@ -262,10 +262,10 @@ class Index:
             raise ValueError(f"metric must be one of {', '.join(METRICS)}, not {metric!r}")
         if recall is not None and not 0 < recall <= 1:
             raise ValueError(f"recall must be a target between 0 and 1, not {recall!r}")
-        if kind not in ("auto", "exact", "ivf"):
-            raise ValueError(f"kind must be 'auto', 'exact' or 'ivf', not {kind!r}")
-        if kind == "ivf" and recall is None:
-            raise ValueError("kind='ivf' needs a recall target, such as recall=0.95")
+        if kind not in ("auto", "exact", "ivf", "graph"):
+            raise ValueError(f"kind must be 'auto', 'exact', 'ivf' or 'graph', not {kind!r}")
+        if kind in ("ivf", "graph") and recall is None:
+            raise ValueError(f"kind={kind!r} needs a recall target, such as recall=0.95")
         if storage not in ("auto", "float32", "float16", "uint8"):
             raise ValueError(f"storage must be 'auto', 'float32', 'float16' or 'uint8', not {storage!r}")
         _check_device(device)
@@ -429,6 +429,10 @@ class Index:
             reasons.append(f"memory: {gb(self._x.nbytes)} of vectors, copied to the GPU when a search first needs "
                            f"them; each GPU call works within {gb(budget(self._gpu))}"
                            + (f" (the GPU can use {gb(ws)})" if ws else ""))
+        if (self._ivf is not None and self._ivf.graph is not None and self._device != "cpu"
+                and {**DEFAULT_ROUTES, **self._routes}["graph_from"] < 10 ** 9):
+            reasons.append("neighbors depend on the path: the graph and the IVF are each calibrated to the recall "
+                           "target, and find different neighbors")
         if metric == "cosine":
             reasons.append("cosine: vectors normalized to unit length and ranked by inner product")
         from . import _build
@@ -493,13 +497,44 @@ class Index:
                          f"{exact_seconds * 1e3:.1f} ms, with recall 1.0")
             return lines
         lines.append(f"IVF chosen: {ivf_seconds * 1e3:.1f} ms for {sample}, against {exact_seconds * 1e3:.1f} ms "
-                     "for exact search" + (" (kind='ivf' given)" if kind == "ivf" else ""))
+                     "for exact search" + (f" (kind={kind!r} given)" if kind in ("ivf", "graph") else ""))
         self._ivf, self._nprobe = ivf, nprobe
         self._cal_q, self._cal_ids = q, ids
         sizes = ivf.built.sizes()
         self._clustered = (len(self._x), float(sizes.max() / sizes.mean()))
+        lines += self._build_graph(kind, k1, dev)
         lines.append(self._route())
         return lines
+
+    def _graph_line(self, g, reached: float) -> str:
+        from ._graph import DEGREE, mlxvs_version
+        return (f"graph index: CAGRA through mlxvs {mlxvs_version()} ({DEGREE} links per vector), built in "
+                f"{g.build_seconds:.1f} s; search width {g.itopk} reaches recall@10 {reached:.3f} (target "
+                f"{self.recall}) on the same sample")
+
+    def _build_graph(self, kind: str, k1: int, dev: str) -> list[str]:
+        """With kind "auto" or "graph": a CAGRA graph alongside the IVF's lists, its search width calibrated to the
+        target on the calibration sample, for the batch sizes routing finds it faster. Returns the plan's lines."""
+        from ._graph import Graph, why_not
+        if kind not in ("auto", "graph"):
+            return []
+        on_gpu = self._gpu if not self._too_big and self._device != "cpu" else None
+        reason = why_not(self._ivf.metric, on_gpu)
+        if reason:
+            if kind == "graph":
+                raise RuntimeError(f"kind='graph', but {reason.removeprefix('no graph index: ')}")
+            return [reason] if self._ivf.metric in ("l2", "ip") else []
+        g = Graph(self._x, self._ivf.metric, self._storage)
+        self._ivf.graph = g
+        itopk, reached, _, _ = self._calibrate(self._ivf, self._cal_q, self._cal_ids, k1, self.recall, dev, graph=True)
+        if reached < self.recall:
+            self._ivf.graph = None
+            if kind == "graph":
+                raise RuntimeError(f"kind='graph', but the graph's widest search reached recall {reached:.3f}, below "
+                                   f"the target {self.recall}")
+            return [f"no graph index: its widest search reached recall@10 {reached:.3f}, below the target"]
+        g.itopk = itopk
+        return [self._graph_line(g, reached)]
 
     def _build_device(self) -> str:
         """Where building runs (k-means, list assignment): "gpu" (MLX), "torch" or "cpu"."""
@@ -530,8 +565,10 @@ class Index:
                   "calibration_queries= for others)")
         return self._x[ids], ids, min(CALIBRATION_K + 1, n), source
 
-    def _calibrate(self, ivf, q: np.ndarray, ids, k1: int, recall: float, dev: str):
-        """nprobe for the target on the sample, its recall, and exact search's and the IVF's time on it."""
+    def _calibrate(self, ivf, q: np.ndarray, ids, k1: int, recall: float, dev: str, graph: bool = False):
+        """nprobe for the target on the sample, its recall, and exact search's and the IVF's time on it; with
+        ``graph``, the graph's search width instead of nprobe."""
+        from ._graph import MAX_ITOPK
         from ._ivf import CALIBRATION_K, calibrate
         exact_search = self._search_gpu if dev == "gpu" else self._search_cpu
         exact = exact_search(q, k1)                                       # the truth, and a warm-up
@@ -547,13 +584,23 @@ class Index:
         larger = self.metric in ("cosine", "ip")
         tscores = self._scores(q, truth)
         kth = tscores.min(axis=1) if larger else tscores.max(axis=1)
-        path = "gpu-list" if dev == "gpu" else "cpu-list"
-        nprobe, reached = calibrate(lambda p: ivf.search(q, k1, p, path), lambda f: self._scores(q, f), kth, ids,
-                                    recall, ivf.nlist, larger)
-        ivf.search(q, k1, nprobe, path)                                   # warm the path before timing it
+        if graph:
+            def search(p):
+                return ivf.graph.search(q, k1, max(p, k1))
+            bound = MAX_ITOPK
+        else:
+            path = "gpu-list" if dev == "gpu" else "cpu-list"
+
+            def search(p):
+                return ivf.search(q, k1, p, path)
+            bound = ivf.nlist
+        value, reached = calibrate(search, lambda f: self._scores(q, f), kth, ids, recall, bound, larger)
+        if graph:
+            value = max(value, k1)
+        search(value)                                                     # warm the path before timing it
         t = time.perf_counter()
-        ivf.search(q, k1, nprobe, path)
-        return nprobe, reached, exact_seconds, time.perf_counter() - t
+        search(value)
+        return value, reached, exact_seconds, time.perf_counter() - t
 
     def _route(self) -> str:
         """Sets the IVF's routes, from the profile or measured on the calibration sample; returns the plan's line."""
@@ -572,6 +619,8 @@ class Index:
         # builds, and a transient slowdown can only understate a path
         self._routes, _ = measure_routes(self._ivf, np.concatenate([q, extra])[:want], self._nprobe, on_gpu,
                                          rounds=2 if self._gpu == "torch" else 1)
+        if self._kind_arg == "graph" and self._ivf.graph is not None:
+            self._routes["graph_from"] = 1                 # every GPU batch through the graph
         return f"routing measured in {time.perf_counter() - t:.1f} s: {describe_routes(self._routes, on_gpu)}"
 
     @_changing
@@ -593,6 +642,10 @@ class Index:
                 "clustered": list(self._clustered), "next_id": self._next_id,
                 "build_args": {"kind": self._kind_arg, "nlist": self._nlist_arg, "storage": self._storage_arg},
                 "tested_n": self._tested_n}
+        graph = self._ivf.graph if self._ivf is not None else None
+        if graph is not None:
+            from ._graph import DEGREE, mlxvs_version
+            meta["graph"] = {"itopk": graph.itopk, "degree": DEGREE, "builder": f"mlxvs {mlxvs_version()}"}
         bytes_ok = self._storage == "uint8"                 # every coordinate an integer 0-255: stored as bytes
         arrays = {"meta": np.frombuffer(json.dumps(meta).encode("utf-8"), dtype=np.uint8),
                   "x": self._x.astype(np.uint8) if bytes_ok else self._x}
@@ -604,6 +657,8 @@ class Index:
             arrays["calibration_queries"] = self._cal_q
             if self._cal_ids is not None:
                 arrays["calibration_ids"] = self._cal_ids.astype(np.int64)
+            if graph is not None:
+                arrays["graph"] = graph.graph_array()
         elif self._cal_given is not None:
             arrays["calibration_queries"] = self._cal_given
         with open(path, "wb") as f:
@@ -668,6 +723,14 @@ class Index:
             if self._clustered[1] is None:             # format 1: the balance as loaded
                 sizes = built.sizes()
                 self._clustered = (len(self._x), float(sizes.max() / sizes.mean()))
+            if meta.get("graph"):
+                from ._graph import Graph, why_not
+                reason = why_not(meta["ivf_metric"], self._gpu if gpu and self._device != "cpu" else None)
+                if reason is None:
+                    self._ivf.graph = Graph(self._x, meta["ivf_metric"], self._storage, graph=data["graph"])
+                    self._ivf.graph.itopk = int(meta["graph"]["itopk"])
+                else:
+                    reasons.append(f"the graph index in the file not loaded: {reason.removeprefix('no graph index: ')}")
             if redo:
                 reasons.append(self._route().replace("routing measured", "routing re-measured on this machine", 1))
             else:
@@ -688,6 +751,8 @@ class Index:
         dev = device or (self._device if self._device != "auto" else
                          ("cpu" if batch < r["cpu_below"] else "gpu"))
         if dev == "gpu":
+            if self._ivf.graph is not None and batch >= r["graph_from"]:
+                return "gpu-graph"
             return "gpu-list" if batch >= r["gpu_list_from"] else "gpu-query"
         if batch == 1:
             return "cpu-split"
@@ -939,6 +1004,7 @@ class Index:
         """Folds the buffer into the index and drops removed rows; for an IVF, re-clusters if due (or forced)
         and recalibrates nprobe."""
         live = np.ones(len(self._x), dtype=bool) if self._dead is None else ~self._dead
+        had_dead = self._dead is not None
         b = self._buf
         x = self._x[live] if b is None else np.concatenate([self._x[live], b["x"]])
         ids = self._row_ids()[live] if b is None else np.concatenate([self._row_ids()[live], b["ids"]])
@@ -991,12 +1057,23 @@ class Index:
             self._clustered = (len(self._x), float(sizes.max() / sizes.mean()))
             self._reclusters += 1
             self._last_recluster = f"{reason}: {nlist:,} lists in {seconds:.1f} s"
+        old_graph = self._ivf.graph
         self._ivf = IVF(self._x, self._ivf.metric, built.nlist, storage, build_dev, built=built, gpu=self._gpu)
         if self._cal_ids is not None:                  # calibrated on its own vectors: a fresh sample of them
             self._cal_q, self._cal_ids, k1, _ = self._calibration_sample()
         else:
             k1 = min(10, len(self._x))
         self._nprobe, reached, _, _ = self._calibrate(self._ivf, self._cal_q, self._cal_ids, k1, self.recall, dev)
+        graph_reached = None
+        if old_graph is not None:
+            from ._graph import Graph
+            if reason or had_dead or bytes_lost or b is None:
+                g = Graph(self._x, self._ivf.metric, self._storage)   # rows gone or moved: a new graph
+            else:
+                g = old_graph.extended(b["x"])                         # new rows linked in, after the others
+            self._ivf.graph = g
+            g.itopk, graph_reached, _, _ = self._calibrate(self._ivf, self._cal_q, self._cal_ids, k1, self.recall,
+                                                           dev, graph=True)
         self._last_merge = f"{why}; nprobe recalibrated"
         routing = self._route() if reason else None
 
@@ -1012,6 +1089,8 @@ class Index:
                 return self._storage_line("float", build_dev) + " (added vectors are not all bytes)"
             if routing and line.startswith("routing "):
                 return routing
+            if graph_reached is not None and line.startswith("graph index: CAGRA"):
+                return self._graph_line(self._ivf.graph, graph_reached)
             return line
         self._build_reasons = tuple(now(r) for r in self._build_reasons)
 

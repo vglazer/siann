@@ -51,6 +51,7 @@ class IVF:
         self.built = built if built is not None else build_lists(x, nlist, metric, device=device_for_build)
         self.build_seconds = time.perf_counter() - t
         self._gpu = self._cpu = self._coarse = None
+        self.graph = None                              # a CAGRA graph for GPU batches (siann._graph), if built
         self._lock = threading.Lock()                  # each device's copy is made once, by the first search to need it
         self._centroid_flat = None                     # the centroids in Rust's exact kernel, for nearest_lists
 
@@ -118,6 +119,8 @@ class IVF:
         find each query's lists ("auto": as the path says; the list-major scan through BLAS).
         All return the same neighbors."""
         nprobe = min(nprobe, self.nlist)
+        if path == "gpu-graph":
+            return self.graph.search(q, k)
         if path in ("gpu-query", "gpu-list"):
             scan = self.gpu().search if path == "gpu-query" else self.gpu().search_list_major
             from ._memory import budget
@@ -195,7 +198,8 @@ NEVER = 10 ** 9          # a threshold no batch reaches
 CPU_GIVE_UP = 0.3        # seconds: a CPU call this slow at one batch size is not timed at larger ones
 
 
-DEFAULT_ROUTES = {"cpu_below": 2, "gpu_list_from": 1000, "cpu_list_from": NEVER, "cpu_blas_from": NEVER}
+DEFAULT_ROUTES = {"cpu_below": 2, "gpu_list_from": 1000, "cpu_list_from": NEVER, "cpu_blas_from": NEVER,
+                  "graph_from": NEVER}
 MARGIN = 1.1             # a measured path replaces the default one only where it is this much faster
 
 
@@ -223,7 +227,8 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
     larger size measured; ``gpu_list_from`` and ``cpu_list_from``: from which the list-major scan beats the
     query-major one; ``cpu_blas_from``, for L2, cosine and inner product: from which the CPU's query-major
     scan does its coarse step through BLAS), each departing from ``DEFAULT_ROUTES`` only where the other path is at least 10%
-    faster (about the timings' run-to-run spread), and the rates, as {(path, batch): rate}."""
+    faster (about the timings' run-to-run spread), and the rates, as {(path, batch): rate}. Where the IVF has a
+    graph, it is timed with the GPU's scans, and ``graph_from`` is the batch size from which it beats both."""
 
     def time_paths(b, paths):
         """Each path's rate at batch b and its slowest call. Each path is timed by itself, its calls back to
@@ -243,11 +248,12 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
         return rates, slowest
 
     batches = [b for b in ROUTE_BATCHES if b <= len(q)]
+    gpu_paths = ("gpu-query", "gpu-list") + (("gpu-graph",) if gpu and ivf.graph is not None else ())
     if gpu:
         # a warm-up pass over every batch size: a fresh index's first GPU calls at a size run up to 30% slower
         # than later ones even after a call at that size
         for b in batches:
-            for path in ("gpu-query", "gpu-list"):
+            for path in gpu_paths:
                 ivf.search(q[:b], k, nprobe, path)
     rates = {}
     blas = ("cpu-query-blas",) if ivf.metric in ("l2", "ip") else ()
@@ -256,13 +262,13 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
         for b in batches:
             paths = (("cpu-split",) if b == 1 else ("cpu-query",) + blas + ("cpu-list",)) if cpu_on else ()
             # the GPU's paths first: after the CPU's, a GPU left idle runs its next calls slower
-            measured, slowest = time_paths(b, (("gpu-query", "gpu-list") if gpu else ()) + paths)
+            measured, slowest = time_paths(b, (gpu_paths if gpu else ()) + paths)
             for path, r in measured.items():                      # over rounds, each path's best rate
                 rates[(path, b)] = max(r, rates.get((path, b), 0.0))
             if cpu_on:
                 if gpu:
                     cpu_best = max(measured[p] for p in paths)
-                    gpu_best = max(measured["gpu-query"], measured["gpu-list"])
+                    gpu_best = max(measured[p] for p in gpu_paths)
                     gpu_wins = gpu_wins + 1 if gpu_best > cpu_best else 0
                 cpu_on = gpu_wins < 2 and max(slowest[p] for p in paths) < CPU_GIVE_UP
     cpu_batches = sorted({b for (p, b) in rates if p.startswith("cpu")})
@@ -278,12 +284,18 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
     if gpu:
         gq = {b: rates[("gpu-query", b)] for b in batches}
         gl = {b: rates[("gpu-list", b)] for b in batches}
-        cpu = {b: rates[("cpu-split", b)] if b == 1 else max(cq[b], cl[b]) for b in cpu_batches}
-        best_gpu = {b: max(gq[b], gl[b]) for b in cpu_batches}
-        routes["cpu_below"] = crossover_with_margin(cpu, best_gpu, DEFAULT_ROUTES["cpu_below"])
         routes["gpu_list_from"] = crossover_with_margin(gq, gl, DEFAULT_ROUTES["gpu_list_from"])
+        ivf_gpu = {b: gl[b] if b >= routes["gpu_list_from"] else gq[b] for b in batches}   # the IVF as routed
+        routes["graph_from"] = NEVER
+        if "gpu-graph" in gpu_paths:
+            gg = {b: rates[("gpu-graph", b)] for b in batches}
+            routes["graph_from"] = crossover_with_margin(ivf_gpu, gg, DEFAULT_ROUTES["graph_from"])
+            ivf_gpu = {b: gg[b] if b >= routes["graph_from"] else ivf_gpu[b] for b in batches}
+        cpu = {b: rates[("cpu-split", b)] if b == 1 else max(cq[b], cl[b]) for b in cpu_batches}
+        best_gpu = {b: max(rates[(p, b)] for p in gpu_paths) for b in cpu_batches}
+        routes["cpu_below"] = crossover_with_margin(cpu, best_gpu, DEFAULT_ROUTES["cpu_below"])
     else:
-        routes["cpu_below"], routes["gpu_list_from"] = NEVER, NEVER
+        routes["cpu_below"], routes["gpu_list_from"], routes["graph_from"] = NEVER, NEVER, NEVER
     return routes, rates
 
 
@@ -291,6 +303,7 @@ def describe_routes(routes: dict, gpu: bool) -> str:
     """The routes, in words."""
     c, gl, cl = routes["cpu_below"], routes["gpu_list_from"], routes["cpu_list_from"]
     cb = routes.get("cpu_blas_from", NEVER)
+    gg = routes.get("graph_from", NEVER)
     notes = ([] if cb >= NEVER or cb >= min(cl, c) else [f"coarse step through BLAS from {cb:,}"]) + \
         ([] if cl >= NEVER else [f"list-major from {cl:,}"])
     cpu_list = f" ({'; '.join(notes)})" if notes else ""
@@ -298,10 +311,15 @@ def describe_routes(routes: dict, gpu: bool) -> str:
         return f"single queries split over 4 threads, batches on the CPU{cpu_list}"
     parts = ["single queries on the CPU, split over 4 threads"] if c <= 2 else \
         [f"below {c:,} queries on the CPU (single queries split over 4 threads){cpu_list}"]
+    if gg <= c:
+        parts.append("larger batches on the GPU through the graph")
+        return "; ".join(parts)
     if gl >= NEVER:
         parts.append("larger batches on the GPU, query-major")
     elif gl <= c:
         parts.append("larger batches on the GPU, list-major")
     else:
         parts.append(f"on the GPU query-major up to {gl - 1:,} queries, list-major from {gl:,}")
+    if gg < NEVER:
+        parts.append(f"through the graph from {gg:,}")
     return "; ".join(parts)

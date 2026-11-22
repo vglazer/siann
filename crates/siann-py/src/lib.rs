@@ -15,6 +15,7 @@ use pyo3::prelude::*;
 use siann::Mat;
 use siann::elem::widen_half;
 use siann::flat::Flat;
+use siann::graph::{Graph, Rows};
 use siann::ivf::{Ivf, Options, Stored};
 use siann::metric::Kind;
 use siann::ops::{self, Buffer, Changes};
@@ -230,6 +231,62 @@ impl IvfIndex {
     /// The number of vectors in each list.
     fn list_sizes(&self) -> Vec<usize> {
         self.0.list_sizes()
+    }
+}
+
+/// A proximity graph (each vector's `degree` neighbors, as CAGRA builds them on a GPU), searched on the CPU.
+#[pyclass]
+struct GraphIndex(Graph);
+
+#[pymethods]
+impl GraphIndex {
+    /// From base vectors (n, d), C-contiguous float32, and `links` (n, degree) int64, each a row or -1. The
+    /// search reads `xb` itself (`storage="float32"`), or with "uint8" the same vectors as bytes (`stored`, a
+    /// uint8 array; every coordinate an integer from 0 to 255). `metric` is "l1", "l2", "linf" or "ip".
+    #[new]
+    #[pyo3(signature = (xb, links, d, metric = "l2", stored = None, storage = "float32"))]
+    fn py_new(
+        py: Python<'_>,
+        xb: &Bound<'_, PyAny>,
+        links: PyReadonlyArray2<'_, i64>,
+        d: usize,
+        metric: &str,
+        stored: Option<&Bound<'_, PyAny>>,
+        storage: &str,
+    ) -> PyResult<Self> {
+        let kind = self::metric(metric)?;
+        let x = read(py, xb, d)?;
+        let rows = match (storage, stored) {
+            ("float32", None) => Rows::F32(x.clone()),
+            ("uint8", Some(buf)) => Rows::U8(PyBuffer::<u8>::get(buf)?.to_vec(py)?),
+            _ => {
+                return Err(PyValueError::new_err(
+                    "storage is 'float32' (no stored), or 'uint8' with stored",
+                ));
+            }
+        };
+        let l = mat(&links, "links must be C-contiguous")?;
+        let g = py
+            .detach(|| Graph::new(&x, d, kind, rows, l.data, l.cols))
+            .map_err(value_error)?;
+        Ok(GraphIndex(g))
+    }
+
+    /// The indices of the k nearest found for each query, flattened (nq * k), nearest first; u32::MAX where
+    /// fewer were found. `ef` candidates are kept (at least k): more find more of the true neighbors, slower.
+    /// One thread per query.
+    fn search<'py>(
+        &self,
+        py: Python<'py>,
+        xq: &Bound<'_, PyAny>,
+        k: usize,
+        ef: usize,
+    ) -> PyResult<Bound<'py, PyArray1<u32>>> {
+        let v = read(py, xq, self.0.d)?;
+        let out = py
+            .detach(|| self.0.search(&v, k, ef))
+            .map_err(value_error)?;
+        Ok(out.into_pyarray(py))
     }
 }
 
@@ -552,5 +609,6 @@ fn _cpu(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(centroid_means, m)?)?;
     m.add_function(wrap_pyfunction!(recall_of, m)?)?;
     m.add_function(wrap_pyfunction!(without_own, m)?)?;
+    m.add_class::<GraphIndex>()?;
     m.add_class::<IvfIndex>()
 }

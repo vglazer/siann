@@ -6,6 +6,7 @@
 //! - `elem`: how list vectors are stored (f32, float16 bits, bytes).
 //! - `kernels`: the blocked layout, the distance loops over one block, and `TopK`.
 //! - `flat`: exact search.
+//! - `graph`: search of a proximity graph (CAGRA's, built on a GPU) on the CPU.
 //! - `ivf`: the inverted lists: their coarse step and both scans.
 //! - `products`: ranking the products of a BLAS matrix multiply (`L2TopK`).
 //! - `ops`: scoring, ranking and merging results, and the arithmetic the Python side would otherwise do
@@ -13,6 +14,7 @@
 
 pub mod elem;
 pub mod flat;
+pub mod graph;
 pub mod ivf;
 pub mod kernels;
 pub mod metric;

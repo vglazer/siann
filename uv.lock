@@ -1839,6 +1839,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+graph = [
+    { name = "mlxvs", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+]
 torch = [
     { name = "torch" },
 ]
@@ -1866,10 +1869,11 @@ lint = [
 [package.metadata]
 requires-dist = [
     { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = ">=0.32.4" },
+    { name = "mlxvs", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'graph'", specifier = ">=0.16.1" },
     { name = "numpy", specifier = ">=2.5.5" },
     { name = "torch", marker = "extra == 'torch'", specifier = ">=2.15.0" },
 ]
-provides-extras = ["torch"]
+provides-extras = ["graph", "torch"]
 
 [package.metadata.requires-dev]
 bench = [

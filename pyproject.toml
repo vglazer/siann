@@ -20,6 +20,8 @@ Repository = "https://github.com/vglazer/siann"
 
 [project.optional-dependencies]
 torch = ["torch>=2.15.0"]
+# graph search for GPU batches: NVIDIA cuVS's CAGRA on the Apple GPU, through mlxvs
+graph = ["mlxvs>=0.16.1; sys_platform == 'darwin' and platform_machine == 'arm64'"]
 
 [dependency-groups]
 # the tests in python/tests

@@ -4,6 +4,7 @@
 
 use super::elem::widen_half;
 use super::flat::Flat;
+use super::graph::{Graph, Rows};
 use super::ivf::{Ivf, Options, Stored};
 use super::kernels::TopK;
 use super::metric::{Kind, score};
@@ -221,4 +222,25 @@ fn grouping_by_list_is_stable() {
     assert_eq!(order, vec![1, 4, 3, 0, 2]);
     assert_eq!(offsets, vec![0, 2, 3, 5]);
     assert!(ops::group_by_list(&[3], 3).is_err());
+}
+
+#[test]
+fn graph_search_on_a_nearest_neighbor_graph_is_exact() {
+    // each vector linked to its 24 true nearest: best-first search from any entry finds the exact neighbors
+    let (n, d, k, deg) = (1500, 8, 5, 24);
+    let x = data(n, d, 9);
+    let q: Vec<f32> = x[..40 * d].to_vec();
+    for kind in [Kind::L2, Kind::L1, Kind::Ip] {
+        let nn = Flat::new(&x, d, kind)
+            .search(&x, deg + 1, 32, true)
+            .unwrap();
+        let links: Vec<i64> = nn
+            .chunks(deg + 1)
+            .flat_map(|r| r[1..].iter().map(|&i| i as i64))
+            .collect();
+        let g = Graph::new(&x, d, kind, Rows::F32(x.clone()), &links, deg).unwrap();
+        let found = g.search(&q, k, 64).unwrap();
+        same_up_to_rounding(&found, &brute(&x, &q, d, k, kind), &x, &q, d, k, kind);
+    }
+    assert!(Graph::new(&x, d, Kind::L2, Rows::F32(x.clone()), &[0; 3], 2).is_err());
 }
