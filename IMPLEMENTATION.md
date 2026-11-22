@@ -422,6 +422,12 @@ recall there, while an IVF's dense scans do not care.
 Each of these is measured; the scripts are named in parentheses, and their output is in
 [benchmarks/results/](benchmarks/results/).
 
+- **A matrix multiply in pure Rust instead of BLAS** (`faer_gemm/`, `numpy_gemm.py`). faer, the multiply in
+  safe Rust, on the products exact L2 search computes: BLAS is 1.2-5.0 times faster on the Mac (Accelerate)
+  and 1.1-10.4 times on Linux (OpenBLAS), most for single queries and small batches
+  ([A matrix multiply in Rust](BENCHMARKS.md#a-matrix-multiply-in-rust)). Rust would avoid OpenBLAS's
+  threads competing with siann's; setting `OPENBLAS_THREAD_TIMEOUT` avoids it at no such cost.
+
 - **LSH for dense vectors** (`lsh_l1.py`). Locality-sensitive hashing hashes vectors so that near ones
   tend to collide, then compares only the colliding ones. With Cauchy random projections (the standard
   LSH for L1) on SIFT1M, reaching recall 0.72 means re-ranking a tenth of the database, which exact

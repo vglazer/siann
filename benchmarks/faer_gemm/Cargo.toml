@@ -1,0 +1,12 @@
+[package]
+name = "faer-gemm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The products exact L2 search computes, through faer, a safe pure-Rust matrix multiply (numpy_gemm.py times the same through NumPy's BLAS)"
+
+[dependencies]
+faer = "0.22"
+
+[profile.release]
+codegen-units = 1

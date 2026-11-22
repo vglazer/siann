@@ -1,0 +1,9 @@
+faer, 16 threads; GFLOP/s by (queries, dimensions): one pass over n base vectors in blocks
+  m    1, d   128:     25.6 GFLOP/s (10.01 ms per pass, block 500000)
+  m   10, d   128:     70.5 GFLOP/s (38.09 ms per pass, block 262144)
+  m  100, d   128:    458.4 GFLOP/s (56.73 ms per pass, block 32768)
+  m  512, d   128:    574.9 GFLOP/s (228.78 ms per pass, block 4096)
+  m    1, d  1536:     35.4 GFLOP/s (8.67 ms per pass, block 50000)
+  m   10, d  1536:    256.0 GFLOP/s (12.00 ms per pass, block 50000)
+  m  100, d  1536:    324.5 GFLOP/s (124.08 ms per pass, block 32768)
+  m  512, d  1536:    642.1 GFLOP/s (250.83 ms per pass, block 4096)

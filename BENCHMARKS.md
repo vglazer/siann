@@ -165,6 +165,27 @@ the CPU path gains most without a GPU, and on smaller collections.
   leaving less to win on 1,000 queries.
 - **Batches below 100 queries** are outside the measurements; there a multiply has little to reuse.
 
+### A matrix multiply in Rust
+
+*Reproduce with `numpy_gemm.py` and `faer_gemm/` (`cargo run --release`); `gemm_*.txt`.*
+
+Exact L2 and inner product on the CPU rest on a matrix multiply, a tile of m queries against blocks of the
+base, which siann leaves to NumPy's BLAS. faer, a matrix multiply in safe Rust on every core, on the same
+shapes (blocks of 0.5-3.3 million products), GFLOP/s, BLAS / faer:
+
+| Queries per tile (m) | Mac, Accelerate: d 128 | d 1,536 | Linux, OpenBLAS: d 128 | d 1,536 |
+| ---: | --- | --- | --- | --- |
+| 1 | 35.8 / 25.6 (1.40x) | 54.9 / 35.4 (1.55x) | 58.4 / 7.4 (7.9x) | 61.3 / 5.9 (10.4x) |
+| 10 | 212 / 71 (3.01x) | 302 / 256 (1.18x) | 145 / 24 (6.1x) | 140 / 98 (1.43x) |
+| 100 | 1,406 / 458 (3.07x) | 1,632 / 325 (5.03x) | 348 / 174 (2.0x) | 345 / 98 (3.5x) |
+| 512 | 941 / 575 (1.64x) | 2,145 / 642 (3.34x) | 398 / 350 (1.14x) | 400 / 339 (1.18x) |
+
+The Mac is the M3 Max (16 threads); Linux is an ARM container on it (Docker, 4 CPUs), where
+`OPENBLAS_THREAD_TIMEOUT=4` leaves the multiply alone unchanged (it matters when Rust code follows on the
+same cores: [On Linux](#on-linux)). BLAS is faster at every shape, 1.2-5.0 times on the Mac, whose
+Accelerate uses the chip's matrix units, and 1.1-10.4 times on Linux, most for the thin products of single
+queries and small batches.
+
 ### FAISS's BLAS threshold
 
 *Reproduce with `faiss_blas.py`.*

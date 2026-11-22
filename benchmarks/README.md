@@ -55,6 +55,7 @@ Each backs an entry in IMPLEMENTATION.md's "What does not pay".
 | --- | --- |
 | `lsh_l1.py` | LSH for L1 (Cauchy random projections) on SIFT1M |
 | `blas_ivf.py` | BLAS in the CPU IVF's list-major scan |
+| `faer_gemm/`, `numpy_gemm.py` | A matrix multiply in safe Rust (faer) instead of NumPy's BLAS, on exact L2 search's shapes |
 | `ip_reduction.py` | Reducing inner product to L2 for an IVF |
 | `fine_lists.py` | Finer partitions (16,000 lists) for small batches on the CPU |
 | `rust_cpu_sweep.py` | The Rust exact kernel's chunk size and vector instructions, including `f32::max` for L-infinity |
