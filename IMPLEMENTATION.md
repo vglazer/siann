@@ -253,16 +253,25 @@ each list once for many queries.
 siann's GPU kernels are Metal source, written once (`siann._metal`) and compiled by either GPU backend: MLX
 (`mx.fast.metal_kernel`, the faster on Apple silicon) or PyTorch's MPS backend (`torch.mps.compile_shader`).
 
+The two-stage top-k, for one query's row of distances to a million base vectors:
+
 ```mermaid
 flowchart LR
-    t["tile of 256 queries"] --> d{"metric"}
-    d -- "L2" --> a["addmm: |x|² - 2 Q·Xᵀ<br/>one fused matrix multiply"]
-    d -- "L1, L-infinity" --> b["tiled kernel<br/>64 × 64 distances per threadgroup,<br/>staged in threadgroup memory"]
-    a --> s1["stage 1: 512 threads per query<br/>each keeps its best k in registers"]
-    b --> s1
-    s1 --> s2["stage 2: small selection<br/>over 512 × k survivors"]
-    s2 --> e["evaluate the tile,<br/>then the next"]
+    row["one query's row:<br/>1,000,000 distances"]
+    row --> t0["thread 0 reads distances<br/>0, 512, 1,024, …<br/>and keeps its best k<br/>in registers"]
+    row --> t1["thread 1 reads<br/>1, 513, 1,025, …"]
+    row --> tm["…"]
+    row --> t511["thread 511 reads<br/>511, 1,023, 1,535, …"]
+    t0 --> s2["stage 2: the best k<br/>among 512 × k survivors"]
+    t1 --> s2
+    tm --> s2
+    t511 --> s2
+    s2 --> out["the query's<br/>k nearest"]
 ```
+
+Every thread reads the row once, in a pattern where neighboring threads read neighboring memory, and keeps
+only k values, so nothing but the survivors is written back; a full selection over the row would sort or
+partition all of it.
 
 - **A two-stage top-k, the largest single gain.** The frameworks' own selection (`argpartition`, `topk`)
   takes 146-152 ms per tile of 256 queries against a million vectors, eight times the distances. siann
