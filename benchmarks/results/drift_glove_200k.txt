@@ -1,0 +1,21 @@
+glove (served normalized for cosine where it is), a random 200,000 of its 1,183,514 vectors, 10,000 queries, recall@10 target 0.95
+
+random: trained on 20,000 vectors (10%), 512 lists; inserting 180,000
+  calibrated when trained: nprobe 128 for recall 0.95
+   inserted   vectors        recall at nprobe 128     nprobe for 0.95   largest list / mean
+                             inserted / retrained        ins. / retr.          ins. / retr.
+         0%    20,000          0.950 / 0.950         128 / 128             4.4 / 4.4
+        50%   110,000          0.962 / 0.954         108 / 121             4.5 / 3.1
+       100%   200,000          0.967 / 0.961          98 / 108             4.6 / 2.8
+  at the target, all inserted, batches of 1,000 on the GPU: inserted 65,905 queries/s, retrained 80,211 (0.82x)
+  inserting 180,000 vectors: siann's assignment 3,814,731 vectors/s; re-clustering all 200,000 from scratch 0.24 s; FAISS HNSW add (16 threads) 108,127 vectors/s
+
+regions: trained on 157,437 vectors (79%), 1,587 lists; inserting 42,563; 21.5% of the queries fall in the held-out regions
+  calibrated when trained: nprobe 297 for recall 0.95
+   inserted   vectors        recall at nprobe 297       new regions     nprobe for 0.95   largest list / mean
+                             inserted / retrained      ins. / retr.        ins. / retr.          ins. / retr.
+         0%   157,437          0.950 / 0.950     0.898 / 0.898         297 / 297             4.1 / 4.1
+        50%   178,718          0.956 / 0.958     0.929 / 0.946         269 / 259             3.9 / 4.6
+       100%   200,000          0.958 / 0.959     0.937 / 0.953         261 / 255             5.4 / 3.4
+  at the target, all inserted, batches of 1,000 on the GPU: inserted 93,028 queries/s, retrained 109,530 (0.85x)
+  inserting 42,563 vectors: siann's assignment 2,999,093 vectors/s; re-clustering all 200,000 from scratch 0.90 s; FAISS HNSW add (16 threads) 90,864 vectors/s
