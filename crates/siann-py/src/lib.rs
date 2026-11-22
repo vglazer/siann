@@ -1428,6 +1428,18 @@ impl L2TopK {
     }
 }
 
+/// The score of vector `x` for query `q`: the Euclidean distance for L2, the sums of absolute differences for
+/// L1, the largest for L-infinity, the inner product for "ip".
+fn score(kind: Kind, q: &[f32], x: &[f32]) -> f32 {
+    let pairs = q.iter().zip(x);
+    match kind {
+        Kind::L2 => pairs.map(|(a, b)| (a - b) * (a - b)).sum::<f32>().sqrt(),
+        Kind::L1 => pairs.map(|(a, b)| (a - b).abs()).sum(),
+        Kind::Linf => pairs.fold(0.0f32, |m, (a, b)| larger(m, (a - b).abs())),
+        Kind::Ip => pairs.map(|(a, b)| a * b).sum(),
+    }
+}
+
 /// Each returned neighbor's score, computed from the vectors in f32: for `ids` (nq, k) int64 rows of `x`
 /// (n, d) and queries `q` (nq, d), both C-contiguous float32 and read in place, the Euclidean distance
 /// for "l2", the sum of absolute differences for "l1", the largest for "linf" and the inner product for
@@ -1463,17 +1475,10 @@ fn scores<'py>(
     };
     let one = |(o, (row, qv)): (&mut [f32], (&[i64], &[f32]))| {
         for (s, &i) in o.iter_mut().zip(row) {
-            if i < 0 {
-                *s = missing;
-                continue;
-            }
-            let xv = &xs[i as usize * d..(i as usize + 1) * d];
-            let pairs = qv.iter().zip(xv);
-            *s = match kind {
-                Kind::L2 => pairs.map(|(a, b)| (a - b) * (a - b)).sum::<f32>().sqrt(),
-                Kind::L1 => pairs.map(|(a, b)| (a - b).abs()).sum(),
-                Kind::Linf => pairs.fold(0.0f32, |m, (a, b)| larger(m, (a - b).abs())),
-                Kind::Ip => pairs.map(|(a, b)| a * b).sum(),
+            *s = if i < 0 {
+                missing
+            } else {
+                score(kind, qv, &xs[i as usize * d..(i as usize + 1) * d])
             };
         }
     };
@@ -1554,6 +1559,153 @@ fn rank<'py>(
     ))
 }
 
+/// One query's row of the merged results, as `merge_results` fills it: its index, its ids and scores, its count
+/// of masked candidates.
+type MergeRow<'a> = (usize, ((&'a mut [i64], &'a mut [f32]), &'a mut i64));
+
+/// Ids, scores and how many masked rows each query met, (nq, k), (nq, k) and (nq,).
+type Merged<'py> = (
+    Bound<'py, PyArray2<i64>>,
+    Bound<'py, PyArray2<f32>>,
+    Bound<'py, PyArray1<i64>>,
+);
+
+/// The search results of an index that has changed, merged: for each query, its candidates among the main
+/// vectors `x` (`rows`, (nq, m) int64 rows of x, -1 for none) less those `dead` masks, named by `ids` (each
+/// row's id; by default the row), and among the added vectors `xb` (`brows`, rows of xb, named by `bids`);
+/// each scored as `scores` scores it, and the best k kept, ranked as `rank` ranks them (ties by id, -1 last).
+/// Also returns how many of each query's main candidates were masked, so that a caller can search again the
+/// queries left with too few.
+#[pyfunction]
+#[pyo3(signature = (x, q, rows, k, metric, dead = None, ids = None, xb = None, brows = None, bids = None))]
+#[allow(clippy::too_many_arguments)] // PyO3 takes the keyword arguments as parameters
+fn merge_results<'py>(
+    py: Python<'py>,
+    x: PyReadonlyArray2<'_, f32>,
+    q: PyReadonlyArray2<'_, f32>,
+    rows: PyReadonlyArray2<'_, i64>,
+    k: usize,
+    metric: &str,
+    dead: Option<PyReadonlyArray1<'_, bool>>,
+    ids: Option<PyReadonlyArray1<'_, i64>>,
+    xb: Option<PyReadonlyArray2<'_, f32>>,
+    brows: Option<PyReadonlyArray2<'_, i64>>,
+    bids: Option<PyReadonlyArray1<'_, i64>>,
+) -> PyResult<Merged<'py>> {
+    let kind = parse_metric(metric)?;
+    let contiguous = || PyValueError::new_err("arrays must be C-contiguous");
+    let (n, d) = x.as_array().dim();
+    let (nq, qd) = q.as_array().dim();
+    let (rq, m) = rows.as_array().dim();
+    let (xs, qs, rs) = (
+        x.as_slice().map_err(|_| contiguous())?,
+        q.as_slice().map_err(|_| contiguous())?,
+        rows.as_slice().map_err(|_| contiguous())?,
+    );
+    let dead = match &dead {
+        Some(a) => Some(a.as_slice().map_err(|_| contiguous())?),
+        None => None,
+    };
+    let ids = match &ids {
+        Some(a) => Some(a.as_slice().map_err(|_| contiguous())?),
+        None => None,
+    };
+    let bad = |what: &str| Err(PyValueError::new_err(format!("merge_results: {what}")));
+    if qd != d || rq != nq || rs.iter().any(|&r| r < -1 || r >= n as i64) {
+        return bad("q must be (nq, d) and rows (nq, m), each -1 or a row of x");
+    }
+    if dead.is_some_and(|v| v.len() != n) || ids.is_some_and(|v| v.len() != n) {
+        return bad("dead and ids must have one entry per row of x");
+    }
+    let (bxs, brs, bis, mb) = match (&xb, &brows, &bids) {
+        (Some(bx), Some(br), Some(bi)) => {
+            let (nb, bd) = bx.as_array().dim();
+            let (brq, mb) = br.as_array().dim();
+            let (bxs, brs, bis) = (
+                bx.as_slice().map_err(|_| contiguous())?,
+                br.as_slice().map_err(|_| contiguous())?,
+                bi.as_slice().map_err(|_| contiguous())?,
+            );
+            if bd != d
+                || brq != nq
+                || bis.len() != nb
+                || brs.iter().any(|&r| r < -1 || r >= nb as i64)
+            {
+                return bad("xb must be (nb, d), brows (nq, mb) rows of xb, bids (nb,)");
+            }
+            (bxs, brs, bis, mb)
+        }
+        (None, None, None) => (&[][..], &[][..], &[][..], 0),
+        _ => return bad("give xb, brows and bids together"),
+    };
+    let similarity = matches!(kind, Kind::Ip);
+    let worst = if similarity {
+        f32::NEG_INFINITY
+    } else {
+        f32::INFINITY
+    };
+    let mut out_i = vec![-1i64; nq * k];
+    let mut out_s = vec![worst; nq * k];
+    let mut hits = vec![0i64; nq];
+    let one = |(qi, ((oi, os), h)): MergeRow<'_>| {
+        let qv = &qs[qi * d..(qi + 1) * d];
+        let mut cand: Vec<(f32, i64)> = Vec::with_capacity(m + mb);
+        for &r in &rs[qi * m..(qi + 1) * m] {
+            if r < 0 {
+                continue;
+            }
+            let r = r as usize;
+            if dead.is_some_and(|v| v[r]) {
+                *h += 1;
+                continue;
+            }
+            let id = ids.map_or(r as i64, |v| v[r]);
+            cand.push((score(kind, qv, &xs[r * d..(r + 1) * d]), id));
+        }
+        for &r in &brs[qi * mb..(qi + 1) * mb] {
+            if r >= 0 {
+                let r = r as usize;
+                cand.push((score(kind, qv, &bxs[r * d..(r + 1) * d]), bis[r]));
+            }
+        }
+        cand.sort_by(|a, b| {
+            if similarity {
+                b.0.total_cmp(&a.0)
+            } else {
+                a.0.total_cmp(&b.0)
+            }
+            .then(a.1.cmp(&b.1))
+        });
+        for (j, (s, id)) in cand.into_iter().take(k).enumerate() {
+            oi[j] = id;
+            os[j] = s;
+        }
+    };
+    py.detach(|| {
+        let rows = out_i
+            .chunks_mut(k.max(1))
+            .zip(out_s.chunks_mut(k.max(1)))
+            .zip(hits.iter_mut())
+            .enumerate();
+        // one thread for small batches: waking the pool costs more than scoring a few candidates
+        if nq * (m + mb) * d < 1 << 20 {
+            rows.for_each(one);
+        } else {
+            out_i
+                .par_chunks_mut(k.max(1))
+                .zip(out_s.par_chunks_mut(k.max(1)))
+                .zip(hits.par_iter_mut())
+                .enumerate()
+                .for_each(one);
+        }
+    });
+    Ok((
+        PyArray1::from_vec(py, out_i).reshape([nq, k])?,
+        PyArray1::from_vec(py, out_s).reshape([nq, k])?,
+        PyArray1::from_vec(py, hits),
+    ))
+}
+
 /// float16 values (their bits, a uint16 buffer) widened to f32 as the lists widen them: for
 /// check_kernels.py, which compares every finite float16 with NumPy's conversion.
 #[pyfunction]
@@ -1569,5 +1721,6 @@ fn _cpu(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(widen_f16, m)?)?;
     m.add_function(wrap_pyfunction!(scores, m)?)?;
     m.add_function(wrap_pyfunction!(rank, m)?)?;
+    m.add_function(wrap_pyfunction!(merge_results, m)?)?;
     m.add_class::<IvfIndex>()
 }

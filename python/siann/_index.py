@@ -571,48 +571,40 @@ class Index:
         return -np.inf if self.metric in ("cosine", "ip") else np.inf
 
     def _search_changed(self, q: np.ndarray, kk: int, path, dev: str, nprobe):
-        """Search with added vectors in the buffer or removed ones masked: the main vectors (k more than the
-        rows masked, which are dropped), the buffer exactly, the two merged by score."""
-        from ._cpu import scores
-        parts_i, parts_s, worst = [], [], self._worst()
-        nm = len(self._x)
-        dead = self._dead
-        nd = self._ndead
-        if nm - nd > 0:
-            def main_search(qq, fetch):
-                if self._ivf is not None:
-                    found = self._ivf.search(qq, fetch, int(nprobe or self._nprobe), path)
-                else:
-                    found = (self._search_gpu if dev == "gpu" else self._search_cpu)(qq, fetch)
-                sc = self._scores(qq, found)
-                hit = (found >= 0) & dead[np.maximum(found, 0)] if nd else np.zeros(found.shape, dtype=bool)
-                return np.where(hit, -1, found), np.where(hit, worst, sc), hit.sum(axis=1)
-            fetch = min(kk + min(nd, FETCH_EXTRA), nm)
-            rows, s, hits = main_search(q, fetch)
-            if nd > FETCH_EXTRA:
-                # queries that lost more than FETCH_EXTRA of their neighbors to masked rows: again, fetching
-                # as many more as are masked
-                short = np.where(hits > fetch - kk)[0]
-                if len(short):
-                    full = min(kk + nd, nm)
-                    r2, s2, _ = main_search(np.ascontiguousarray(q[short]), full)
-                    rows = np.pad(rows, ((0, 0), (0, full - fetch)), constant_values=-1)
-                    s = np.pad(s, ((0, 0), (0, full - fetch)), constant_values=worst)
-                    rows[short], s[short] = r2, s2
-            ids = rows if self._ids is None else np.where(rows >= 0, self._ids[np.maximum(rows, 0)], -1)
-            parts_i.append(ids)
-            parts_s.append(s)
-        if self._buf is not None:
+        """Search with added vectors in the buffer or removed ones masked: the main vectors (FETCH_EXTRA more
+        than k, the masked dropped), the buffer exactly, the two merged by score in Rust; queries that lost more
+        than FETCH_EXTRA to masked rows are searched again, fetching as many more as are masked."""
+        from ._cpu import merge_results
+        q = np.ascontiguousarray(q, dtype=np.float32)
+        nm, nd = len(self._x), self._ndead
+
+        def main_rows(qq, fetch):
+            if nm - nd <= 0:
+                return np.full((len(qq), 0), -1, dtype=np.int64)
+            if self._ivf is not None:
+                return self._ivf.search(qq, fetch, int(nprobe or self._nprobe), path)
+            return (self._search_gpu if dev == "gpu" else self._search_cpu)(qq, fetch)
+
+        buf = self._buf
+        if buf is not None:
             # on the CPU whatever the main search's device: for buffers of 1,000-10,000 vectors, faster than
             # the GPU at nearly every batch size measured (`add_remove.py`)
-            bx = self._buf["x"]
-            brows = _exact_cpu(bx, self._buf_layouts, q, min(kk, len(bx)), self._kernel_metric)
-            parts_s.append(scores(bx, np.ascontiguousarray(q), brows, self._kernel_metric))
-            parts_i.append(np.where(brows >= 0, self._buf["ids"][np.maximum(brows, 0)], -1))
-        ids, s = np.concatenate(parts_i, axis=1), np.concatenate(parts_s, axis=1)
-        s = np.where(ids >= 0, s, worst)
-        order = np.argsort(-s if worst < 0 else s, axis=1, kind="stable")[:, :kk]
-        return np.take_along_axis(ids, order, axis=1), np.take_along_axis(s, order, axis=1)
+            brows = _exact_cpu(buf["x"], self._buf_layouts, q, min(kk, len(buf["x"])), self._kernel_metric)
+
+        def merged(qq, rows, br):
+            extra = {} if buf is None else {"xb": buf["x"], "brows": np.ascontiguousarray(br), "bids": buf["ids"]}
+            return merge_results(self._x, qq, np.ascontiguousarray(rows, dtype=np.int64), kk, self._kernel_metric,
+                                 dead=self._dead, ids=self._ids, **extra)
+
+        fetch = min(kk + min(nd, FETCH_EXTRA), nm)
+        ids, s, hits = merged(q, main_rows(q, fetch), None if buf is None else brows)
+        if nd > FETCH_EXTRA:
+            short = np.flatnonzero(hits > fetch - kk)
+            if len(short):
+                qs = np.ascontiguousarray(q[short])
+                ids[short], s[short], _ = merged(qs, main_rows(qs, min(kk + nd, nm)),
+                                                 None if buf is None else brows[short])
+        return ids, s
 
     def _row_ids(self) -> np.ndarray:
         return np.arange(len(self._x), dtype=np.int64) if self._ids is None else self._ids

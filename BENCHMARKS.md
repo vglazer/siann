@@ -683,23 +683,23 @@ inserting all of them, inserted / re-clustered:
 
 | State | Batch 1 | 100 | 1,000 |
 | --- | ---: | ---: | ---: |
-| As built | 12,158 | 100,080 | 198,455 |
-| 1,000 added, in the buffer | 8,567 | 70,583 | 128,455 |
-| 10,000 added, in the buffer | 6,731 | 54,671 | 88,055 |
-| Merged | 12,316 | 85,651 | 190,618 |
-| 64 removed, masked | 9,539 | 84,143 | 131,750 |
-| 512 removed, masked | 9,374 | 81,110 | 141,066 |
-| Compacted | 11,982 | 90,070 | 164,729 |
+| As built | 11,810 | 102,581 | 181,083 |
+| 1,000 added, in the buffer | 10,178 | 75,840 | 152,715 |
+| 10,000 added, in the buffer | 7,244 | 56,516 | 109,556 |
+| Merged | 11,208 | 89,872 | 188,976 |
+| 64 removed, masked | 11,491 | 85,531 | 200,677 |
+| 512 removed, masked | 11,399 | 85,636 | 187,159 |
+| Compacted | 11,738 | 89,617 | 187,534 |
 
-While added vectors wait in the buffer, searches run at 0.44-0.71 times full speed: the buffer is searched
-exactly and the results merged, a cost that is mostly fixed per call. The buffer is searched on the CPU,
-whatever device the main search runs on: for 1,000-10,000 vectors the CPU is faster than the GPU at nearly
-every batch size, as a GPU call's fixed cost outweighs so small a search (the last table of
-`add_remove_sift.txt`). Masked removals cost 0.66-0.84 times. Single runs vary by up to about 17%
-(merged and compacted, which should match as built, ran at 0.83-1.01 times it). A merge of 10,000 added
-vectors takes 0.83 s (the lists and each device's copy rebuilt, nprobe recalibrated), a compaction 0.82 s.
-Adding runs at 0.9 million vectors per second in one call, and about 1 millisecond per call one vector at
-a time.
+While added vectors wait in the buffer, searches run at 0.55-0.86 times full speed: the buffer is searched
+exactly, and the two sets of results scored and merged in Rust. The buffer is searched on the CPU, whatever
+device the main search runs on: for 1,000-10,000 vectors the CPU is faster than the GPU at nearly every
+batch size, as a GPU call's fixed cost outweighs so small a search (the last table of
+`add_remove_sift.txt`). With removed vectors masked, searches run at full speed within the spread of single
+runs, which is about 13% here (merged and compacted, which should match as built, ran at 0.87-1.04 times
+it). A merge of 10,000 added vectors takes 0.85 s (the lists and each device's copy rebuilt, nprobe
+recalibrated), a compaction 0.83 s. Adding runs at about a million vectors per second in one call, and
+about 1 millisecond per call one vector at a time.
 
 ## Against mlxvs on the GPU
 

@@ -1,32 +1,32 @@
 sift: an IVF on 900,000 vectors built in 5.8 s, nprobe 48; the buffer merges at 10,000, removed rows compact past 512
 
   queries per second, batch:               1       100     1,000
-  as built                            12,158   100,080   198,455
-  buffer of 1,000                      8,567    70,583   128,455
-  buffer of 2,500                      7,931    65,768   110,118
-  buffer of 5,000                      7,641    54,993   111,884
-  buffer of 10,000                     6,731    54,671    88,055
-  merged                              12,316    85,651   190,618
-  64 removed, masked                   9,539    84,143   131,750
-  512 removed, masked                  9,374    81,110   141,066
-  compacted                           11,982    90,070   164,729
+  as built                            11,810   102,581   181,083
+  buffer of 1,000                     10,178    75,840   152,715
+  buffer of 2,500                      9,367    70,990   142,100
+  buffer of 5,000                      8,671    55,428   145,395
+  buffer of 10,000                     7,244    56,516   109,556
+  merged                              11,208    89,872   188,976
+  64 removed, masked                  11,491    85,531   200,677
+  512 removed, masked                 11,399    85,636   187,159
+  compacted                           11,738    89,617   187,534
 
-  adding one vector per call: 1,009 microseconds per call; 5,000 in one call: 866,032 vectors/s
-  merging 10,000 buffered vectors (lists rebuilt, nprobe recalibrated): 0.83 s; compacting 513 removed: 0.82 s
+  adding one vector per call: 1,020 microseconds per call; 5,000 in one call: 1,040,393 vectors/s
+  merging 10,000 buffered vectors (lists rebuilt, nprobe recalibrated): 0.85 s; compacting 513 removed: 0.83 s
 
 siann.Index: 909,487 vectors, 128 dimensions, metric l2
   kind: ivf
   device: auto
   approximate search: an IVF of 3,795 lists (about 4 sqrt(n)), built in 3.7 s (siann's k-means, 10 iterations)
   lists stored as bytes (every coordinate an integer 0-255: lossless)
-  calibrated: nprobe 48 reaches recall@10 0.950 (target 0.95) on 1,000 of the given calibration queries
-  IVF chosen: 6.1 ms for 1,000 calibration queries on the GPU, against 41.3 ms for exact search
-  routing measured in 1.3 s: below 17 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 2,048 queries, list-major from 2,049
+  calibrated: nprobe 48 reaches recall@10 0.951 (target 0.95) on 1,000 of the given calibration queries
+  IVF chosen: 5.4 ms for 1,000 calibration queries on the GPU, against 41.4 ms for exact search
+  routing measured in 1.3 s: below 17 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 1,024 queries, list-major from 1,025
   changed since built: 10,000 added, 513 removed
-  merged 2 time(s); at the last, more than 512 removed vectors were masked; nprobe recalibrated to 48 (recall 0.951)
+  merged 2 time(s); at the last, more than 512 removed vectors were masked; nprobe recalibrated
   GPU found: approximate searches routed as above
 
   searching a buffer exactly, microseconds per call, CPU / GPU, by batch size:
-     1,000 vectors   1: 10 / 348   10: 243 / 376   100: 227 / 477   1,000: 1,197 / 2,961
-     2,500 vectors   1: 17 / 347   10: 243 / 374   100: 308 / 497   1,000: 1,572 / 3,091
-    10,000 vectors   1: 51 / 366   10: 576 / 411   100: 586 / 703   1,000: 3,205 / 3,470
+     1,000 vectors   1: 10 / 358   10: 222 / 382   100: 236 / 488   1,000: 1,177 / 2,798
+     2,500 vectors   1: 17 / 350   10: 258 / 364   100: 334 / 727   1,000: 1,569 / 2,956
+    10,000 vectors   1: 53 / 371   10: 549 / 399   100: 608 / 754   1,000: 3,277 / 3,420
