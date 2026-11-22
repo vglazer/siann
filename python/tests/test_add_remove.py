@@ -102,13 +102,11 @@ def test_queries_near_many_removed_vectors_are_searched_again(small_limits, monk
         np.testing.assert_array_equal(ours.indices, keep[ref.indices])
 
 
-def test_remove_refuses_unknown_ids_and_emptying():
+def test_remove_refuses_unknown_ids():
     index = siann.Index(clustered(100, 4, 5), "l1")
     with pytest.raises(KeyError, match="not in the index: 500"):
         index.remove([3, 500])
     assert index.n == 100                                             # nothing removed
-    with pytest.raises(ValueError, match="empty"):
-        index.remove(np.arange(100))
     index.remove([3])
     with pytest.raises(KeyError):
         index.remove([3])                                             # already gone

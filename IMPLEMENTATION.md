@@ -156,8 +156,18 @@ flowchart LR
 - **Removed vectors are masked,** and each search fetches 8 more neighbors than asked and drops them; a
   query that lost more than 8 is searched again, fetching as many more as are masked, so results stay
   exact. The index is compacted, and nprobe recalibrated, once 512 are masked.
-- `index.save()` merges and compacts first, and the file keeps the ids. `index.plan` says what changed,
-  when the index last merged and re-clustered, and why.
+- **An index can start empty,** from an array of shape (0, d), and grow by `add()`. Until the first merge
+  its vectors are in the buffer, searched exactly. With a recall target, the choice between an IVF and
+  exact search waits for that merge, as there is nothing to measure before it, and is then made as at a
+  build. An index that keeps exact search makes the choice again at a merge once it has doubled in size
+  since the last one, so that it turns into an IVF as it grows past where exact search is faster, without
+  building an IVF at every merge. Removing every vector returns an index to empty.
+- **`index.calibrate(queries)`** gives the calibration queries after the build, for example once real
+  queries exist: an IVF recalibrates nprobe and re-measures its routing on them at once, and every later
+  merge and choice uses them.
+- `index.save()` merges and compacts first, and the file keeps the ids, the options the index was built
+  with and the calibration queries. `index.plan` says what changed, when the index last merged and
+  re-clustered, and why.
 
 The measurements behind these choices are in BENCHMARKS, [Changing an index](BENCHMARKS.md#changing-an-index).
 

@@ -206,6 +206,10 @@ class Index:
     by default the one set by ``siann.use_profile`` or siann's own; it is fixed when the index is built.
     Each device's copy of the vectors is built the first time a search needs it. ``index.plan`` says
     what was chosen and why.
+
+    ``xb`` may be empty, of shape (0, d), for an index grown by ``add``: added vectors are searched exactly,
+    and with a recall target, the choice between an IVF and exact search is made at the first merge and
+    made again each time the index has doubled, while exact search stays the faster.
     """
 
     def __init__(self, xb, metric: str = "l2", recall: float | None = None, *, device: str = "auto",
@@ -224,8 +228,8 @@ class Index:
         if device not in ("auto", "gpu", "cpu"):
             raise ValueError(f"device must be 'auto', 'gpu' or 'cpu', not {device!r}")
         x = _as_matrix(xb, "xb")
-        if len(x) == 0:
-            raise ValueError("xb holds no vectors")
+        if x.shape[1] == 0:
+            raise ValueError("xb's vectors have no dimensions")
         self._gpu = _resolve_gpu(gpu)
         self._gpu_arg = gpu
         gpu = self._gpu is not None
@@ -248,13 +252,21 @@ class Index:
         self._storage = None
         self._cal_q = self._cal_ids = None
         self._device_arg = device
+        self._kind_arg, self._nlist_arg, self._storage_arg = kind, nlist, storage
+        self._cal_given = None
+        if calibration_queries is not None:
+            self._cal_given = self._checked_queries(calibration_queries)
         self._init_changes(len(self._x))
+        self._tested_n = 0                                 # the size at the last choice between the IVF and exact
         reasons = []
         if recall is None or kind == "exact":
             reasons.append("exact search (no recall target): the results are the true nearest neighbors"
                            if recall is None else "exact search (kind='exact' given)")
+        elif len(self._x) == 0:
+            reasons.append(self._empty_line())
         else:
-            reasons += self._build_ivf(recall, kind, nlist, storage, gpu, calibration_queries)
+            reasons += self._build_ivf(recall, kind, nlist, storage, gpu, self._cal_given)
+            self._tested_n = len(self._x)
         self._build_reasons = tuple(reasons)
         self._finish_plan(list(reasons), device, gpu)
 
@@ -270,6 +282,62 @@ class Index:
         self._added = self._removed = self._merges = self._reclusters = 0
         self._last_merge = self._last_recluster = None
         self._clustered = (clustered_n, clustered_imbalance)
+
+    def _checked_queries(self, queries) -> np.ndarray:
+        cq = _as_matrix(queries, "calibration_queries")
+        if cq.shape[1] != self.d or len(cq) == 0:
+            raise ValueError(f"calibration_queries must be a non-empty (m, {self.d}) array")
+        return cq
+
+    def _empty_line(self) -> str:
+        what = "an IVF is built" if self._kind_arg == "ivf" else "the choice between an IVF and exact search is made"
+        return (f"empty: added vectors are searched exactly; {what} at the first merge, when "
+                f"{BUFFER_MIN:,} have been added")
+
+    def _choose_again(self) -> None:
+        """At a merge of an exact index with a recall target: builds the IVF and keeps it if it is faster than
+        exact search (as at a build), once the index is no longer empty or has doubled since the last choice."""
+        n = len(self._x)
+        if (self.recall is None or self._kind_arg == "exact" or n == 0
+                or (self._tested_n and n < REGROW * self._tested_n)):
+            return
+        before = self._tested_n
+        nlist = self._nlist_arg if self._nlist_arg and self._nlist_arg <= n else None
+        lines = self._build_ivf(self.recall, self._kind_arg, nlist, self._storage_arg, self._gpu is not None,
+                                self._cal_given, grown=True)
+        self._tested_n = n
+        if not before:
+            head = (f"grown from empty: at the merge at {n:,} vectors, "
+                    + ("an IVF built (kind='ivf' given)" if self._kind_arg == "ivf" else
+                       "the choice between an IVF and exact search made"))
+        else:
+            head = (f"grown: the choice between an IVF and exact search made again at the merge at {n:,} vectors "
+                    f"(last made at {before:,})")
+        self._build_reasons = (head,) + tuple(lines)
+
+    def calibrate(self, queries) -> int | None:
+        """Calibrates on ``queries`` (m, d), representative queries (up to 1,000 used), kept for every later
+        calibration. An IVF recalibrates nprobe for its recall target now, re-measures routing and returns the
+        new nprobe; an exact index keeps them for its next choice between an IVF and exact search, and returns
+        None."""
+        if self.recall is None:
+            raise ValueError("calibrate needs an index built with a recall target, such as recall=0.95")
+        self._cal_given = self._checked_queries(queries)
+        if self._ivf is None:
+            self._refresh_plan()
+            return None
+        from ._ivf import CALIBRATION_K
+        dev = "cpu" if self._build_device() == "cpu" else "gpu"
+        q, ids, k1, source = self._calibration_sample(self._cal_given)
+        self._cal_q, self._cal_ids = q, ids
+        self._nprobe, reached, _, _ = self._calibrate(self._ivf, q, ids, k1, self.recall, dev)
+        routing = self._route()
+        line = (f"calibrated: nprobe {self._nprobe} reaches recall@{CALIBRATION_K} {reached:.3f} "
+                f"(target {self.recall}) on {source}, given to index.calibrate()")
+        self._build_reasons = tuple(line if r.startswith("calibrated: ") else routing if r.startswith("routing ")
+                                    else r for r in self._build_reasons)
+        self._refresh_plan()
+        return self._nprobe
 
     def _finish_plan(self, reasons: list[str], device: str, gpu: bool) -> None:
         """The plan: the build's reasons, then the device's."""
@@ -320,9 +388,10 @@ class Index:
         self._finish_plan(list(self._build_reasons) + self._change_lines(), self._device_arg, self._gpu is not None)
 
     def _build_ivf(self, recall: float, kind: str, nlist: int | None, storage: str, gpu: bool,
-                   calibration_queries=None) -> list[str]:
+                   calibration_queries=None, grown: bool = False) -> list[str]:
         """Builds the IVF, calibrates nprobe and, with kind "auto", keeps it only if it is faster than exact
-        search on the calibration sample. Returns the plan's lines."""
+        search on the calibration sample. Returns the plan's lines. ``grown``: at a merge, where storage="uint8"
+        given for vectors that are not all bytes falls back to float."""
         from ._ivf import CALIBRATION_K, IVF, default_nlist, default_storage
         n = self.n
         ivf_metric = "l2" if self.metric == "cosine" else self.metric      # cosine: L2 on unit vectors
@@ -331,7 +400,9 @@ class Index:
             raise ValueError(f"nlist must be between 1 and the number of vectors ({n:,}), not {nlist}")
         st = default_storage(self._x) if storage == "auto" else storage
         if st == "uint8" and default_storage(self._x) != "uint8":
-            raise ValueError("storage='uint8' needs every coordinate to be an integer from 0 to 255")
+            if not grown:
+                raise ValueError("storage='uint8' needs every coordinate to be an integer from 0 to 255")
+            st = "float32"
         self._storage = st
         lines = []
         build_device = self._build_device()
@@ -379,9 +450,7 @@ class Index:
         rng = np.random.default_rng(0)
         n = len(self._x)
         if calibration_queries is not None:
-            cq = _as_matrix(calibration_queries, "calibration_queries")
-            if cq.shape[1] != self.d or len(cq) == 0:
-                raise ValueError(f"calibration_queries must be a non-empty (m, {self.d}) array")
+            cq = self._checked_queries(calibration_queries)
             cq = cq[np.sort(rng.choice(len(cq), size=min(len(cq), CALIBRATION_SAMPLE), replace=False))]
             q = _normalized(cq, "calibration_queries") if self.metric == "cosine" else cq
             return q, None, min(CALIBRATION_K, n), f"{len(q):,} of the given calibration queries"
@@ -449,7 +518,9 @@ class Index:
                 "ivf_metric": self._ivf.metric if self._ivf else None, "routes": self._routes,
                 "profile": self._profile.to_dict(), "build_reasons": list(self._build_reasons),
                 "calibration": None if self._ivf is None else ("own" if self._cal_ids is not None else "given"),
-                "clustered": list(self._clustered), "next_id": self._next_id}
+                "clustered": list(self._clustered), "next_id": self._next_id,
+                "build_args": {"kind": self._kind_arg, "nlist": self._nlist_arg, "storage": self._storage_arg},
+                "tested_n": self._tested_n}
         bytes_ok = self._storage == "uint8"                 # every coordinate an integer 0-255: stored as bytes
         arrays = {"meta": np.frombuffer(json.dumps(meta).encode("utf-8"), dtype=np.uint8),
                   "x": self._x.astype(np.uint8) if bytes_ok else self._x}
@@ -461,6 +532,8 @@ class Index:
             arrays["calibration_queries"] = self._cal_q
             if self._cal_ids is not None:
                 arrays["calibration_ids"] = self._cal_ids.astype(np.int64)
+        elif self._cal_given is not None:
+            arrays["calibration_queries"] = self._cal_given
         with open(path, "wb") as f:
             np.savez(f, **arrays)
 
@@ -511,10 +584,19 @@ class Index:
         self._routes = dict(meta["routes"])
         self._ivf = self._cal_q = self._cal_ids = None
         self._device_arg = device
+        args = meta.get("build_args") or {}
+        given_exact = any(r.startswith("exact search (kind='exact'") for r in meta["build_reasons"])
+        self._kind_arg = args.get("kind") or ("exact" if given_exact else "auto")
+        self._nlist_arg, self._storage_arg = args.get("nlist"), args.get("storage") or "auto"
+        self._cal_given = None
+        if meta["kind"] != "ivf" and "calibration_queries" in data:
+            self._cal_given = np.ascontiguousarray(data["calibration_queries"], dtype=np.float32)
         clustered = meta.get("clustered") or [None, None]
         self._init_changes(len(self._x), np.asarray(data["ids"], dtype=np.int64) if "ids" in data else None,
                            clustered[0], clustered[1])
         self._next_id = max(self._next_id, int(meta.get("next_id") or 0))
+        tested = meta.get("tested_n")
+        self._tested_n = len(self._x) if tested is None else int(tested)
         reasons = [r if same or not r.startswith(("IVF chosen", "kept exact search")) else
                    r + " (timed on the machine that saved it, and kept, so that results do not change)"
                    for r in meta["build_reasons"] if not r.startswith("routing ")]
@@ -527,6 +609,8 @@ class Index:
                             "uint8" if self._storage == "uint8" else "float", "cpu", built=built, gpu=self._gpu)
             self._cal_q = np.ascontiguousarray(data["calibration_queries"], dtype=np.float32)
             self._cal_ids = data.get("calibration_ids")
+            if self._cal_ids is None and meta.get("calibration") == "given":
+                self._cal_given = self._cal_q
             if self._clustered[1] is None:             # format 1: the balance as loaded
                 sizes = built.sizes()
                 self._clustered = (len(self._x), float(sizes.max() / sizes.mean()))
@@ -618,8 +702,8 @@ class Index:
         if self.metric == "cosine":
             q = _normalized(q, "xq")
         kk = min(int(k), self.n)
-        if len(q) == 0:
-            idx, sc = np.empty((0, kk), dtype=np.int64), np.empty((0, kk), dtype=np.float32)
+        if len(q) == 0 or kk == 0:
+            idx, sc = np.empty((len(q), kk), dtype=np.int64), np.empty((len(q), kk), dtype=np.float32)
         elif self._buf is not None or self._dead is not None:
             idx, sc = self._search_changed(q, kk, path, dev, nprobe)
         else:
@@ -754,8 +838,6 @@ class Index:
         missing = gone[~np.isin(gone, self._live_ids())]
         if len(missing):
             raise KeyError(f"not in the index: {', '.join(map(str, missing[:5]))}" + (", ..." if len(missing) > 5 else ""))
-        if len(gone) >= self.n:
-            raise ValueError("removing every vector would leave the index empty; build a new one instead")
         main = np.isin(self._row_ids(), gone)
         if main.any():
             self._dead = main if self._dead is None else (self._dead | main)
@@ -797,8 +879,11 @@ class Index:
         self._buf, self._buf_store, self._dead, self._ndead = None, None, None, 0
         self._layouts, self._buf_layouts = {}, {}
         self._merges += 1
+        if self._ivf is not None and len(self._x) == 0:
+            self._to_empty()
         if self._ivf is None:
             self._last_merge = why
+            self._choose_again()
             return
         from ._ivf import IVF, default_nlist, default_storage
         from .ivf_build import build_lists, lists_from_assign
@@ -852,6 +937,14 @@ class Index:
                 return routing
             return line
         self._build_reasons = tuple(now(r) for r in self._build_reasons)
+
+    def _to_empty(self) -> None:
+        """Every vector removed from an IVF: back to an empty index, the choice made again once it grows."""
+        if self._cal_ids is None and self._cal_q is not None:
+            self._cal_given = self._cal_q
+        self._ivf = self._nprobe = self._cal_q = self._cal_ids = None
+        self._routes, self._clustered, self._tested_n = {}, (None, None), 0
+        self._build_reasons = (self._empty_line(),)
 
     def _search_gpu(self, q: np.ndarray, k: int) -> np.ndarray:
         return _exact_gpu(self._x, self._layouts, q, k, self._kernel_metric, self._gpu or "mlx")

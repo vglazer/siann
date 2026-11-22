@@ -16,7 +16,7 @@ the same sample of queries calibrates the index and times its routes.
 
 | Decision | Measured on, by default | To improve it |
 | --- | --- | --- |
-| nprobe, for a recall target | 1,000 of the index's own vectors, when it is built | pass `calibration_queries=`, a sample of your queries |
+| nprobe, for a recall target | 1,000 of the index's own vectors, when it is built | pass `calibration_queries=`, a sample of your queries, or later `index.calibrate(queries)` |
 | Exact search or an IVF | the same sample, both timed | pass `calibration_queries=`; `kind="exact"` or `"ivf"` to choose |
 | Approximate search: CPU or GPU, which scan | the same sample, at 1 to 4,096 queries per batch | pass `calibration_queries=`; a profile's `ivf` thresholds to fix them |
 | Exact search: CPU or GPU | siann's default profile, from an Apple M3 Max and about a million vectors | `siann.tune(xb)` on your data and machine |

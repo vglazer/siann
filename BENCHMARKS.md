@@ -660,8 +660,8 @@ second of the measured route over the fixed one, at the batch sizes where the tw
 
 ## Changing an index
 
-*Reproduce with `drift.py --dataset glove --base 200000`, `drift.py --dataset sift --base 1000000` and
-`add_remove.py`; `drift_*.txt`, `add_remove_sift.txt`.*
+*Reproduce with `drift.py --dataset glove --base 200000`, `drift.py --dataset sift --base 1000000`,
+`add_remove.py` and `grow.py`; `drift_*.txt`, `add_remove_sift.txt`, `grow_sift_200k.txt`.*
 
 **Inserting into the lists against re-clustering** (`drift.py`). An IVF trained on part of a collection, the
 rest inserted into the lists of their nearest centroids, against an IVF re-clustered on the same contents
@@ -712,6 +712,19 @@ spread of 0.93-1.03 between single runs here (merged and compacted, which should
 compaction 0.68 s. Adding runs at 1.3 million vectors per second in one call, and at about
 110 microseconds per call one vector at a time: a few vectors find their lists with siann's Rust kernel on
 the centroids, and the buffer grows with room to spare, so an add does not copy it.
+
+**Growing from empty** (`grow.py`): SIFT1M's first 200,000 vectors added 10,000 at a time to an empty index
+(recall target 0.95, calibrated on 1,000 of the dataset's queries), against an index built from scratch on
+the same vectors with the same target and queries, measured on 9,000 other queries:
+
+| Index | Lists | nprobe | Recall@10 | Batch 1 | 100 | 1,000 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Grown from empty | 1,600 | 33 | 0.952 | 20,818 | 167,303 | 351,075 |
+| Built from scratch | 1,789 | 36 | 0.953 | 20,702 | 163,695 | 331,192 |
+
+The grown index chose an IVF at its first merge, at 10,000 vectors, and re-clustered as it doubled, at
+20,000, 40,000, 80,000 and 160,000 (1.0-1.6 s each); the other merges took 0.06-0.19 s. Adding all 200,000
+took 7.8 s, against 1.6 s for building from scratch, for the same recall and speed.
 
 ## Against mlxvs on the GPU
 

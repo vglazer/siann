@@ -77,6 +77,9 @@ ids = approx.add(xq)                         # add vectors: returns their ids, w
 approx.add(xq[:2], ids=[10**9, 10**9 + 1])   # or name them yourself
 approx.remove(ids[:10])                      # remove vectors by id; never returned again
 approx.recluster()                           # optional: siann re-clusters by itself when the lists fall out of balance
+approx.calibrate(xq[:1000])                  # recalibrate on your queries, once you have them
+
+grown = siann.Index(np.empty((0, 128), np.float32), metric="l2", recall=0.95)  # start empty, grow by add()
 ```
 
 Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, the

@@ -1,0 +1,43 @@
+sift: 200,000 vectors added 10,000 at a time to an empty index (target 0.95, calibrated on 1,000 of the dataset's queries)
+    vectors  kind   lists nprobe  add, s
+     10,000  ivf      256     17    1.00
+     20,000  ivf      512     24    1.05
+     30,000  ivf      512     24    0.06
+     40,000  ivf      800     28    0.97
+     50,000  ivf      800     27    0.06
+     60,000  ivf      800     27    0.07
+     70,000  ivf      800     27    0.08
+     80,000  ivf    1,131     32    1.30
+     90,000  ivf    1,131     31    0.10
+    100,000  ivf    1,131     31    0.11
+    110,000  ivf    1,131     31    0.11
+    120,000  ivf    1,131     31    0.12
+    130,000  ivf    1,131     31    0.13
+    140,000  ivf    1,131     30    0.13
+    150,000  ivf    1,131     30    0.14
+    160,000  ivf    1,600     33    1.61
+    170,000  ivf    1,600     33    0.19
+    180,000  ivf    1,600     33    0.17
+    190,000  ivf    1,600     33    0.19
+    200,000  ivf    1,600     33    0.19
+  adding all 200,000: 7.8 s
+  built from scratch on the same vectors: 1.6 s, ivf, 1789 lists, nprobe 36
+
+                         recall@10      batch 1    batch 100  batch 1,000
+  grown from empty           0.952       20,818      167,303      351,075
+  built from scratch         0.953       20,702      163,695      331,192
+
+siann.Index: 200,000 vectors, 128 dimensions, metric l2
+  kind: ivf
+  device: auto
+  grown from empty: at the merge at 10,000 vectors, the choice between an IVF and exact search made
+  approximate search: an IVF of 1,600 lists (about 4 sqrt(n)), re-clustered in 0.4 s (siann's k-means, 10 iterations)
+  lists stored as bytes (every coordinate an integer 0-255: lossless)
+  calibrated: nprobe 33 reaches recall@10 0.951 (target 0.95) on 1,000 of the given calibration queries
+  IVF chosen: 1.1 ms for 1,000 calibration queries on the GPU, against 3.4 ms for exact search
+  routing measured in 1.0 s: below 65 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 4,096 queries, list-major from 4,097
+  changed since built: 200,000 added, 0 removed
+  merged 20 time(s); at the last, the buffer reached 10,000 vectors; nprobe recalibrated
+  re-clustered 4 time(s); the last as the index grew to 160,000 vectors from 80,000 when clustered: 1,600 lists in 0.4 s
+  GPU found: approximate searches routed as above
+  GPU backend: MLX

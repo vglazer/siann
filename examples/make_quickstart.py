@@ -433,6 +433,28 @@ print(f"added with ids {mine}: the nearest to the first query is {growing.search
 and keeps the ids.
 """),
     md("""
+### Starting empty
+
+An index can start with no vectors, from an array of shape (0, d), and grow by `add`. With a recall target,
+siann chooses between an IVF and exact search at the first merge, when there is something to measure, and
+chooses again each time an index that kept exact search has doubled. Without `calibration_queries=`, it
+calibrates on the index's own vectors; `index.calibrate(queries)` recalibrates on real queries once you
+have them, and later merges keep using them.
+"""),
+    code("""
+empty = siann.Index(np.empty((0, 128), np.float32), "l2", recall=0.95)
+print(f"empty: {empty.search(xq[:1], 3).indices[0]}")
+start = time.perf_counter()
+for s in range(0, len(xb), 10_000):
+    empty.add(xb[s:s + 10_000])
+print(f"grew to {empty.n:,} vectors in {time.perf_counter() - start:.1f} s: {empty.kind}, nprobe {empty.nprobe}")
+print(f"recall@10 on the other {len(rest):,} queries: {recall(empty.search(rest, 10).indices, truth[1000:]):.3f}")
+empty.calibrate(xq[:1000])
+print(f"calibrated on 1,000 real queries: nprobe {empty.nprobe}, "
+      f"recall@10 {recall(empty.search(rest, 10).indices, truth[1000:]):.3f}")
+print("\\n".join(line for line in str(empty.plan).splitlines() if "grown" in line or "calibrated" in line))
+"""),
+    md("""
 ## The GPU backend: MLX or PyTorch
 
 siann's GPU kernels run on MLX or on PyTorch's MPS backend: the same Metal code, the same neighbors.
