@@ -2,63 +2,47 @@
 
 *Part of the [siann documentation](README.md#documentation).*
 
-siann answers k-nearest-neighbor queries: given base vectors and a query, find the k base vectors
-nearest the query, exactly or to a recall target. It is fast for two reasons. The main one is that it
-**chooses**: given a recall target, it measures on your data and your machine which method, which settings
-and which device meet the target fastest, for each batch size, reports what it chose, and makes the choice
-again as the index changes (vectors added and removed, the collection grown from empty). The other is that
-**each of the paths it chooses between is fast**, through custom GPU kernels and CPU code laid out for the
-hardware. This page covers the choice first, then the methods, then the kernels in detail, where other
-libraries are faster, and how the code is organized. [BENCHMARKS](BENCHMARKS.md) has
-the measurements, on an Apple M3 Max, and the scripts behind them.
+siann answers k-nearest-neighbor queries, exactly or to a recall target. It is fast for two reasons. It
+**chooses**: it measures on your data and machine which method, settings and device meet the target
+fastest for each batch size, reports what it chose, and chooses again as the index changes. And **each path
+it chooses between is fast**, through custom GPU kernels and CPU code laid out for the hardware. This page
+covers how siann chooses, the search methods and the kernels, where other libraries are faster and why, and
+the code layout. The measurements are in [BENCHMARKS](BENCHMARKS.md), their summary in the README's
+[How it compares](README.md#how-it-compares), and what to do when the defaults do not fit in
+[TUNING](TUNING.md).
 
 ## Why siann is fast
 
-### It chooses the fastest way to meet the target
+### It chooses
 
-How fast a search can be depends on the workload: the data, the metric, the machine, the batch size and
-the recall wanted. siann takes the recall target, not the settings, and measures the rest:
+How fast a search can be depends on the data, the metric, the machine, the batch size and the recall
+wanted. siann takes the recall target and measures the rest:
 
-| Choice | Made from | Gain, measured |
-| --- | --- | --- |
-| Exact search or an IVF | both timed on a sample of queries | the IVF 2-11 times faster than exact search on every dataset measured; exact search kept where an IVF needs most of its lists (inner product on vectors of very uneven length) |
-| How many lists a query scans (nprobe) | the smallest that reaches the target on a sample of queries | on queries like the real ones: the target kept on SIFT1M (0.955, where its own vectors give 0.940), and Music-100's index 2.0-2.8 times faster than when calibrated on its own vectors |
-| CPU or GPU, and which scan, by batch size | each scan timed on 1 to 4,096 queries when the index is built | 1.2-6.3 times fixed thresholds at 2-64 queries, 1.2-1.9 times at larger batches where they differ; one loss (0.77 times, Music-100 at 512 queries), timed on the index's own vectors rather than on queries |
-| How the lists are stored | the data | bytes where lossless (a quarter of float32's memory traffic), float16 for GPU batches |
-| CPU or GPU for exact search | a profile, measured by `siann.tune` | single L2 queries on the CPU (153 against 143 per second on SIFT1M, 177 against 140 on DBpedia); at 200,000 vectors the CPU is faster up to 16 queries |
+| Choice | Made from |
+| --- | --- |
+| Exact search or an IVF | both timed on a sample of queries |
+| How many lists a query scans (nprobe) | the fewest that reach the target on a sample of queries |
+| CPU or GPU, and which scan, by batch size | for an IVF, each scan timed on 1 to 4,096 queries when the index is built; for exact search, a profile |
+| How the lists are stored | the data: bytes where lossless, float16 for GPU batches |
 
 The choices interact, which is why they are measured together rather than set from rules of thumb: where
-the CPU and the GPU cross depends on how many lists a query scans, so on SIFT1M at nprobe 46 the CPU wins
-up to 16 queries and the GPU's query-major scan up to 1,024, while on GloVe-100 at nprobe 370 the GPU wins
-from 8 queries and its list-major scan at every size. `index.plan` reports every choice and its reason,
-and each can be overridden ([below](#overrides)).
+the CPU and the GPU cross depends on how many lists a query scans, and that depends on the data and the
+target ([TUNING](TUNING.md#approximate-search-where-each-batch-runs) has the crossovers measured).
+[Approximate search through siann.Index](BENCHMARKS.md#approximate-search-through-siannindex) measures what
+the choices gain.
 
-With a latency budget as well as a recall target, `siann.tune(xb, xq, recall=...)` prints the measured
-queries per second of every path at each batch size, on your data, so you can see which batch sizes fit.
-
-Other libraries leave these choices to you. FAISS and mlxvs offer a family of indexes and their
-parameters, and you pick the index, its settings and, for FAISS, the device. FAISS's auto-tuning
-(`ParameterSpace`) explores one index's parameters for the trade-off between recall and time, on one
-device, against ground truth you compute; it does not choose between exact and approximate search, between
-scans, or between the CPU and the GPU. mlxvs runs only on the GPU, so single queries and small batches,
-where the CPU is several times faster, go to the GPU too.
+Other libraries leave these choices to you: FAISS and mlxvs offer a family of indexes and their parameters,
+and you pick the index, its settings and, for FAISS, the device. FAISS's auto-tuning (`ParameterSpace`)
+explores one index's parameters on one device against ground truth you compute; it does not choose between
+exact and approximate search, between scans, or between the CPU and the GPU.
 
 ### Each path is fast
 
 The choice is worth making only if every option is fast. Written with a framework's built-in operations,
-every GPU backend is slower than FAISS on the CPU (0.25-0.65 times its speed), so siann runs its own
-kernels:
-
-- **On the GPU,** custom Metal kernels (Metal is Apple's GPU language): a dedicated top-k selection, L1 and
-  L-infinity laid out like a matrix multiply, L2 as one fused multiply, and IVF scans that read each list
-  once per batch. Exact search on 1,000 queries runs at 8.2-8.7 times FAISS for L2 on SIFT1M and GloVe-100,
-  18.5-25 times for L1 and 47-49 times for L-infinity.
-- **On the CPU,** Rust kernels with a memory layout that lets the compiler use the vector instructions,
-  scanned in cache-sized tiles, and BLAS (the tuned linear-algebra library) for L2: exact L1 at 3.8-4.3
-  times FAISS, L-infinity at 7.3 times, L2 at 1.7-1.9 times on 1,000 queries; the IVF's list-major scan
-  at 2.2-4.0 times FAISS's IVF with the same lists.
-
-[The kernels](#the-kernels-in-detail) has the detail.
+every GPU backend is slower than FAISS on the CPU ([BACKENDS](BACKENDS.md#summary)), so siann runs its own
+code: custom Metal kernels on the GPU (Metal is Apple's GPU language), and on the CPU Rust kernels laid out
+for the vector instructions and BLAS (the tuned linear-algebra library) for L2. [The kernels in
+detail](#the-kernels-in-detail) explains where each gain comes from.
 
 ## How siann chooses
 
@@ -99,22 +83,14 @@ seconds for a million vectors:
 3. **IVF or exact:** the IVF at the calibrated nprobe is timed against exact search on the same sample, and
    the index keeps whichever is faster.
 4. **Routing:** the index times its CPU scans (one query split over 4 threads, one thread per query with
-   its coarse step in Rust or through BLAS, and list-major) and its GPU scans (query-major and list-major) on 1 to 4,096 of the calibration queries,
-   each path by itself, back to back, after a warm-up pass on the GPU (right after calls on the CPU, GPU
-   calls run up to 40% slower, which would favor the CPU). A measured route replaces the default one
-   (single queries on the CPU, the GPU's query-major scan below 1,000 queries, its list-major scan from
-   1,000) only where it was at least 10% faster, about the timings' spread, and between the batch sizes
-   measured the default holds.
+   its coarse step in Rust or through BLAS, and list-major) and its GPU scans (query-major and list-major)
+   on 1 to 4,096 of the calibration queries, each path by itself after a warm-up pass on the GPU, and
+   keeps a measured route where it beats the default by the timings' spread
+   ([TUNING](TUNING.md#approximate-search-where-each-batch-runs)).
 
-Exact search routes by a *profile*: for each metric, the batch size from which the GPU is faster. siann's
-default profile was measured on an Apple M3 Max with about a million vectors; `siann.tune` measures one on
-your data and machine ([TUNING](TUNING.md)).
-
-### Overrides
-
-Every choice can be overridden: `kind="exact"` or `"ivf"`, `nlist=`, `storage=`, `device="cpu"` or
-`"gpu"` (for the index or for one search), `search(..., nprobe=)` for one search, and a profile with
-thresholds of its own for both exact and approximate routing ([TUNING](TUNING.md)).
+Exact search routes by a *profile*: for each metric, the batch size from which the GPU is faster; siann's
+own, or one `siann.tune` measures on your data and machine ([TUNING](TUNING.md#exact-search-gpu-or-cpu)).
+Every choice can be overridden (the README's [Python](README.md#python) section lists how).
 
 ### Threads
 
@@ -374,13 +350,11 @@ partition all of it.
   writes only k results per query. Choosing each query's nprobe lists in order costs as much as the scan
   (at nprobe 64 a running top-64 does not fit in registers), and the scan needs them in no order, so the
   GPU backend's own partial selection (MLX's `argpartition`, PyTorch's `topk`) chooses them, at a third of
-  the cost. Together these put the GPU IVF level with FAISS's compressed HNSW on SIFT at recall 0.99 in
-  batches of 100, and ahead above it.
+  the cost.
 - **The IVF's list-major scan:** one group of 256 threads per list handles 16 queries at a time, with the
   list's vectors staged through threadgroup memory; the queries are grouped on the GPU too (a sort of the
   probe lists and a count per list). Above nprobe 16 its probe selection is unordered as well; at 16 and
-  below the two-stage selection with 32 threads per query is cheaper for thousands of queries. In batches
-  of 10,000 it runs at 5.0 times FAISS's compressed HNSW on GloVe-100 and 1.2-1.3 times on SIFT1M.
+  below the two-stage selection with 32 threads per query is cheaper for thousands of queries.
 - **Smaller lists read directly:** the kernels read float16 and uint8 lists without converting them first.
 
 ### On the CPU
@@ -393,10 +367,9 @@ multiplies on the chip's matrix units).
   block of the base, and a Rust top-k ranks them by |x|² - 2 q·x, reading NumPy's arrays in place (through
   rust-numpy, without copying) and keeping each query's best k across blocks. Products of 4-8 million
   values (16-32 MB) are fast; smaller ones pay per-call overhead and larger ones fall out of cache. The
-  default takes up to 512 queries and about 4 million values per product: 1.7-1.9 times FAISS on 1,000
-  queries and 3.0-3.6 times on 100. FAISS's exact L2 is the same Accelerate multiply, and its own blocks
-  (4,096 queries by 1,024 vectors) fall in the same window, so the difference is not simply its block
-  size.
+  default takes up to 512 queries and about 4 million values per product. FAISS's exact L2 is the same
+  Accelerate multiply, and its own blocks (4,096 queries by 1,024 vectors) fall in the same window, so
+  siann's lead over it is not simply its block size.
 - **L1 and L-infinity: a blocked layout.** FAISS's flat L1 runs at about 70 G absolute differences per
   second, well below what the cores can do. siann stores the base vectors once, at build time, in blocks
   of 8, dimension by dimension: the first dimension of 8 vectors, then their second, and so on. The inner
@@ -415,8 +388,7 @@ multiplies on the chip's matrix units).
   index). The same kernel computes L2 by squaring the differences and L-infinity with a running maximum,
   written as a comparison and select.
 - **The IVF on the CPU:** the query-major scan runs one thread per query; the list-major scan runs each
-  list with the exact kernel, 4 queries at a time, while it is in cache: 2.2-4.0 times FAISS's IVF with the
-  same float32 lists. A split single query uses a thread pool of its own: a shared pool costs about 100
+  list with the exact kernel, 4 queries at a time, while it is in cache. A split single query uses a thread pool of its own: a shared pool costs about 100
   microseconds per query to wake its threads, as FAISS's own split (`parallel_mode = 1`) does.
 - **Integer arithmetic for byte lists.** A query whose coordinates are all integers from 0 to 255 is
   compared with byte lists in exact integer arithmetic, over a row-major copy of the lists (each vector's
@@ -433,34 +405,27 @@ multiplies on the chip's matrix units).
 ## Where other libraries are faster, and why
 
 The baseline is always the strongest option for the case: FAISS's on the CPU, its compressed indexes
-included, and mlxvs's on the GPU.
+included, and mlxvs's on the GPU. How much each leads by is in the README's
+[How it compares](README.md#how-it-compares); the reasons are these.
 
-- **FAISS's HNSW for small batches on SIFT-like data.** HNSW (a graph index) touches 7-9 times fewer
-  vectors per query than an IVF on SIFT (4-5 times on GloVe, where its scattered reads cost it the
-  difference), and compressing its vectors speeds it up 1.6-2.3 times, as much as it speeds up the IVF.
-  Compressed HNSW leads in batches of about 100 on SIFT below recall 0.99 (1.2-1.5 times) and on single
-  queries on one thread (1.3-1.45 times); with 4 threads per query siann leads from recall 0.97.
+- **FAISS's HNSW for single queries and small batches on SIFT-like data.** HNSW, a graph index, touches 7-9
+  times fewer vectors per query than an IVF on SIFT ([Work per query](BENCHMARKS.md#work-per-query)), and
+  compressing its vectors speeds it up as much as it speeds up the IVF. On GloVe-like data a graph must
+  walk much further for the same recall and its scattered reads cancel the difference, while an IVF's dense
+  scans do not care, so siann leads there at every batch size; with 4 threads per query it leads on SIFT
+  too, from recall 0.97.
 - **FAISS's HNSW on vectors of very uneven length.** On raw GloVe (lengths 0.04 to 18.7) no IVF reaches high
   recall, and FAISS's HNSW with inner product is the approximate method; siann's exact search on the GPU,
-  4-18 times FAISS's exact search, is the choice where recall must be 1.0. On Music-100, the standard
-  inner-product benchmark, siann's IVF (its lists assigned by L2) is level with HNSW up to batches of 100
-  and 2.1-2.3 times HNSW in batches of 10,000.
-- **FAISS's byte lists round the query.** For uint8 lists, FAISS rounds the query to integers and computes
-  in integer arithmetic: exact for integer queries such as SIFT's, approximate for others. siann's integer
-  path is level with it on one thread and applies to integer queries only, so it is always exact.
-- **mlxvs's CAGRA on SIFT-like data and inner product.** mlxvs runs NVIDIA cuVS's methods on MLX, among
-  them CAGRA, a graph index built for the GPU. siann's exact search is 2.6-5.7 times mlxvs's and its IVF
-  1.2-4.2 times mlxvs's IVF-Flat, but a graph touches far fewer vectors per query than an IVF, so CAGRA is
-  1.2-1.5 times siann's GPU IVF on SIFT in batches of 100 and 2.1-2.6 times in batches of 10,000, and on
-  Music-100 1.45-1.5 times in batches of 10,000. On GloVe-like data the two are level, and CAGRA reaches
-  recall 0.882 at most in the settings measured. mlxvs has no L1 or L-infinity, and on single queries
-  siann's CPU path is 2.7-5.2 times faster than mlxvs's GPU.
-- **High-dimensional embeddings.** On 1,536-dimensional text embeddings (measured on 100,000 vectors) the
-  matrix multiply, the same in every library, dominates exact search, so siann's lead over mlxvs shrinks
-  to 1.1-1.2 times, and CAGRA is 1.9-2.8 times siann's GPU IVF.
-
-GloVe-like data favors siann at every batch size, because a graph must walk much further for the same
-recall there, while an IVF's dense scans do not care.
+  4-18 times FAISS's exact search, is the choice where recall must be 1.0
+  ([Inner product](BENCHMARKS.md#inner-product)).
+- **mlxvs's CAGRA in GPU batches on SIFT-like data and inner product.** CAGRA, from NVIDIA's cuVS, is a graph
+  index built for the GPU, and like HNSW touches far fewer vectors per query than an IVF. On GloVe-like data
+  the two are level, and CAGRA reaches recall 0.882 at most in the settings measured. mlxvs has no L1 or
+  L-infinity, and on single queries siann's CPU path is 2.7-5.2 times faster than mlxvs's GPU
+  ([Against mlxvs](BENCHMARKS.md#against-mlxvs-on-the-gpu)).
+- **High-dimensional embeddings.** At 1,536 dimensions the matrix multiply, the same in every library,
+  dominates exact search, so siann's lead shrinks, and CAGRA's fewer vectors per query count for more
+  ([High-dimensional text embeddings](BENCHMARKS.md#high-dimensional-text-embeddings)).
 
 ## Code layout
 

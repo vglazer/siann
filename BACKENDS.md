@@ -34,12 +34,12 @@ costs](BENCHMARKS.md#what-a-new-batch-size-costs)).
 
 - **The fastest matrix multiply of the three:** 6.7 ms for 256 x 1M x 128, against PyTorch's 14.2 ms;
   fused with the norms through `mx.addmm`, 6.9 ms. This is why MLX leads on L2.
-- **Evaluate each tile.** Evaluated only at the end, a search keeps every tile's distance matrix alive:
-  196 s instead of 0.9 s for 10,000 queries.
+- **Evaluate each tile:** MLX evaluates lazily, so a search evaluated only at the end keeps every tile's
+  distance matrix alive ([IMPLEMENTATION](IMPLEMENTATION.md#on-the-gpu)).
 - **`argpartition` suits choosing a few dozen of a few thousand per row:** 0.30 ms for 100 rows of
   4,000 at k = 64, against 1.0 ms for siann's two-stage selection kernel, whose running top-k per thread
   does not fit in registers at that k. For the top 10 of a million, siann's kernel is the one to use
-  (4.1 against 146-152 ms per tile).
+  ([IMPLEMENTATION](IMPLEMENTATION.md#on-the-gpu)).
 - **`mx.compile`** (whole-function compilation) speeds up built-in L1 from 7.2 to 4.4 s, and does
   nothing for L2.
 - **Its CPU backend is not competitive:** 15 times slower than FAISS.
@@ -86,9 +86,9 @@ Meta's similarity-search library, the standard to beat. siann compares against i
 flat index for exact search, IVF-Flat and IVF with scalar quantization, and HNSW (a graph index, its
 strongest CPU method for approximate search), plain and compressed.
 
-- **Its exact L2 is BLAS plus a top-k,** with Accelerate on a Mac, the same BLAS NumPy calls. siann's
-  own BLAS path (NumPy's multiply and a Rust top-k) is 1.7-3.6 times as fast, mainly by choosing the
-  tile sizes for the cache.
+- **Its exact L2 is BLAS plus a top-k,** with Accelerate on a Mac, the same BLAS NumPy calls; siann's own
+  BLAS path is faster mainly by choosing the tile sizes for the cache
+  ([Exact search on the CPU](BENCHMARKS.md#exact-search-on-the-cpu)).
 - **Set `faiss.cvar.distance_compute_blas_threshold = 20`** for exact L2 below 128 dimensions.
   FAISS 1.16 defaults it to 128,000, so with fewer queries it skips BLAS and runs 4-7 times slower
   (GloVe-100: 2.90 s against 0.42 s).
@@ -115,13 +115,13 @@ strongest CPU method for approximate search), plain and compressed.
 
 ## siann's Rust CPU code
 
-A small extension in safe Rust (`crates/siann-py`, built into the package as `siann._cpu`), exposed to Python through PyO3 (the bridge that
-lets Python call Rust) and threaded with rayon (Rust's data-parallelism library): exact search and IVF
-for L1, L2, L-infinity and inner product, with the blocked layout described in
-[IMPLEMENTATION](IMPLEMENTATION.md#on-the-cpu), IVF lists stored as float32, float16 or uint8, and `L2TopK`, which ranks
-NumPy's BLAS products for exact L2. It exists for the cases where FAISS and the frameworks' CPU
-backends fall short: exact L1 at 3.8-4.3 times FAISS, L-infinity at 7.3 times, and IVF for single
-queries.
+Safe Rust in two crates: the engine (`crates/siann`, plain Rust, threaded with rayon, Rust's
+data-parallelism library) and its Python bindings (`crates/siann-py`, through PyO3, the bridge that lets
+Python call Rust), built into the package as `siann._cpu`. The engine has exact search and an IVF for L1,
+L2, L-infinity and inner product, with the blocked layout described in
+[IMPLEMENTATION](IMPLEMENTATION.md#on-the-cpu), IVF lists stored as float32, float16 or uint8, and
+`L2TopK`, which ranks NumPy's BLAS products for exact L2. It exists for the cases where FAISS and the
+frameworks' CPU backends fall short: exact L1 and L-infinity, and IVF for single queries.
 
 The code relies on the compiler to turn plain loops into NEON instructions, without `unsafe` (which
 explicit NEON intrinsics would need); the rules that keep it fast are in

@@ -27,11 +27,8 @@ and the device for each batch size (the CPU or the Apple GPU), from measurements
 and says why in `index.plan`. The choice holds as the data changes: an index can start empty, grow and
 shrink, and be searched while it changes.
 
-This notebook covers what each metric means and how to choose one, the scores siann returns and how it
-explains its choices, how the GPU and the CPU compare as batches grow, tuning siann's routing to your own
-data and hardware, exact search as the ground truth, approximate search to a recall target, saving and
-loading an index, changing one (adding, removing, starting empty, searching from several threads), the
-choice of GPU backend, and how siann keeps GPU memory in bounds.
+It goes from the metrics and exact search through approximate search to changing, saving and loading an
+index, one feature per section.
 """),
     code("""
 import time
@@ -266,12 +263,10 @@ approximate search is judged: a faster search at lower recall is not a better on
 at the same recall, as in siann's benchmarks.
 
 With a recall target, siann builds an IVF, finds the smallest nprobe that reaches the target on a sample of
-queries (*calibration*), times that against exact search on the sample, and keeps whichever is faster; it
-also times its CPU and GPU scans on the sample, to route each batch. All of it is automatic:
-`siann.Index(xb, "l2", recall=0.95)` calibrates on 1,000 of the index's own vectors. Passing a sample of your
-own queries as `calibration_queries` is optional, like tuning, and pays where the queries differ from the
-base vectors (at the end of this section). Here, 1,000 of the queries are passed. The plan reports every
-choice.
+queries (*calibration*), keeps the IVF only if it beats exact search on the sample, and times its CPU and GPU
+scans on the sample to route each batch; the plan reports every choice. The sample is 1,000 of the index's
+own vectors unless you pass queries as `calibration_queries` (more at the end of this section); here, 1,000
+of the queries are passed.
 """),
     code("""
 approx = siann.Index(xb, "l2", recall=0.95, calibration_queries=xq[:1000])
@@ -351,19 +346,11 @@ print(f"calibrated on its own vectors: nprobe {own.nprobe}, recall {recall(own.s
 print(f"calibrated on 1,000 queries:   nprobe {approx.nprobe}, recall {recall(approx.search(rest, 10).indices, truth[1000:]):.3f}")
 """),
     md("""
-On real data the queries often differ from the base vectors, in either direction, and calibrating on 1,000
-of them pays on each dataset measured (a million vectors, target 0.95, recall on the other 9,000 queries;
-BENCHMARKS.md, "Approximate search through siann.Index"):
-
-| Dataset | Calibrated on its own vectors | Calibrated on 1,000 queries |
-| --- | --- | --- |
-| SIFT1M, L2 | nprobe 38, recall **0.940**: below the target | nprobe 46, recall 0.955 |
-| Music-100, inner product | nprobe 129, recall 0.986; 60,076 / 170,253 queries/s in batches of 100 / 10,000 | nprobe 25, recall 0.946; 168,543 / 333,396 queries/s (**2.8x / 2.0x**) |
-
-SIFT's queries are harder than its base vectors, so calibrating on them is what keeps the target, for 5-10%
-of the speed. Music-100's are easier, so calibrating on them avoids scanning five times the lists needed,
-and lands within 0.005 of the target. The same queries time the routing too: timed on its own vectors, Music-100's index sends
-batches of 512 to a scan that runs at 0.77 times the speed of the other on real queries.
+On real data the queries often differ from the base vectors, in either direction: on SIFT1M, calibrating
+on its own vectors misses the target, and on Music-100 it scans five times the lists needed. Calibrating on
+a sample of real queries fixes both, and times the routing on them too
+([TUNING](https://github.com/vglazer/siann/blob/main/TUNING.md#calibration-meeting-the-recall-target-on-your-queries)
+has the numbers).
 """),
     md("""
 ## Saving and loading an index
