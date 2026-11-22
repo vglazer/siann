@@ -1,0 +1,29 @@
+sift, L2: 1,000,000 vectors; mlxvs 0.16.1 IVF-Flat, 4,000 lists; recall@10 on 9,000 queries; queries per second
+  mlxvs built it in 15.5 s
+  siann loaded it in 1.8 s (routes re-measured)
+
+  the same lists at the same nprobe: recall, mlxvs's search / siann's; siann's CPU and GPU (ids identical, and scores identical: where the ids differ but not the scores, ties at the same
+  distance; where the scores differ, the GPU's float16 lists)
+    nprobe  16: 0.846 / 0.846; CPU and GPU: ids identical 0.9992, scores identical 1.0000
+    nprobe  32: 0.929 / 0.929; CPU and GPU: ids identical 0.9990, scores identical 1.0000
+    nprobe  64: 0.975 / 0.975; CPU and GPU: ids identical 0.9992, scores identical 1.0000
+
+  calibrated on 1,000 queries in 1.4 s: nprobe 46
+  siann's own index built in 3.6 s: 4,000 lists, nprobe 46
+
+                               recall@10      batch 1    batch 100 batch 10,000
+  mlxvs's lists, in siann          0.957       11,749       91,263      224,115
+  siann's own lists                0.955       11,929       93,611      234,577
+  mlxvs's search, nprobe 46        0.957          634       33,044      140,094
+
+siann.Index: 1,000,000 vectors, 128 dimensions, metric l2
+  kind: ivf
+  device: auto
+  approximate search: an IVF of 4,000 lists built by mlxvs 0.16.1, imported
+  lists stored as bytes (every coordinate an integer 0-255: lossless)
+  calibrated: nprobe 46 reaches recall@10 0.951 (target 0.95) on 1,000 of the given calibration queries, given to index.calibrate()
+  routing measured in 1.1 s: below 17 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 1,024 queries, list-major from 1,025
+  profile: this process's, as the saved one was measured on another machine
+  GPU found: approximate searches routed as above
+  GPU backend: MLX
+  memory: 488 MB of vectors, copied to the GPU when a search first needs them; each GPU call works within 4.0 GB (the GPU can use 48.0 GB)
