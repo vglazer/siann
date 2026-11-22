@@ -96,7 +96,7 @@ dimensions) favor different methods ([DATASETS](DATASETS.md)).
 | Exact, L1 or L-infinity | L1 **18.5-25x**, L-infinity **47-49x** (its CPU; neither GPU library has these metrics) | |
 | Exact, L2, cosine or inner product, batches of 100 | **2.7-2.9x** (its GPU) | **2.6-3.8x** in batches; 1.1-1.2x at 1,536 dimensions |
 | Exact, batches of 10,000 | L2 and cosine **5.6-6.0x** (its GPU), inner product **3.5x** (its CPU) | |
-| Approximate, single queries (HNSW on the CPU) | GloVe **1.5-1.65x**, Music-100 0.85-1.4x, SIFT 0.69-0.77x; split over 4 threads, GloVe **1.5-3.1x**, SIFT **1.2-1.6x** from recall 0.97 | |
+| Approximate, single queries (HNSW on the CPU) | split over 4 threads, as siann answers them: GloVe **1.5-3.1x**, SIFT 0.45x at recall 0.83 and **1.2-1.6x** from 0.97; on one thread (many concurrent queries): GloVe **1.6x**, Music-100 0.85-1.4x, SIFT 0.64-0.73x | |
 | Approximate, batches of 100 | GloVe **1.2-1.8x**, Music-100 0.77-1.05x, SIFT 0.67-0.84x below recall 0.99 (HNSW) | CAGRA: GloVe and Music-100 level, SIFT 0.67-0.83x |
 | Approximate, batches of 10,000 | GloVe **5.0x**, Music-100 **2.1-2.3x**, SIFT **1.2-1.3x** (HNSW) | CAGRA: GloVe level, Music-100 0.67-0.69x, SIFT 0.38-0.48x |
 | Approximate, 1,536 dimensions (100,000 vectors) | single queries 0.37-0.42x (HNSW) | CAGRA: 0.35-0.53x |
