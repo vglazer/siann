@@ -100,6 +100,13 @@ TestPyPI, with the version `VERSION.devN`, N the run number, since an index acce
   fresh index's first GPU calls are slower than later ones, so timings taken in alternation, or cold,
   favor the CPU.
 
+**Threads.**
+
+- **Change an index by replacing its arrays, never by writing into them,** inside a method marked
+  `@_changing` (which holds the index's lock). Searches run on a snapshot, a shallow copy of the index taken
+  under the lock, and stay correct only while what it points to does not change
+  (`python/tests/test_threads.py` checks every result against the states the index passed through).
+
 **GPU kernels.**
 
 - **Write each kernel once,** in `siann._metal`: MLX and PyTorch compile the same text, so the two GPU

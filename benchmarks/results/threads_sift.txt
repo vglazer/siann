@@ -1,0 +1,5 @@
+SIFT1M on the CPU, queries per second, by threads searching the same index at once
+  exact batch  1: 1 thread       150, 4 threads       245 (1.63x)
+  exact batch 10: 1 thread       826, 4 threads     1,589 (1.92x)
+  ivf   batch  1: 1 thread    11,814, 4 threads    20,371 (1.72x)
+  ivf   batch 10: 1 thread    27,575, 4 threads    48,502 (1.76x)

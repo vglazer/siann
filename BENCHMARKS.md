@@ -728,8 +728,8 @@ took 7.8 s, against 1.6 s for building from scratch, for the same recall and spe
 
 ## Memory
 
-*Reproduce with `memory.py` and `gpu_chunks.py`; `memory_sift.txt`, `gpu_chunks.txt`,
-`gpu_chunks_budgets.txt`.*
+*Reproduce with `memory.py`, `memory.py --gpu torch` and `gpu_chunks.py`; `memory_sift.txt`,
+`memory_sift_torch.txt`, `gpu_chunks.txt`, `gpu_chunks_budgets.txt`.*
 
 **Peak memory of one search** (`memory.py`), by batch size, on SIFT1M's million vectors (488 MB as
 float32), each case in a fresh process after a warm-up search: on the GPU, MLX's own peak allocation during
@@ -752,6 +752,10 @@ the searches, MLX's cache held up to 4.4 GB, under its cap of 8 GB. A merge of 1
 million-vector IVF takes 1.4 GB more on the CPU path, and 2.1 GB plus 1.9 GB inside MLX on the GPU path:
 copies of the vectors as the lists are rebuilt, which grow with the index.
 
+On PyTorch's MPS backend (`gpu="torch"`), which reports no peak, the driver's allocation sampled during each
+search rose by at most 1,429 MB (the IVF at 100,000 queries) and 1,008 MB for exact search, and stood at
+2.5 GB at most afterwards, its cached buffers included: bounded, without a cap.
+
 **Chunks against one call** (`gpu_chunks.py`): the IVF on SIFT1M (nprobe 46), queries per second and MLX's
 peak MB, the neighbors identical in every case:
 
@@ -768,6 +772,23 @@ Chunks within 4 GB run level with one call, and faster where one call's memory g
 cost speed in the list-major scan on large batches: 6% at 2 GB and 10% at 1 GB at 100,000 queries
 (`gpu_chunks_budgets.txt`), hence 4 GB. GloVe's GPU timings varied by 20% or more between runs on this
 machine, so they do not separate the budgets; its chunked results were identical too.
+
+## Threads
+
+*Reproduce with `threads.py`; `threads_sift.txt`.*
+
+One index searched from several threads at once, each searching in a loop, SIFT1M on the CPU, queries per
+second:
+
+| Index, batch | 1 thread | 4 threads |
+| --- | ---: | ---: |
+| Exact, 1 | 150 | 245 (1.63x) |
+| Exact, 10 | 826 | 1,589 (1.92x) |
+| IVF (recall 0.95), 1 | 11,814 | 20,371 (1.72x) |
+| IVF, 10 | 27,575 | 48,502 (1.76x) |
+
+Each search already spreads over several cores (a single query over 4 threads, a batch over all of them),
+so more threads add less than their number.
 
 ## Against mlxvs on the GPU
 

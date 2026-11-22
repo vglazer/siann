@@ -3,6 +3,7 @@ device's copy made on first use, nprobe calibrated to the target on sample queri
 queries, or the index's own vectors), and each search routed by its batch size along routes timed on them."""
 from __future__ import annotations
 
+import threading
 import time
 
 import numpy as np
@@ -50,6 +51,7 @@ class IVF:
         self.built = built if built is not None else build_lists(x, nlist, metric, device=device_for_build)
         self.build_seconds = time.perf_counter() - t
         self._gpu = self._cpu = self._coarse = None
+        self._lock = threading.Lock()                  # each device's copy is made once, by the first search to need it
         self._centroid_flat = None                     # the centroids in Rust's exact kernel, for nearest_lists
 
     @property
@@ -57,27 +59,35 @@ class IVF:
         return self.built.nlist
 
     def gpu(self):
-        if self._gpu is None and self.gpu_backend == "torch":
+        if self._gpu is None:
+            with self._lock:
+                if self._gpu is None:
+                    self._gpu = self._make_gpu()
+        return self._gpu
+
+    def _make_gpu(self):
+        if self.gpu_backend == "torch":
             from .ivf_torch import TorchIVF
             lists = "uint8" if self.storage == "uint8" else "float16"      # as on MLX
-            self._gpu = TorchIVF(self.x, self.built.centroids, self.metric, built=self.built, lists=lists)
-        if self._gpu is None:
-            from ._memory import cap_mlx_cache
-            from .ivf_gpu import GpuIVF
-            cap_mlx_cache()
-            lists = "uint8" if self.storage == "uint8" else "float16"      # float16 for GPU batches
-            self._gpu = GpuIVF(self.x, self.nlist, self.metric, lists, built=self.built)
-        return self._gpu
+            return TorchIVF(self.x, self.built.centroids, self.metric, built=self.built, lists=lists)
+        from ._memory import cap_mlx_cache
+        from .ivf_gpu import GpuIVF
+        cap_mlx_cache()
+        lists = "uint8" if self.storage == "uint8" else "float16"      # float16 for GPU batches
+        return GpuIVF(self.x, self.nlist, self.metric, lists, built=self.built)
 
     def cpu(self):
         if self._cpu is None:
-            from ._cpu import IvfIndex
-            d = self.x.shape[1]
-            if self.storage == "uint8":
-                self._cpu = IvfIndex(self.x, self.built.centroids, d, self.metric,
-                                     np.ascontiguousarray(self.x.astype(np.uint8)), "uint8", lists=self.built.assign)
-            else:
-                self._cpu = IvfIndex(self.x, self.built.centroids, d, self.metric, lists=self.built.assign)
+            with self._lock:
+                if self._cpu is None:
+                    from ._cpu import IvfIndex
+                    d = self.x.shape[1]
+                    if self.storage == "uint8":
+                        self._cpu = IvfIndex(self.x, self.built.centroids, d, self.metric,
+                                             np.ascontiguousarray(self.x.astype(np.uint8)), "uint8",
+                                             lists=self.built.assign)
+                    else:
+                        self._cpu = IvfIndex(self.x, self.built.centroids, d, self.metric, lists=self.built.assign)
         return self._cpu
 
     def nearest_lists(self, x: np.ndarray, device: str) -> np.ndarray:

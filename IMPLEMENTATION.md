@@ -115,6 +115,17 @@ Every choice can be overridden: `kind="exact"` or `"ivf"`, `nlist=`, `storage=`,
 `"gpu"` (for the index or for one search), `search(..., nprobe=)` for one search, and a profile with
 thresholds of its own for both exact and approximate routing ([TUNING](TUNING.md)).
 
+### Threads
+
+An index can be searched from several threads at once, and changed while it is searched. Each search
+begins by taking a snapshot of the index, its vectors, lists, buffer and mask as they are at that moment,
+and searches that: changes replace the arrays they change rather than writing into them, and take a lock,
+so a snapshot never mixes two states. Searches do not hold the lock while they run, so concurrent searches
+proceed in parallel: on the CPU, 4 threads answer 1.6-1.9 times as many queries as one (BENCHMARKS,
+[Threads](BENCHMARKS.md#threads)). Changes run one at a time, and a search that began before a change
+returns results from before it. Each device's copy of the vectors is built once, by the first search that
+needs it.
+
 ### Memory
 
 On Apple silicon the GPU's memory is the machine's, so a GPU search that outgrows it does not fail: the
@@ -130,7 +141,8 @@ smaller:
 - **Splitting never changes results,** as each query's depends on it alone, so the budget may depend on
   the machine and the neighbors still do not.
 - **MLX's cache of freed buffers is capped** at twice the budget (by default it may hold as much as the
-  working set), unless the program has set a lower cap itself.
+  working set), unless the program has set a lower cap itself. PyTorch's allocator is left as it is: it
+  held at most 2.5 GB after the same searches.
 - **An index whose GPU copy would take more than half the working set stays on the CPU,** at the build, at
   a load, or at the merge that grows it past that; `device="gpu"` is then refused with the reason, and
   `index.plan` says so.
@@ -488,13 +500,15 @@ flowchart TB
 | `python/siann/_index.py` | `siann.Index`: building, searching, the plan, exact routing |
 | `python/siann/_ivf.py` | The IVF behind `Index(recall=)`: calibration, the timed choice against exact search, measured routing |
 | `python/siann/_profile.py` | `siann.Profile`, `siann.tune`, the default profile |
+| `python/siann/_memory.py` | The GPU memory budget, MLX's cache cap and whether an index fits on the GPU |
+| `python/siann/_build.py` | Checks run before the Rust extension loads: the processor's features, OpenBLAS's threads |
 | `python/siann/kmeans.py`, `ivf_build.py` | siann's k-means and the IVF's lists, built once for every backend |
 | `python/siann/_metal.py` | The Metal kernels' text, shared by both GPU backends: the two-stage top-k, the tiled L1 and L-infinity kernel, the IVF scans |
 | `python/siann/knn_kernels.py`, `exact.py` | Exact search on MLX: the kernels compiled from `_metal`, fused L2, the top-k, a tile of queries at a time |
 | `python/siann/ivf_gpu.py` | The GPU IVF: query-major and list-major scans, float16 and uint8 lists |
 | `python/siann/blas_l2.py` | Exact L2 and inner product on the CPU through NumPy's BLAS and `L2TopK`, with the default tile sizes |
 | `python/siann/torch_kernels.py`, `ivf_torch.py` | The same kernels on PyTorch MPS |
-| `crates/siann-py/src/lib.rs` | The Rust extension, `siann._cpu`: `FlatIndex`, `IvfIndex` (storages, split queries), `L2TopK` |
+| `crates/siann-py/src/lib.rs` | The Rust extension, `siann._cpu`: `FlatIndex`, `IvfIndex` (storages, split queries), `L2TopK`, and the scoring, ranking, merging and bookkeeping the Python side calls |
 | `benchmarks/check_kernels.py` | Every kernel and index against NumPy's exact search |
 | `benchmarks/` | The benchmarks against FAISS and mlxvs, their raw output in `results/` |
 

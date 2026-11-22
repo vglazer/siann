@@ -52,6 +52,7 @@ To run the quickstart notebook, clone the repository and, from its folder,
 | [BENCHMARKS](BENCHMARKS.md) | Which path to use for each workload, and every measurement behind it, with the scripts that reproduce them |
 | [TUNING](TUNING.md) | Calibration and tuning: what siann measures, on what, and how to measure it on your own queries, data and hardware |
 | [DEVELOPMENT](DEVELOPMENT.md) | Building, testing and linting, the rules for changing the code, and the ideas that do not pay |
+| [API reference](https://siann.readthedocs.io/en/latest/API/) | Every public class, method and function, from the docstrings |
 
 ## Python
 

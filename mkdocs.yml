@@ -12,6 +12,7 @@ nav:
   - Benchmarks: BENCHMARKS.md
   - Tuning: TUNING.md
   - Development: DEVELOPMENT.md
+  - API reference: API.md
 markdown_extensions:
   - tables
   - pymdownx.superfences:   # renders the Mermaid diagrams in IMPLEMENTATION.md
@@ -19,3 +20,17 @@ markdown_extensions:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
+plugins:
+  - search
+  - mkdocstrings:           # the API reference (API.md), read from the sources without importing siann
+      handlers:
+        python:
+          paths: [python]
+          options:
+            docstring_style: null       # siann's docstrings are prose
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: true
+            members_order: source
+            filters: ["!^_"]
+            heading_level: 3

@@ -433,6 +433,24 @@ print(f"added with ids {mine}: the nearest to the first query is {growing.search
 and keeps the ids.
 """),
     md("""
+An index can be searched from several threads at once, and changed while it is searched: each search sees
+the index as it was when the search began. Here, four threads search while the main thread adds vectors:
+"""),
+    code("""
+from concurrent.futures import ThreadPoolExecutor
+
+
+def search_many(t):
+    return [growing.search(xq[i:i + 1], 10).indices for i in range(t * 100, t * 100 + 100)]
+
+with ThreadPoolExecutor(4) as pool:
+    searches = [pool.submit(search_many, t) for t in range(4)]
+    for s in range(0, 5_000, 500):
+        growing.add(elsewhere[s:s + 500] + 0.1)
+    answered = sum(len(f.result()) for f in searches)
+print(f"{answered} searches answered while 5,000 vectors were added; the index holds {growing.n:,}")
+"""),
+    md("""
 ### Starting empty
 
 An index can start with no vectors, from an array of shape (0, d), and grow by `add`. With a recall target,

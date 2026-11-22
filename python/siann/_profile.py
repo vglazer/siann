@@ -40,6 +40,7 @@ class Profile:
         return self.cpu_below.get(metric, 1)
 
     def describe(self, metric: str) -> str:
+        """Where exact searches by ``metric`` go, in words, as ``index.plan`` reports it."""
         t = self.threshold(metric)
         if t is None:
             return "always on the CPU"
@@ -48,6 +49,7 @@ class Profile:
         return f"on the CPU below {t} queries per batch, on the GPU from {t}"
 
     def describe_ivf(self) -> str:
+        """Where approximate searches go, in words: the profile's ``ivf`` thresholds, or measured by each index."""
         if not self.ivf:
             return "measured by each index when it is built"
         from ._ivf import describe_routes
@@ -86,15 +88,19 @@ class Profile:
 
     @classmethod
     def from_dict(cls, data: dict) -> Profile:
+        """The profile ``to_dict`` gave."""
         return cls(dict(data["cpu_below"]), data["source"],
                    tuple((m, d, int(b), float(r)) for m, d, b, r in data.get("rates", [])), data.get("meta", {}),
                    data.get("ivf"))
 
     def save(self, path) -> None:
+        """Writes the profile to ``path`` as JSON, to reuse it with ``Profile.load`` (on the same machine: its
+        thresholds were measured on this one)."""
         Path(path).write_text(json.dumps(self.to_dict(), indent=1), encoding="utf-8")
 
     @classmethod
     def load(cls, path) -> Profile:
+        """A profile written by ``profile.save(path)``."""
         return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
 
 

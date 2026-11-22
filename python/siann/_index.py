@@ -8,6 +8,7 @@ import functools
 import json
 import platform
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -142,6 +143,9 @@ def _as_matrix(x, name: str) -> np.ndarray:
     return a
 
 
+_COPY_LOCK = threading.Lock()   # a device's copy of the vectors is made once, by whichever search needs it first
+
+
 def _exact_gpu(x: np.ndarray, layouts: dict, q: np.ndarray, k: int, metric: str, backend: str = "mlx") -> np.ndarray:
     """Exact search of x on the GPU, through ``backend`` ("mlx" or "torch"); x's copy there is made on first
     use and kept in ``layouts``."""
@@ -149,20 +153,22 @@ def _exact_gpu(x: np.ndarray, layouts: dict, q: np.ndarray, k: int, metric: str,
         import torch
 
         from .torch_kernels import torch_knn
-        if "gpu" not in layouts:
-            xt = torch.from_numpy(x).to("mps")
-            layouts["gpu"] = (xt, (xt * xt).sum(1) if metric == "l2" else None)
+        with _COPY_LOCK:
+            if "gpu" not in layouts:
+                xt = torch.from_numpy(x).to("mps")
+                layouts["gpu"] = (xt, (xt * xt).sum(1) if metric == "l2" else None)
         xt, norms = layouts["gpu"]
         return torch_knn(xt, norms, q, k, metric, tile=_exact_tile(len(x), backend))
     import mlx.core as mx
 
     from ._memory import cap_mlx_cache
     from .exact import mlx_knn
-    if "gpu" not in layouts:
-        cap_mlx_cache()
-        a = mx.array(x)
-        mx.eval(a)
-        layouts["gpu"] = a
+    with _COPY_LOCK:
+        if "gpu" not in layouts:
+            cap_mlx_cache()
+            a = mx.array(x)
+            mx.eval(a)
+            layouts["gpu"] = a
     return np.asarray(mlx_knn(layouts["gpu"], q, k, metric, tile=_exact_tile(len(x), backend)), dtype=np.int64)
 
 
@@ -181,15 +187,17 @@ def _exact_cpu(x: np.ndarray, layouts: dict, q: np.ndarray, k: int, metric: str)
     """Exact search of x on the CPU: siann's Rust kernel for L1 and L-infinity, BLAS for L2 and inner product."""
     if metric in ("l1", "linf"):
         from ._cpu import FlatIndex
-        if "cpu" not in layouts:
-            layouts["cpu"] = FlatIndex(x, x.shape[1], metric)
+        with _COPY_LOCK:
+            if "cpu" not in layouts:
+                layouts["cpu"] = FlatIndex(x, x.shape[1], metric)
         flat = layouts["cpu"].search(q, k)
         return np.asarray(flat, dtype=np.int64).reshape(len(q), k)
     from .blas_l2 import default_tiles, siann_l2
-    if "cpu" not in layouts:
-        from ._cpu import sq_norms
-        norms = sq_norms(x) if metric == "l2" else np.zeros(len(x), dtype=np.float32)
-        layouts["cpu"] = np.ascontiguousarray(norms, dtype=np.float32)
+    with _COPY_LOCK:
+        if "cpu" not in layouts:
+            from ._cpu import sq_norms
+            norms = sq_norms(x) if metric == "l2" else np.zeros(len(x), dtype=np.float32)
+            layouts["cpu"] = np.ascontiguousarray(norms, dtype=np.float32)
     qtile, block = default_tiles(len(q))
     return np.asarray(siann_l2(x, layouts["cpu"], q, k, qtile, block), dtype=np.int64)
 
@@ -200,6 +208,27 @@ def _normalized(a: np.ndarray, name: str) -> np.ndarray:
     if zeros:
         raise ValueError(f"cosine is undefined for a zero vector, and {name} holds {zeros}")
     return out
+
+
+def _changing(method):
+    """Runs a method that changes the index under its lock: one change at a time, and none during a search's
+    snapshot."""
+    @functools.wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return locked
+
+
+def _check_device(device: str) -> None:
+    if device not in ("auto", "gpu", "cpu"):
+        raise ValueError(f"device must be 'auto', 'gpu' or 'cpu', not {device!r}")
+
+
+def _check_profile(profile) -> None:
+    from ._profile import Profile
+    if profile is not None and not isinstance(profile, Profile):
+        raise TypeError("profile must be a siann.Profile (from siann.tune or siann.Profile.load)")
 
 
 class Index:
@@ -217,8 +246,9 @@ class Index:
     available, each search goes to the GPU or the CPU by its batch size, from ``profile``'s threshold for the
     metric; otherwise the CPU), "gpu" or "cpu". ``profile`` is a ``siann.Profile`` (from ``siann.tune``),
     by default the one set by ``siann.use_profile`` or siann's own; it is fixed when the index is built.
-    Each device's copy of the vectors is built the first time a search needs it. ``index.plan`` says
-    what was chosen and why.
+    ``gpu`` is the GPU backend: "auto" (MLX where it finds a GPU, otherwise PyTorch's MPS backend), "mlx" or
+    "torch". Each device's copy of the vectors is built the first time a search needs it; an index too
+    large for the GPU's memory stays on the CPU. ``index.plan`` says what was chosen and why.
 
     ``xb`` may be empty, of shape (0, d), for an index grown by ``add``: added vectors are searched exactly,
     and with a recall target, the choice between an IVF and exact search is made at the first merge and
@@ -238,44 +268,16 @@ class Index:
             raise ValueError("kind='ivf' needs a recall target, such as recall=0.95")
         if storage not in ("auto", "float32", "float16", "uint8"):
             raise ValueError(f"storage must be 'auto', 'float32', 'float16' or 'uint8', not {storage!r}")
-        if device not in ("auto", "gpu", "cpu"):
-            raise ValueError(f"device must be 'auto', 'gpu' or 'cpu', not {device!r}")
+        _check_device(device)
+        _check_profile(profile)
         x = _as_matrix(xb, "xb")
         if x.shape[1] == 0:
             raise ValueError("xb's vectors have no dimensions")
-        self._gpu = _resolve_gpu(gpu)
-        self._gpu_arg = gpu
-        gpu = self._gpu is not None
-        if device == "gpu" and not gpu:
-            raise RuntimeError("device='gpu', but no GPU is available")
-        self.metric = metric
-        self._x = _normalized(x, "xb") if metric == "cosine" else x
-        self._too_big = self._gpu_too_big()
-        if self._too_big and device == "gpu":
-            raise RuntimeError(f"device='gpu', but {self._too_big}")
-        if self._too_big:
-            gpu = False
-        # cosine ranks as inner product on unit vectors
-        self._kernel_metric = "ip" if metric == "cosine" else metric
-        from ._profile import Profile, current_profile
-        if profile is not None and not isinstance(profile, Profile):
-            raise TypeError("profile must be a siann.Profile (from siann.tune or siann.Profile.load)")
-        self._profile = profile if profile is not None else current_profile()
-        self._device = device if device != "auto" else ("auto" if gpu else "cpu")
-        self._layouts: dict[str, object] = {}
-        self.recall = recall
-        self._ivf = None
-        self._nprobe = None
-        self._routes = {}
-        self._storage = None
-        self._cal_q = self._cal_ids = None
-        self._device_arg = device
-        self._kind_arg, self._nlist_arg, self._storage_arg = kind, nlist, storage
-        self._cal_given = None
+        from ._profile import current_profile
+        gpu = self._setup(_normalized(x, "xb") if metric == "cosine" else x, metric, recall, device, gpu,
+                          profile if profile is not None else current_profile(), kind, nlist, storage)
         if calibration_queries is not None:
             self._cal_given = self._checked_queries(calibration_queries)
-        self._init_changes(len(self._x))
-        self._tested_n = 0                                 # the size at the last choice between the IVF and exact
         reasons = []
         if recall is None or kind == "exact":
             reasons.append("exact search (no recall target): the results are the true nearest neighbors"
@@ -287,6 +289,36 @@ class Index:
             self._tested_n = len(self._x)
         self._build_reasons = tuple(reasons)
         self._finish_plan(list(reasons), device, gpu)
+
+    def _setup(self, x: np.ndarray, metric: str, recall, device: str, gpu: str, profile, kind: str, nlist,
+               storage: str, ids=None, clustered=(None, None)) -> bool:
+        """The state an index starts from, built or loaded: ``x`` its vectors (normalized for cosine), the
+        options it was built with, the GPU backend resolved and checked (refused with ``device="gpu"`` where
+        there is no GPU, or the index would not fit on it), nothing searched or changed yet. Returns whether
+        searches may use the GPU."""
+        self._lock = threading.RLock()                     # held by changes; searches take a snapshot under it
+        self._gpu, self._gpu_arg = _resolve_gpu(gpu), gpu
+        if device == "gpu" and self._gpu is None:
+            raise RuntimeError("device='gpu', but no GPU is available")
+        self.metric = metric
+        self._kernel_metric = "ip" if metric == "cosine" else metric      # cosine: inner product on unit vectors
+        self._x = x
+        self._too_big = self._gpu_too_big()
+        if self._too_big and device == "gpu":
+            raise RuntimeError(f"device='gpu', but {self._too_big}")
+        usable = self._gpu is not None and not self._too_big
+        self._profile = profile
+        self._device_arg = device
+        self._device = device if device != "auto" else ("auto" if usable else "cpu")
+        self._layouts: dict[str, object] = {}
+        self.recall = recall
+        self._ivf = self._nprobe = self._storage = None
+        self._routes = {}
+        self._cal_q = self._cal_ids = self._cal_given = None
+        self._kind_arg, self._nlist_arg, self._storage_arg = kind, nlist, storage
+        self._init_changes(len(x), ids, *clustered)
+        self._tested_n = 0                                 # the size at the last choice between the IVF and exact
+        return usable
 
     def _init_changes(self, n: int, ids=None, clustered_n=None, clustered_imbalance=None) -> None:
         """No vector added or removed yet: ids are row numbers unless given."""
@@ -345,6 +377,7 @@ class Index:
                     f"(last made at {before:,})")
         self._build_reasons = (head,) + tuple(lines)
 
+    @_changing
     def calibrate(self, queries) -> int | None:
         """Calibrates on ``queries`` (m, d), representative queries (up to 1,000 used), kept for every later
         calibration. An IVF recalibrates nprobe for its recall target now, re-measures routing and returns the
@@ -541,6 +574,7 @@ class Index:
                                          rounds=2 if self._gpu == "torch" else 1)
         return f"routing measured in {time.perf_counter() - t:.1f} s: {describe_routes(self._routes, on_gpu)}"
 
+    @_changing
     def save(self, path) -> None:
         """Writes the index to ``path`` (a NumPy ``.npz`` file, written at exactly that path): the base
         vectors, the IVF's centroids and lists, the calibration and its sample, the routes, the profile and
@@ -587,10 +621,8 @@ class Index:
         from ._ivf import IVF
         from ._profile import Profile, current_profile
         from .ivf_build import lists_from_assign
-        if device not in ("auto", "gpu", "cpu"):
-            raise ValueError(f"device must be 'auto', 'gpu' or 'cpu', not {device!r}")
-        if profile is not None and not isinstance(profile, Profile):
-            raise TypeError("profile must be a siann.Profile (from siann.tune or siann.Profile.load)")
+        _check_device(device)
+        _check_profile(profile)
         try:
             data = np.load(path, allow_pickle=False)
             meta = json.loads(bytes(data["meta"]).decode("utf-8"))
@@ -601,42 +633,21 @@ class Index:
         if meta["format_version"] > FORMAT_VERSION:
             raise ValueError(f"{path} was saved by siann {meta['siann']} in format {meta['format_version']}; "
                              f"this siann reads format {FORMAT_VERSION} and earlier: upgrade siann")
-        resolved = _resolve_gpu(gpu)
-        if device == "gpu" and resolved is None:
-            raise RuntimeError("device='gpu', but no GPU is available")
         same = meta["machine"] == _machine()
         redo = (not same) if remeasure is None else remeasure
-        self = cls.__new__(cls)
-        self._gpu, self._gpu_arg = resolved, gpu
-        gpu = resolved is not None
-        self.metric = meta["metric"]
-        self._x = np.ascontiguousarray(data["x"], dtype=np.float32)
-        self._too_big = self._gpu_too_big()
-        if self._too_big and device == "gpu":
-            raise RuntimeError(f"device='gpu', but {self._too_big}")
-        if self._too_big:
-            gpu = False
-        self._kernel_metric = "ip" if self.metric == "cosine" else self.metric
-        self._profile = profile if profile is not None else (current_profile() if redo else
-                                                             Profile.from_dict(meta["profile"]))
-        self._device = device if device != "auto" else ("auto" if gpu else "cpu")
-        self._layouts = {}
-        self.recall = meta["recall"]
-        self._storage = meta["storage"]
-        self._nprobe = meta["nprobe"]
-        self._routes = dict(meta["routes"])
-        self._ivf = self._cal_q = self._cal_ids = None
-        self._device_arg = device
-        args = meta.get("build_args") or {}
+        args = meta.get("build_args") or {}                   # format 2 and earlier: inferred from the plan
         given_exact = any(r.startswith("exact search (kind='exact'") for r in meta["build_reasons"])
-        self._kind_arg = args.get("kind") or ("exact" if given_exact else "auto")
-        self._nlist_arg, self._storage_arg = args.get("nlist"), args.get("storage") or "auto"
-        self._cal_given = None
+        self = cls.__new__(cls)
+        gpu = self._setup(np.ascontiguousarray(data["x"], dtype=np.float32), meta["metric"], meta["recall"], device,
+                          gpu, profile if profile is not None else
+                          (current_profile() if redo else Profile.from_dict(meta["profile"])),
+                          args.get("kind") or ("exact" if given_exact else "auto"), args.get("nlist"),
+                          args.get("storage") or "auto",
+                          ids=np.asarray(data["ids"], dtype=np.int64) if "ids" in data else None,
+                          clustered=tuple(meta.get("clustered") or (None, None)))
+        self._storage, self._nprobe, self._routes = meta["storage"], meta["nprobe"], dict(meta["routes"])
         if meta["kind"] != "ivf" and "calibration_queries" in data:
             self._cal_given = np.ascontiguousarray(data["calibration_queries"], dtype=np.float32)
-        clustered = meta.get("clustered") or [None, None]
-        self._init_changes(len(self._x), np.asarray(data["ids"], dtype=np.int64) if "ids" in data else None,
-                           clustered[0], clustered[1])
         self._next_id = max(self._next_id, int(meta.get("next_id") or 0))
         tested = meta.get("tested_n")
         self._tested_n = len(self._x) if tested is None else int(tested)
@@ -701,6 +712,7 @@ class Index:
 
     @property
     def d(self) -> int:
+        """The number of dimensions of each vector."""
         return self._x.shape[1]
 
     @property
@@ -723,7 +735,20 @@ class Index:
     def search(self, xq, k: int = 10, *, device: str | None = None, nprobe: int | None = None) -> SearchResult:
         """The k nearest base vectors to each query in ``xq`` (m, d), or to a single query (d,),
         returned as a batch of one. ``device`` ("gpu" or "cpu") overrides the index's device; ``nprobe``
-        overrides the calibrated number of lists an IVF search probes."""
+        overrides the calibrated number of lists an IVF search probes. Searches may run from several threads
+        at once, and alongside changes: each searches the index as it was when it began."""
+        with self._lock:
+            view = self._snapshot()
+        return view._search(xq, k, device, nprobe)
+
+    def _snapshot(self) -> Index:
+        """A shallow copy: the index's state at this moment. Changes replace the arrays and objects they change
+        rather than writing into them, so the copy stays as it was while searched."""
+        view = object.__new__(Index)
+        view.__dict__.update(self.__dict__)
+        return view
+
+    def _search(self, xq, k: int, device: str | None, nprobe: int | None) -> SearchResult:
         q = np.asarray(xq)
         if q.ndim == 1:
             q = q[None, :]
@@ -813,6 +838,7 @@ class Index:
     def _buffer_limit(self) -> int:
         return max(int(BUFFER_SHARE * len(self._x)), BUFFER_MIN)
 
+    @_changing
     def add(self, x, ids=None) -> np.ndarray:
         """Adds vectors ``x`` (m, d), or one (d,), and returns their ids: ``ids`` if given (int64, distinct,
         none already in the index), otherwise continuing from the largest so far. Searches return these ids.
@@ -875,6 +901,7 @@ class Index:
         main = self._row_ids() if self._dead is None else self._row_ids()[~self._dead]
         return main if self._buf is None else np.concatenate([main, self._buf["ids"]])
 
+    @_changing
     def remove(self, ids) -> int:
         """Removes the vectors with these ids, and returns how many were removed. An id not in the index is
         refused, and nothing is removed then. Removed vectors are masked and never returned; past a few, the
@@ -900,6 +927,7 @@ class Index:
         self._refresh_plan()
         return len(gone)
 
+    @_changing
     def recluster(self) -> None:
         """Merges added vectors, compacts removed ones and, for an IVF, rebuilds its lists from scratch
         (k-means on every vector, the default number of lists for its size), then recalibrates nprobe and

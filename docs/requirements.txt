@@ -1,1 +1,5 @@
 mkdocs-material==9.5.49
+mkdocstrings==0.27.0
+mkdocstrings-python==1.12.2
+mkdocs-autorefs==1.2.0
+griffe==1.5.1
