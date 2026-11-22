@@ -5,6 +5,7 @@ The kernel bodies are siann._metal's, the same text as on MLX; the compile-time 
 cached, and the run-time sizes go in a small ``sz`` buffer. The small final selection over the T * k
 survivors uses torch.topk where knn_kernels uses MLX's argpartition.
 """
+import numpy as np
 import torch
 
 from ._metal import COMBINE, SELECT, TILED
@@ -70,3 +71,22 @@ def l2_knn(q: torch.Tensor, x: torch.Tensor, norms: torch.Tensor, k: int, thread
     ``norms`` holds the squared norms of the rows of x."""
     # addmm fuses the multiply, scaling and addition: 18.1 ms against 31.4 ms for 256 x 1M.
     return select_k(torch.addmm(norms[None, :], q, x.T, alpha=-2), k, threads)
+
+
+def torch_knn(x: torch.Tensor, norms: torch.Tensor | None, xq: np.ndarray, k: int, metric: str,
+              tile: int = 256) -> np.ndarray:
+    """Exact k nearest neighbors of the queries xq among the rows of x (on MPS), a tile of queries at a time:
+    a matrix multiply then select_k for L2 (``norms``, the rows' squared norms) and inner product (no norms:
+    ranked by -2 q.x, the same order as -q.x), the tiled kernel for L1 and L-infinity. The twin of
+    siann.exact.mlx_knn."""
+    out = []
+    for start in range(0, len(xq), tile):
+        q = torch.from_numpy(np.ascontiguousarray(xq[start:start + tile])).to(x.device)
+        if metric == "l2":
+            r = l2_knn(q, x, norms, k)
+        elif metric == "ip":
+            r = select_k(torch.mm(q, x.T).mul_(-2), k)
+        else:
+            r = knn_tiled(q, x, k, metric)
+        out.append(r.cpu().numpy())
+    return np.concatenate(out).astype(np.int64)

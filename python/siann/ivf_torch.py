@@ -17,10 +17,20 @@ def _lib(source: str, metric: str, **sizes: int):
     return tk._lib(COMBINE[metric] + source, **sizes)
 
 
+# Metal's names for the lists' storage types, and PyTorch's
+METAL_TYPE = {"float32": "float", "float16": "half", "uint8": "uchar"}
+TORCH_TYPE = {"float32": torch.float32, "float16": torch.float16, "uint8": torch.uint8}
+
+
 class TorchIVF:
-    def __init__(self, xb: np.ndarray, centroids: np.ndarray, metric: str, built=None):
+    def __init__(self, xb: np.ndarray, centroids: np.ndarray, metric: str, built=None, lists: str = "float32"):
         """The lists come from ``built`` (a ``siann.ivf_build.Lists``, the same for every backend), or are
-        built from ``centroids``, assigned as siann.ivf_build assigns them."""
+        built from ``centroids``, assigned as siann.ivf_build assigns them. ``lists`` is their storage, as for
+        GpuIVF: "float32", "float16" or "uint8" (coordinates that are integers 0-255); distances are computed in
+        float32 from the stored values."""
+        if lists == "uint8" and not np.array_equal(xb.astype(np.uint8).astype(np.float32), xb):
+            raise ValueError("uint8 lists need coordinates that are integers from 0 to 255")
+        self.x_type = METAL_TYPE[lists]
         self.metric = metric
         dev = "mps"
         if built is None:
@@ -30,7 +40,7 @@ class TorchIVF:
         self.cnorms = (self.centroids * self.centroids).sum(1)
         self.nlist = built.nlist
         self.ids = torch.from_numpy(built.order).to(dev)
-        self.x = torch.from_numpy(np.ascontiguousarray(xb[built.order])).to(dev)
+        self.x = torch.from_numpy(np.ascontiguousarray(xb[built.order])).to(dev).to(TORCH_TYPE[lists])
         self.offsets = torch.from_numpy(built.offsets.astype(np.int32)).to(dev)
 
     def _to_ids(self, local: torch.Tensor) -> np.ndarray:
@@ -68,14 +78,14 @@ class TorchIVF:
         if merge == "kernel" and threads <= 256 and threads & (threads - 1) == 0 and threads * k * 8 <= 32768:
             vals = torch.empty(nq * k, device="mps")
             idx = torch.empty(nq * k, device="mps", dtype=torch.int32)
-            _lib(scan_merged("float").torch_source(), self.metric, D=d, T=threads, K=k).ivf_scan_merged(
+            _lib(scan_merged(self.x_type).torch_source(), self.metric, D=d, T=threads, K=k).ivf_scan_merged(
                 q, self.x, self.offsets, probes, tk.sz(nq, nprobe), vals, idx, threads=[threads, nq],
                 group_size=[threads, 1])
             local = idx.view(nq, k)
             return self._to_ids(local)
         vals = torch.empty(nq * threads * k, device="mps")
         idx = torch.empty(nq * threads * k, device="mps", dtype=torch.int32)
-        _lib(scan("float").torch_source(), self.metric, D=d, T=threads, K=k).ivf_scan(
+        _lib(scan(self.x_type).torch_source(), self.metric, D=d, T=threads, K=k).ivf_scan(
             q, self.x, self.offsets, probes, tk.sz(nq, nprobe), vals, idx, threads=[threads, nq],
             group_size=[min(threads, 256), 1])
         best = torch.topk(vals.view(nq, -1), k, dim=1, largest=False, sorted=True).indices
@@ -96,7 +106,7 @@ class TorchIVF:
         first = (torch.cumsum(counts, 0) - counts).to(torch.int32)
         vals = torch.empty(nq * nprobe * lanes * k, device="mps")
         idx = torch.empty(nq * nprobe * lanes * k, device="mps", dtype=torch.int32)
-        _lib(list_scan("float").torch_source(), self.metric, D=d, K=k).ivf_list_scan(
+        _lib(list_scan(self.x_type).torch_source(), self.metric, D=d, K=k).ivf_list_scan(
             q, self.x, self.offsets, pair_ids, first, counts, tk.sz(nprobe), vals, idx,
             threads=[256 * self.nlist], group_size=[256])
         pick = tk.select_k(vals.view(nq, -1), k, threads=64)

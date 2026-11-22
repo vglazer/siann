@@ -431,7 +431,27 @@ print(f"added with ids {mine}: the nearest to the first query is {growing.search
     md("""
 `index.recluster()` clusters the index again when you choose, and `index.save()` merges and compacts first
 and keeps the ids.
+"""),
+    md("""
+## The GPU backend: MLX or PyTorch
 
+siann's GPU kernels run on MLX or on PyTorch's MPS backend: the same Metal code, the same neighbors.
+`gpu="auto"` takes MLX where it finds a GPU; `gpu="torch"` runs every GPU step through PyTorch, building
+included, without importing MLX, for programs that already use PyTorch (`pip install siann[torch]`). The
+next cell runs it where PyTorch finds an Apple GPU, against exact search on the CPU.
+"""),
+    code("""
+try:
+    on_torch = siann.Index(xb, "l2", gpu="torch")
+except RuntimeError as e:
+    print(e)
+else:
+    gpu_found = on_torch.search(xq[:100], 10, device="gpu")
+    cpu_found = on_torch.search(xq[:100], 10, device="cpu")
+    print(f"the same neighbors on PyTorch's GPU and the CPU: {(gpu_found.indices == cpu_found.indices).mean():.4f}")
+    print(next(line for line in str(on_torch.plan).splitlines() if "GPU backend" in line))
+"""),
+    md("""
 ## When fewer than k exist
 
 Asking for more neighbors than there are vectors returns all of them, then `-1` in the missing slots, with

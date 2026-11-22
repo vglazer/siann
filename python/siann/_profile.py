@@ -147,20 +147,21 @@ def threshold_with_margin(cpu: dict[int, float], gpu: dict[int, float], default:
     return None if t >= NEVER else t
 
 
-def _tune_ivf(xb, xq, given_xq: bool, metric: str, recall: float, k: int):
+def _tune_ivf(xb, xq, given_xq: bool, metric: str, recall: float, k: int, gpu: str = "auto"):
     """Approximate search's thresholds: an IVF calibrated to ``recall`` (on ``xq`` if given), its routes
     measured as an index measures its own; returns (thresholds, rates as (label, path, batch, rate))."""
-    from ._index import Index, _gpu_available
+    from ._index import Index
     from ._ivf import measure_routes
     index = Index(xb, metric, recall=recall, kind="ivf", calibration_queries=xq[:1000] if given_xq else None,
-                  profile=Profile({metric: 1}, "tuning"))
-    routes, rates = measure_routes(index._ivf, xq, index.nprobe, _gpu_available(), k)
+                  profile=Profile({metric: 1}, "tuning"), gpu=gpu)
+    routes, rates = measure_routes(index._ivf, xq, index.nprobe, index._gpu is not None, k,
+                                   rounds=2 if index._gpu == "torch" else 1)
     thresholds = dict(routes, recall=recall, nprobe=index.nprobe, metric=metric)
     return thresholds, [("ivf", p, b, r) for (p, b), r in rates.items()]
 
 
 def tune(xb, xq=None, metrics=None, batches=BATCHES, k: int = 10, budget: float = 60.0,
-         seed: int = 0, recall: float | None = None) -> Profile:
+         seed: int = 0, recall: float | None = None, gpu: str = "auto") -> Profile:
     """Measures where exact search is faster, on the CPU or the GPU, for this data on this machine.
 
     ``xb`` is the user's base vectors (all of them: the crossover depends on the collection's size);
@@ -169,10 +170,11 @@ def tune(xb, xq=None, metrics=None, batches=BATCHES, k: int = 10, budget: float 
     compiles the GPU kernels for that shape), within about ``budget`` seconds in all. A threshold moves
     from siann's default only where the other device was at least 10% faster, about the timings' spread. With ``recall``,
     approximate search's thresholds are measured too: an IVF over ``xb`` (by the first metric) calibrated to
-    that recall, on ``xq`` if given, its paths timed at batch sizes from 1 to 4,096. Returns a Profile;
+    that recall, on ``xq`` if given, its paths timed at batch sizes from 1 to 4,096. ``gpu`` chooses the GPU
+    backend timed, as for ``siann.Index``. Returns a Profile;
     pass it to ``siann.Index(..., profile=p)`` or ``siann.use_profile(p)``.
     """
-    from ._index import METRICS, Index, _gpu_available
+    from ._index import METRICS, Index, _resolve_gpu
     metrics = tuple(metrics) if metrics is not None else METRICS
     for m in metrics:
         if m not in METRICS:
@@ -189,27 +191,28 @@ def tune(xb, xq=None, metrics=None, batches=BATCHES, k: int = 10, budget: float 
         batches = [b for b in batches if b <= len(xq)]
     meta = {"n": len(xb), "d": int(xb.shape[1]), "k": int(k), "machine": platform.platform(),
             "date": time.strftime("%Y-%m-%d")}
-    if not _gpu_available():
+    if _resolve_gpu(gpu) is None:
         # every exact search on the CPU; approximate search still chooses between the CPU's two scans
-        ivf, ivf_rates = (_tune_ivf(xb, xq, given_xq, metrics[0], recall, k) if recall is not None else (None, []))
+        ivf, ivf_rates = (_tune_ivf(xb, xq, given_xq, metrics[0], recall, k, gpu) if recall is not None
+                          else (None, []))
         return Profile({m: None for m in metrics}, "tuned: no GPU found, every search on the CPU",
                        tuple(ivf_rates), meta, ivf)
     deadline = time.perf_counter() + budget
     rates, cpu_below = [], {}
     per_metric = budget / (len(metrics) + (2 if recall else 0))
     for m in metrics:
-        index = Index(xb, m, profile=Profile({m: 1}, "tuning"))
+        index = Index(xb, m, profile=Profile({m: 1}, "tuning"), gpu=gpu)
         stop = min(deadline, time.perf_counter() + per_metric)
-        cpu, gpu = {}, {}
+        on_cpu, on_gpu = {}, {}
         for b in batches:
             q = xq[:b]
-            cpu[b] = _rate(index, q, k, "cpu", stop)
-            gpu[b] = _rate(index, q, k, "gpu", stop)
-            rates += [(m, "cpu", b, cpu[b]), (m, "gpu", b, gpu[b])]
-        cpu_below[m] = threshold_with_margin(cpu, gpu, DEFAULT.threshold(m))
+            on_cpu[b] = _rate(index, q, k, "cpu", stop)
+            on_gpu[b] = _rate(index, q, k, "gpu", stop)
+            rates += [(m, "cpu", b, on_cpu[b]), (m, "gpu", b, on_gpu[b])]
+        cpu_below[m] = threshold_with_margin(on_cpu, on_gpu, DEFAULT.threshold(m))
     ivf = None
     if recall is not None:
-        ivf, ivf_rates = _tune_ivf(xb, np.asarray(xq), given_xq, metrics[0], recall, k)
+        ivf, ivf_rates = _tune_ivf(xb, np.asarray(xq), given_xq, metrics[0], recall, k, gpu)
         rates += ivf_rates
     source = f"tuned on {meta['n']:,} x {meta['d']} vectors, k = {k}, {meta['date']}"
     return Profile(cpu_below, source, tuple(rates), meta, ivf)

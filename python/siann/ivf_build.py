@@ -36,10 +36,19 @@ def assign_metric(metric: str) -> str:
 
 
 def nearest(x: np.ndarray, c: np.ndarray, metric: str, device: str = "auto", tile: int = 4096) -> np.ndarray:
-    """Each row of x's nearest row of c by ``metric`` (int64), exactly, on the GPU or the CPU."""
-    from ._index import _gpu_available
-    gpu = _gpu_available() if device == "auto" else device == "gpu"
-    if gpu:
+    """Each row of x's nearest row of c by ``metric`` (int64), exactly: ``device`` "gpu" (MLX), "torch"
+    (PyTorch's MPS backend), "cpu", or "auto" (the GPU backend siann finds, otherwise the CPU)."""
+    from ._index import _default_gpu
+    if device == "auto":
+        device = {"mlx": "gpu", "torch": "torch"}.get(_default_gpu(), "cpu")
+    if device == "torch":
+        import torch
+
+        from .torch_kernels import torch_knn
+        ct = torch.from_numpy(np.ascontiguousarray(c, dtype=np.float32)).to("mps")
+        norms = (ct * ct).sum(1) if metric == "l2" else None
+        return np.concatenate([torch_knn(ct, norms, x[s:s + tile], 1, metric, tile=tile)[:, 0] for s in range(0, len(x), tile)])
+    if device == "gpu":
         import mlx.core as mx
 
         from .exact import knn

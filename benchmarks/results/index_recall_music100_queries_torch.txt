@@ -1,0 +1,18 @@
+music100, ip: 1,000,000 vectors, target 0.95; built in 5.2 s
+siann.Index: 1,000,000 vectors, 100 dimensions, metric ip
+  kind: ivf
+  device: auto
+  approximate search: an IVF of 4,000 lists (about 4 sqrt(n)), built in 2.0 s (siann's k-means, 10 iterations)
+  lists stored as float16 on the GPU (recall moves by at most about 0.001) and float32 on the CPU
+  calibrated: nprobe 25 reaches recall@10 0.951 (target 0.95) on 1,000 of the given calibration queries
+  IVF chosen: 3.6 ms for 1,000 calibration queries on the GPU, against 94.9 ms for exact search
+  routing measured in 2.3 s: below 129 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 2,048 queries, list-major from 2,049
+  GPU found: approximate searches routed as above
+  GPU backend: PyTorch (MPS) (gpu='torch' given)
+
+  recall@10 on the dataset's 9,000 queries: 0.949 (target 0.95)
+  batch      1: cpu-split      17,450 queries/s
+  batch     10: cpu-query      64,427 queries/s
+  batch    100: cpu-query     131,788 queries/s
+  batch  1,000: gpu-query     396,229 queries/s
+  batch 10,000: gpu-list      428,628 queries/s

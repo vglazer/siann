@@ -4,6 +4,7 @@ its speed by batch size on the paths it routes to.
 
     uv run --group bench python index_recall.py --dataset sift --recall 0.95
     uv run --group bench python index_recall.py --dataset sift --calibrate-on queries   # held-out queries
+    uv run --group bench python index_recall.py --dataset sift --calibrate-on queries --gpu torch
 """
 import argparse
 import time
@@ -24,6 +25,7 @@ def main() -> None:
     p.add_argument("--recall", type=float, default=0.95)
     p.add_argument("--base", type=int, default=0)
     p.add_argument("--queries", type=int, default=10_000)
+    p.add_argument("--gpu", default="auto", choices=["auto", "mlx", "torch"], help="siann.Index's GPU backend")
     p.add_argument("--calibrate-on", default="own", choices=["own", "queries"],
                    help="calibrate on the index's own vectors, or on the first 1,000 queries (then measure on the rest)")
     a = p.parse_args()
@@ -36,9 +38,9 @@ def main() -> None:
     t = time.perf_counter()
     if a.calibrate_on == "queries":
         cal, xq, truth = xq[:1000], xq[1000:], truth[1000:]
-        index = siann.Index(xb, metric, recall=a.recall, calibration_queries=cal)
+        index = siann.Index(xb, metric, recall=a.recall, calibration_queries=cal, gpu=a.gpu)
     else:
-        index = siann.Index(xb, metric, recall=a.recall)
+        index = siann.Index(xb, metric, recall=a.recall, gpu=a.gpu)
     print(f"{a.dataset}, {metric}: {len(xb):,} vectors, target {a.recall}; built in {time.perf_counter() - t:.1f} s\n"
           f"{index.plan}\n", flush=True)
     found = index.search(xq, K).indices

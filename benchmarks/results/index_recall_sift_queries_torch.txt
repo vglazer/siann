@@ -1,0 +1,18 @@
+sift, l2: 1,000,000 vectors, target 0.95; built in 5.8 s
+siann.Index: 1,000,000 vectors, 128 dimensions, metric l2
+  kind: ivf
+  device: auto
+  approximate search: an IVF of 4,000 lists (about 4 sqrt(n)), built in 2.0 s (siann's k-means, 10 iterations)
+  lists stored as bytes (every coordinate an integer 0-255: lossless)
+  calibrated: nprobe 46 reaches recall@10 0.951 (target 0.95) on 1,000 of the given calibration queries
+  IVF chosen: 6.2 ms for 1,000 calibration queries on the GPU, against 95.7 ms for exact search
+  routing measured in 2.6 s: below 33 queries on the CPU (single queries split over 4 threads); on the GPU query-major up to 2,048 queries, list-major from 2,049
+  GPU found: approximate searches routed as above
+  GPU backend: PyTorch (MPS) (gpu='torch' given)
+
+  recall@10 on the dataset's 9,000 queries: 0.955 (target 0.95)
+  batch      1: cpu-split      12,300 queries/s
+  batch     10: cpu-query      35,293 queries/s
+  batch    100: gpu-query      80,762 queries/s
+  batch  1,000: gpu-query     190,547 queries/s
+  batch 10,000: gpu-list      201,684 queries/s

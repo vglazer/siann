@@ -924,7 +924,8 @@ longest, so the added coordinate dominates the distances.
 
 ## PyTorch against MLX
 
-*Reproduce with `torch_select_ab.py --dataset sift|glove`.*
+*Reproduce with `torch_select_ab.py --dataset sift|glove`, and `index_recall.py ... --gpu torch` for
+siann.Index.*
 
 The GPU IVF's Metal code runs unchanged through `torch.mps.compile_shader`, with the same coarse step,
 probe selection, threads per query and merge. On the same lists (float32, the same centroids) it returns
@@ -947,6 +948,23 @@ the same neighbors as MLX's IVF, index for index. L2, queries per second, PyTorc
 On batches of 10,000 the two run level up to nprobe 16, and PyTorch is up to 1.12x MLX above it. On
 batches of 100 PyTorch reaches 0.84-0.97x MLX's speed, and on single queries 0.50-0.88x, from its fixed
 cost of about 0.2 ms per call.
+
+**Through siann.Index** (`gpu="torch"` against `gpu="mlx"`, as in [Approximate search through
+siann.Index](#approximate-search-through-siannindex), recall target 0.95; `index_recall_*_torch.txt`). The
+two backends search the same kinds of lists (bytes for SIFT, float16 otherwise) and, on the same lists,
+return the same neighbors; with each building its own, recall is the same within 0.003. Queries per second,
+PyTorch / MLX, at the batch sizes each index routed (single queries go to the CPU on both):
+
+| Dataset, calibrated on | Recall | Build | Single | 10 | 100 | 1,000 | 10,000 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SIFT, queries | 0.955 / 0.955 | 5.8 / 3.6 s | 12,300 / 12,387 | 35,293 / 35,543 | 80,762 / 100,533 | 190,547 / 178,898 | 201,684 / 230,865 |
+| GloVe, its own vectors | 0.947 / 0.946 | 11.2 / 6.5 s | 2,379 / 2,480 | 3,206 / 3,846 | 17,352 / 20,095 | 37,664 / 41,929 | 40,524 / 49,496 |
+| Music-100, queries | 0.949 / 0.946 | 5.2 / 2.9 s | 17,450 / 18,011 | 64,427 / 65,352 | 131,788 / 167,574 | 396,229 / 402,705 | 428,628 / 433,851 |
+
+PyTorch runs at 0.79-0.86 times MLX's speed in batches of 100, 0.90-1.07 at 1,000 and 0.82-0.99 at 10,000.
+Building takes longer: its k-means is slower, and its routes are measured in two rounds, keeping each
+path's best rate, as in a single round PyTorch's GPU was measured slower in some builds than it runs, which
+moved the crossover from the CPU between builds.
 
 ## On Linux
 

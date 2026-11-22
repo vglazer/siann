@@ -155,6 +155,8 @@ profile.save("profile.json")                            # and siann.Profile.load
   `siann.use_profile`, so results never depend on a file you forgot about. `index.plan` names the profile
   and the threshold in use, and `index.route(batch)` says where a batch of that size goes.
 - **Pinning a device:** `device="cpu"` or `"gpu"`, for an index or for one search, overrides any profile.
+- **The GPU backend:** siann's default profile was measured with MLX. With `gpu="torch"`, whose fixed cost
+  per call is higher, tune with `siann.tune(xb, gpu="torch")`.
 
 To rerun the measurements behind siann's defaults, on your own copy of the datasets:
 

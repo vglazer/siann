@@ -285,7 +285,8 @@ each list once for many queries.
 ### On the GPU
 
 siann's GPU kernels are Metal source, written once (`siann._metal`) and compiled by either GPU backend: MLX
-(`mx.fast.metal_kernel`, the faster on Apple silicon) or PyTorch's MPS backend (`torch.mps.compile_shader`).
+(`mx.fast.metal_kernel`, the faster on Apple silicon) or PyTorch's MPS backend (`torch.mps.compile_shader`),
+chosen by `siann.Index(..., gpu="mlx" | "torch")`.
 
 The two-stage top-k, for one query's row of distances to a million base vectors:
 

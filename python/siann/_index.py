@@ -54,14 +54,51 @@ class Plan:
         return "\n".join(lines)
 
 
+GPUS = ("auto", "mlx", "torch")
+GPU_NAMES = {"mlx": "MLX", "torch": "PyTorch (MPS)"}
+
+
 @functools.cache
-def _gpu_available() -> bool:
-    """Whether siann's GPU backend finds a GPU (checked once per process)."""
+def _mlx_gpu() -> bool:
+    """Whether MLX finds a GPU (checked once per process)."""
     try:
         import mlx.core as mx
         return bool(mx.metal.is_available())
     except Exception:  # noqa: BLE001 (any failure to load or query MLX means no usable GPU)
         return False
+
+
+@functools.cache
+def _torch_gpu() -> bool:
+    """Whether PyTorch is installed and finds an Apple GPU through its MPS backend (checked once)."""
+    try:
+        import torch
+        return bool(torch.backends.mps.is_available())
+    except Exception:  # noqa: BLE001 (any failure to load or query PyTorch means no usable GPU)
+        return False
+
+
+def _default_gpu() -> str | None:
+    """The GPU backend ``gpu="auto"`` takes: MLX where it finds a GPU, otherwise PyTorch's MPS backend,
+    otherwise none. PyTorch is only imported when MLX finds no GPU."""
+    return "mlx" if _mlx_gpu() else ("torch" if _torch_gpu() else None)
+
+
+def _gpu_available() -> bool:
+    """Whether a GPU backend finds a GPU."""
+    return _default_gpu() is not None
+
+
+def _resolve_gpu(gpu: str) -> str | None:
+    """The GPU backend for ``gpu=``: "auto" (``_default_gpu``), "mlx" or "torch" (refused if it finds no GPU)."""
+    if gpu not in GPUS:
+        raise ValueError(f"gpu must be one of {', '.join(map(repr, GPUS))}, not {gpu!r}")
+    if gpu == "auto":
+        return _default_gpu()
+    if not (_mlx_gpu() if gpu == "mlx" else _torch_gpu()):
+        raise RuntimeError(f"gpu={gpu!r}, but {GPU_NAMES[gpu]} finds no GPU"
+                           + (" (is PyTorch installed? pip install siann[torch])" if gpu == "torch" else ""))
+    return gpu
 
 
 @functools.cache
@@ -105,8 +142,18 @@ def _as_matrix(x, name: str) -> np.ndarray:
     return a
 
 
-def _exact_gpu(x: np.ndarray, layouts: dict, q: np.ndarray, k: int, metric: str) -> np.ndarray:
-    """Exact search of x on the GPU; x's copy there is made on first use and kept in ``layouts``."""
+def _exact_gpu(x: np.ndarray, layouts: dict, q: np.ndarray, k: int, metric: str, backend: str = "mlx") -> np.ndarray:
+    """Exact search of x on the GPU, through ``backend`` ("mlx" or "torch"); x's copy there is made on first
+    use and kept in ``layouts``."""
+    if backend == "torch":
+        import torch
+
+        from .torch_kernels import torch_knn
+        if "gpu" not in layouts:
+            xt = torch.from_numpy(x).to("mps")
+            layouts["gpu"] = (xt, (xt * xt).sum(1) if metric == "l2" else None)
+        xt, norms = layouts["gpu"]
+        return torch_knn(xt, norms, q, k, metric)
     import mlx.core as mx
 
     from .exact import mlx_knn
@@ -162,8 +209,8 @@ class Index:
     """
 
     def __init__(self, xb, metric: str = "l2", recall: float | None = None, *, device: str = "auto",
-                 profile=None, kind: str = "auto", nlist: int | None = None, storage: str = "auto",
-                 calibration_queries=None):
+                 gpu: str = "auto", profile=None, kind: str = "auto", nlist: int | None = None,
+                 storage: str = "auto", calibration_queries=None):
         if metric not in METRICS:
             raise ValueError(f"metric must be one of {', '.join(METRICS)}, not {metric!r}")
         if recall is not None and not 0 < recall <= 1:
@@ -179,7 +226,9 @@ class Index:
         x = _as_matrix(xb, "xb")
         if len(x) == 0:
             raise ValueError("xb holds no vectors")
-        gpu = _gpu_available()
+        self._gpu = _resolve_gpu(gpu)
+        self._gpu_arg = gpu
+        gpu = self._gpu is not None
         if device == "gpu" and not gpu:
             raise RuntimeError("device='gpu', but no GPU is available")
         self.metric = metric
@@ -238,6 +287,9 @@ class Index:
             cpu_path = ("siann's Rust kernel" if self._kernel_metric in ("l1", "linf")
                         else "a BLAS matrix multiply through NumPy and siann's Rust top-k")
             reasons.append(f"on the CPU: {cpu_path}")
+        if self._gpu is not None:
+            reasons.append(f"GPU backend: {GPU_NAMES[self._gpu]}"
+                           + (f" (gpu={self._gpu_arg!r} given)" if self._gpu_arg != "auto" else ""))
         if metric == "cosine":
             reasons.append("cosine: vectors normalized to unit length and ranked by inner product")
         from . import _build
@@ -265,7 +317,7 @@ class Index:
         return lines
 
     def _refresh_plan(self) -> None:
-        self._finish_plan(list(self._build_reasons) + self._change_lines(), self._device_arg, _gpu_available())
+        self._finish_plan(list(self._build_reasons) + self._change_lines(), self._device_arg, self._gpu is not None)
 
     def _build_ivf(self, recall: float, kind: str, nlist: int | None, storage: str, gpu: bool,
                    calibration_queries=None) -> list[str]:
@@ -282,15 +334,13 @@ class Index:
             raise ValueError("storage='uint8' needs every coordinate to be an integer from 0 to 255")
         self._storage = st
         lines = []
-        build_device = "gpu" if gpu and self._device != "cpu" else "cpu"
-        ivf = IVF(self._x, ivf_metric, nlist, "uint8" if st == "uint8" else "float", build_device)
+        build_device = self._build_device()
+        ivf = IVF(self._x, ivf_metric, nlist, "uint8" if st == "uint8" else "float", build_device, gpu=self._gpu)
         lines.append(f"approximate search: an IVF of {ivf.nlist:,} lists"
                      + (" (about 4 sqrt(n))" if not nlist or nlist == default_nlist(n) else "")
                      + f", built in {ivf.build_seconds:.1f} s (siann's k-means, 10 iterations)")
-        lines.append("lists stored as bytes (every coordinate an integer 0-255: lossless)" if st == "uint8" else
-                     "lists stored as float16 on the GPU (recall moves by at most about 0.001) and float32 on the CPU"
-                     if build_device == "gpu" else "lists stored as float32")
-        dev = "gpu" if build_device == "gpu" else "cpu"
+        lines.append(self._storage_line(st, build_device))
+        dev = "cpu" if build_device == "cpu" else "gpu"
         q, ids, k1, source = self._calibration_sample(calibration_queries)
         nprobe, reached, exact_seconds, ivf_seconds = self._calibrate(ivf, q, ids, k1, recall, dev)
         lines.append(f"calibrated: nprobe {nprobe} reaches recall@{CALIBRATION_K} {reached:.3f} (target {recall}) "
@@ -308,6 +358,19 @@ class Index:
         self._clustered = (len(self._x), float(sizes.max() / sizes.mean()))
         lines.append(self._route())
         return lines
+
+    def _build_device(self) -> str:
+        """Where building runs (k-means, list assignment): "gpu" (MLX), "torch" or "cpu"."""
+        if self._gpu is None or self._device == "cpu":
+            return "cpu"
+        return "torch" if self._gpu == "torch" else "gpu"
+
+    @staticmethod
+    def _storage_line(st: str, build_device: str) -> str:
+        if st == "uint8":
+            return "lists stored as bytes (every coordinate an integer 0-255: lossless)"
+        return ("lists stored as float16 on the GPU (recall moves by at most about 0.001) and float32 on the CPU"
+                if build_device != "cpu" else "lists stored as float32")
 
     def _calibration_sample(self, calibration_queries=None):
         """The calibration sample: up to 1,000 of the given queries, or of the index's own vectors (each one's
@@ -355,7 +418,7 @@ class Index:
     def _route(self) -> str:
         """Sets the IVF's routes, from the profile or measured on the calibration sample; returns the plan's line."""
         from ._ivf import ROUTE_BATCHES, describe_routes, measure_routes
-        on_gpu = _gpu_available() and self._device != "cpu"
+        on_gpu = self._gpu is not None and self._device != "cpu"
         if self._profile.ivf:
             self._routes = dict(self._profile.ivf)
             return f"routing from the profile: {describe_routes(self._routes, on_gpu)}"
@@ -365,7 +428,10 @@ class Index:
         rng = np.random.default_rng(1)
         extra = self._x[np.sort(rng.choice(n, size=max(0, want - len(q)), replace=False))]
         t = time.perf_counter()
-        self._routes, _ = measure_routes(self._ivf, np.concatenate([q, extra])[:want], self._nprobe, on_gpu)
+        # on PyTorch, two rounds, each path's best rate kept: its GPU was measured slow in the first round of some
+        # builds, and a transient slowdown can only understate a path
+        self._routes, _ = measure_routes(self._ivf, np.concatenate([q, extra])[:want], self._nprobe, on_gpu,
+                                         rounds=2 if self._gpu == "torch" else 1)
         return f"routing measured in {time.perf_counter() - t:.1f} s: {describe_routes(self._routes, on_gpu)}"
 
     def save(self, path) -> None:
@@ -399,7 +465,8 @@ class Index:
             np.savez(f, **arrays)
 
     @classmethod
-    def load(cls, path, *, device: str = "auto", profile=None, remeasure: bool | None = None) -> Index:
+    def load(cls, path, *, device: str = "auto", gpu: str = "auto", profile=None,
+             remeasure: bool | None = None) -> Index:
         """An index saved by ``index.save(path)``, returning the same neighbors on any machine: its lists,
         its calibrated nprobe (which depends only on the data) and its choice between the IVF and exact
         search are kept. Its routes and profile, which only decide where each search runs, depend on the
@@ -423,12 +490,14 @@ class Index:
         if meta["format_version"] > FORMAT_VERSION:
             raise ValueError(f"{path} was saved by siann {meta['siann']} in format {meta['format_version']}; "
                              f"this siann reads format {FORMAT_VERSION} and earlier: upgrade siann")
-        gpu = _gpu_available()
-        if device == "gpu" and not gpu:
+        resolved = _resolve_gpu(gpu)
+        if device == "gpu" and resolved is None:
             raise RuntimeError("device='gpu', but no GPU is available")
         same = meta["machine"] == _machine()
         redo = (not same) if remeasure is None else remeasure
         self = cls.__new__(cls)
+        self._gpu, self._gpu_arg = resolved, gpu
+        gpu = resolved is not None
         self.metric = meta["metric"]
         self._x = np.ascontiguousarray(data["x"], dtype=np.float32)
         self._kernel_metric = "ip" if self.metric == "cosine" else self.metric
@@ -455,7 +524,7 @@ class Index:
         if meta["kind"] == "ivf":
             built = lists_from_assign(data["centroids"], data["assign"])
             self._ivf = IVF(self._x, meta["ivf_metric"], len(built.centroids),
-                            "uint8" if self._storage == "uint8" else "float", "cpu", built=built)
+                            "uint8" if self._storage == "uint8" else "float", "cpu", built=built, gpu=self._gpu)
             self._cal_q = np.ascontiguousarray(data["calibration_queries"], dtype=np.float32)
             self._cal_ids = data.get("calibration_ids")
             if self._clustered[1] is None:             # format 1: the balance as loaded
@@ -544,7 +613,7 @@ class Index:
         dev = device or (path.split("-")[0] if path else self.route(len(q)))
         if dev not in ("gpu", "cpu"):
             raise ValueError(f"device must be 'gpu' or 'cpu', not {dev!r}")
-        if dev == "gpu" and not _gpu_available():
+        if dev == "gpu" and self._gpu is None:
             raise RuntimeError("device='gpu', but no GPU is available")
         if self.metric == "cosine":
             q = _normalized(q, "xq")
@@ -643,7 +712,7 @@ class Index:
                                  + (", ..." if len(taken) > 5 else ""))
         if len(a) == 0:
             return new
-        assign = self._ivf.nearest_lists(a, _gpu_available() and self._device != "cpu") if self._ivf is not None else None
+        assign = self._ivf.nearest_lists(a, self._build_device()) if self._ivf is not None else None
         self._buf_append(a, new, assign)
         self._next_id = max(self._next_id, int(new.max()) + 1)
         self._added += len(a)
@@ -736,7 +805,8 @@ class Index:
         if self._storage == "uint8" and default_storage(self._x) != "uint8":
             self._storage = "float32"                  # an added vector is not bytes: the lists become float
         storage = "uint8" if self._storage == "uint8" else "float"
-        dev = "gpu" if _gpu_available() and self._device != "cpu" else "cpu"
+        build_dev = self._build_device()
+        dev = "cpu" if build_dev == "cpu" else "gpu"
         built = lists_from_assign(self._ivf.built.centroids, assign.astype(np.int64))
         sizes = built.sizes()
         imbalance = float(sizes.max() / sizes.mean())
@@ -753,13 +823,13 @@ class Index:
         if reason:
             nlist = default_nlist(len(self._x))
             t = time.perf_counter()
-            built = build_lists(self._x, nlist, self._ivf.metric, device=dev)
+            built = build_lists(self._x, nlist, self._ivf.metric, device=build_dev)
             seconds = time.perf_counter() - t
             sizes = built.sizes()
             self._clustered = (len(self._x), float(sizes.max() / sizes.mean()))
             self._reclusters += 1
             self._last_recluster = f"{reason}: {nlist:,} lists in {seconds:.1f} s"
-        self._ivf = IVF(self._x, self._ivf.metric, built.nlist, storage, dev, built=built)
+        self._ivf = IVF(self._x, self._ivf.metric, built.nlist, storage, build_dev, built=built, gpu=self._gpu)
         if self._cal_ids is not None:                  # calibrated on its own vectors: a fresh sample of them
             self._cal_q, self._cal_ids, k1, _ = self._calibration_sample()
         else:
@@ -777,15 +847,14 @@ class Index:
                 return (f"calibrated: nprobe {self._nprobe} reaches recall@10 {reached:.3f} (target {self.recall}) "
                         f"on {line.split(' on ', 1)[1]}")
             if bytes_lost and line.startswith("lists stored as bytes"):
-                return ("lists stored as float16 on the GPU and float32 on the CPU" if dev == "gpu" else
-                        "lists stored as float32") + " (added vectors are not all bytes)"
+                return self._storage_line("float", build_dev) + " (added vectors are not all bytes)"
             if routing and line.startswith("routing "):
                 return routing
             return line
         self._build_reasons = tuple(now(r) for r in self._build_reasons)
 
     def _search_gpu(self, q: np.ndarray, k: int) -> np.ndarray:
-        return _exact_gpu(self._x, self._layouts, q, k, self._kernel_metric)
+        return _exact_gpu(self._x, self._layouts, q, k, self._kernel_metric, self._gpu or "mlx")
 
     def _search_cpu(self, q: np.ndarray, k: int) -> np.ndarray:
         return _exact_cpu(self._x, self._layouts, q, k, self._kernel_metric)

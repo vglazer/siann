@@ -36,8 +36,11 @@ class IVF:
     (cosine arrives as "l2" on unit vectors)."""
 
     def __init__(self, x: np.ndarray, metric: str, nlist: int, storage: str, device_for_build: str,
-                 built=None):
-        """Builds the lists, or takes them from ``built`` (a ``siann.ivf_build.Lists``, as when loading)."""
+                 built=None, gpu: str | None = "mlx"):
+        """Builds the lists, or takes them from ``built`` (a ``siann.ivf_build.Lists``, as when loading).
+        ``device_for_build`` is "gpu" (MLX), "torch" or "cpu"; ``gpu`` the GPU backend that searches ("mlx",
+        "torch")."""
+        self.gpu_backend = gpu or "mlx"
         from .ivf_build import build_lists
         self.x, self.metric, self.storage = x, metric, storage
         t = time.perf_counter()
@@ -51,6 +54,10 @@ class IVF:
         return self.built.nlist
 
     def gpu(self):
+        if self._gpu is None and self.gpu_backend == "torch":
+            from .ivf_torch import TorchIVF
+            lists = "uint8" if self.storage == "uint8" else "float16"      # as on MLX
+            self._gpu = TorchIVF(self.x, self.built.centroids, self.metric, built=self.built, lists=lists)
         if self._gpu is None:
             from .ivf_gpu import GpuIVF
             lists = "uint8" if self.storage == "uint8" else "float16"      # float16 for GPU batches
@@ -68,14 +75,14 @@ class IVF:
                 self._cpu = IvfIndex(self.x, self.built.centroids, d, self.metric, lists=self.built.assign)
         return self._cpu
 
-    def nearest_lists(self, x: np.ndarray, gpu: bool) -> np.ndarray:
+    def nearest_lists(self, x: np.ndarray, device: str) -> np.ndarray:
         """Each vector's list: its nearest centroid by the metric the lists were assigned by. Below
         FEW_ON_CPU vectors, or without a GPU, siann's Rust exact kernel on the centroids (kept), faster for a
         few than a GPU call; otherwise the GPU's exact kernels."""
         from .ivf_build import assign_metric, nearest
         metric = assign_metric(self.metric)
-        if gpu and len(x) >= FEW_ON_CPU:
-            return nearest(x, self.built.centroids, metric, "gpu")
+        if device != "cpu" and len(x) >= FEW_ON_CPU:
+            return nearest(x, self.built.centroids, metric, device)
         if self._centroid_flat is None:
             from ._cpu import FlatIndex
             c = self.centroids()
@@ -178,7 +185,8 @@ def crossover_with_margin(a: dict[int, float], b: dict[int, float], default: int
     return max(batches[i - 1] + 1, min(upper, default))
 
 
-def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CALIBRATION_K) -> tuple[dict, dict]:
+def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CALIBRATION_K,
+                   rounds: int = 1) -> tuple[dict, dict]:
     """Where this IVF's searches should run, measured: each path timed by itself (the median call after a
     warm-up) at batch sizes doubling from 1 to 4,096 queries of ``q``. The CPU is no
     longer timed once the GPU has beaten it at two sizes in a row, or once one of its calls takes 0.3 s.
@@ -213,19 +221,21 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
             for path in ("gpu-query", "gpu-list"):
                 ivf.search(q[:b], k, nprobe, path)
     rates = {}
-    cpu_on, gpu_wins = True, 0
     blas = ("cpu-query-blas",) if ivf.metric in ("l2", "ip") else ()
-    for b in batches:
-        paths = (("cpu-split",) if b == 1 else ("cpu-query",) + blas + ("cpu-list",)) if cpu_on else ()
-        # the GPU's paths first: after the CPU's, a GPU left idle runs its next calls slower
-        measured, slowest = time_paths(b, (("gpu-query", "gpu-list") if gpu else ()) + paths)
-        rates.update({(path, b): r for path, r in measured.items()})
-        if cpu_on:
-            if gpu:
-                cpu_best = max(measured[p] for p in paths)
-                gpu_best = max(measured["gpu-query"], measured["gpu-list"])
-                gpu_wins = gpu_wins + 1 if gpu_best > cpu_best else 0
-            cpu_on = gpu_wins < 2 and max(slowest[p] for p in paths) < CPU_GIVE_UP
+    for _ in range(rounds):
+        cpu_on, gpu_wins = True, 0
+        for b in batches:
+            paths = (("cpu-split",) if b == 1 else ("cpu-query",) + blas + ("cpu-list",)) if cpu_on else ()
+            # the GPU's paths first: after the CPU's, a GPU left idle runs its next calls slower
+            measured, slowest = time_paths(b, (("gpu-query", "gpu-list") if gpu else ()) + paths)
+            for path, r in measured.items():                      # over rounds, each path's best rate
+                rates[(path, b)] = max(r, rates.get((path, b), 0.0))
+            if cpu_on:
+                if gpu:
+                    cpu_best = max(measured[p] for p in paths)
+                    gpu_best = max(measured["gpu-query"], measured["gpu-list"])
+                    gpu_wins = gpu_wins + 1 if gpu_best > cpu_best else 0
+                cpu_on = gpu_wins < 2 and max(slowest[p] for p in paths) < CPU_GIVE_UP
     cpu_batches = sorted({b for (p, b) in rates if p.startswith("cpu")})
     many = [b for b in cpu_batches if b > 1]
     cq = {b: rates[("cpu-query", b)] for b in many}

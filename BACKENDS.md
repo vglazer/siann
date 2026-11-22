@@ -53,15 +53,21 @@ costs](BENCHMARKS.md#what-a-new-batch-size-costs)).
 
 PyTorch's Metal backend, called MPS after Apple's Metal Performance Shaders.
 `torch.mps.compile_shader` (in PyTorch 2.15) compiles Metal source into callable kernels, so siann's
-kernels port with the Metal code unchanged (`siann.torch_kernels`, `siann.ivf_torch`).
+kernels run on it with the Metal code unchanged (`siann.torch_kernels`, `siann.ivf_torch`).
+`siann.Index(..., gpu="torch")` uses it for every GPU step, building included, without importing MLX
+(`pip install siann[torch]`); `gpu="auto"` takes MLX where it finds a GPU, and PyTorch otherwise.
 
 - **The same kernel runs at the same speed as in MLX:** L1 0.082 against 0.081 s; the top-k kernel 3.8
   against 4.2 ms per tile. A custom kernel's speed belongs to the kernel, not the framework.
-- **The GPU IVF too** returns the same neighbors as MLX's and runs level with it on batches of 10,000.
+- **The GPU IVF too** returns the same neighbors as MLX's, from the same float32, float16 or byte lists,
+  and runs level with it on batches of 10,000 ([PyTorch against MLX](BENCHMARKS.md#pytorch-against-mlx)).
   PyTorch's fixed cost of about 0.2 ms per call makes it 0.84-0.97 times MLX's speed on batches of 100
   and 0.50-0.88 times on single queries.
 - **The matrix multiply is about half MLX's speed,** and is the whole L2 gap (0.10 against 0.046 s).
   `torch.addmm` still helps: 18.1 against 31.4 ms per tile written out.
+- **Its GPU can run slow for a while after other GPU work:** routing measured on a just-built index found
+  it slower than it runs in some builds, so siann measures PyTorch's routes twice and keeps each path's
+  best rate.
 - **`torch.cdist(p=1)` builds the whole broadcast** (queries x vectors x dimensions) and fails beyond
   2^31 elements ("tensors requiring 64-bit indexing are not supported"); siann's harness passes it 16
   queries at a time.

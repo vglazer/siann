@@ -71,6 +71,7 @@ approx = siann.Index(xb, metric="cosine", recall=0.95)   # approximate: an IVF, 
 approx.search(xq, k=10)
 approx = siann.Index(xb, metric="cosine", recall=0.95, calibration_queries=xq[:1000])  # optional: on your queries
 approx.save("approx.siann")                  # and siann.Index.load("approx.siann"), on any machine
+on_torch = siann.Index(xb, metric="cosine", gpu="torch")  # PyTorch's MPS backend instead of MLX (siann[torch])
 
 ids = approx.add(xq)                         # add vectors: returns their ids, which searches return
 approx.add(xq[:2], ids=[10**9, 10**9 + 1])   # or name them yourself
