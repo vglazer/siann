@@ -509,8 +509,8 @@ flowchart TB
 | `python/siann/ivf_gpu.py` | The GPU IVF: query-major and list-major scans, float16 and uint8 lists |
 | `python/siann/blas_l2.py` | Exact L2 and inner product on the CPU through NumPy's BLAS and `L2TopK`, with the default tile sizes |
 | `python/siann/torch_kernels.py`, `ivf_torch.py` | The same kernels on PyTorch MPS |
-| `crates/siann-py/src/engine/` | The CPU search in plain Rust, over slices, without PyO3: the metrics (`metric.rs`), list storage (`elem.rs`), the blocked layout, distance loops and top-k (`kernels.rs`), exact search (`flat.rs`), the IVF (`ivf.rs`), ranking BLAS products (`products.rs`), and scoring, ranking, merging and bookkeeping (`ops.rs`); tested by `cargo test` (`tests.rs`) |
-| `crates/siann-py/src/lib.rs` | The Python bindings, `siann._cpu`: `FlatIndex`, `IvfIndex`, `L2TopK` and the functions, over the engine |
+| `crates/siann/` | The engine, a Rust crate with no Python types: the metrics (`metric.rs`), list storage (`elem.rs`), the blocked layout, distance loops and top-k (`kernels.rs`), exact search (`flat.rs`), the IVF (`ivf.rs`), ranking BLAS products (`products.rs`), and scoring, ranking, merging and bookkeeping (`ops.rs`); tested by `cargo test` (`tests.rs`) |
+| `crates/siann-py/` | The Python bindings, `siann._cpu`: `FlatIndex`, `IvfIndex`, `L2TopK` and the functions, over the engine |
 | `benchmarks/check_kernels.py` | Every kernel and index against NumPy's exact search |
 | `benchmarks/` | The benchmarks against FAISS and mlxvs, their raw output in `results/` |
 

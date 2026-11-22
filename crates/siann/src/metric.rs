@@ -144,20 +144,20 @@ impl Kind {
 macro_rules! with_metric {
     ($kind:expr, $m:ident => $body:expr) => {
         match $kind {
-            $crate::engine::metric::Kind::L1 => {
-                type $m = $crate::engine::metric::L1;
+            $crate::metric::Kind::L1 => {
+                type $m = $crate::metric::L1;
                 $body
             }
-            $crate::engine::metric::Kind::L2 => {
-                type $m = $crate::engine::metric::L2;
+            $crate::metric::Kind::L2 => {
+                type $m = $crate::metric::L2;
                 $body
             }
-            $crate::engine::metric::Kind::Linf => {
-                type $m = $crate::engine::metric::Linf;
+            $crate::metric::Kind::Linf => {
+                type $m = $crate::metric::Linf;
                 $body
             }
-            $crate::engine::metric::Kind::Ip => {
-                type $m = $crate::engine::metric::Ip;
+            $crate::metric::Kind::Ip => {
+                type $m = $crate::metric::Ip;
                 $body
             }
         }

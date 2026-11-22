@@ -2,24 +2,23 @@
 //! product, the top-k that ranks BLAS products for L2 and inner product, and the scores of returned
 //! neighbors. Built into the siann Python package as `siann._cpu`.
 //!
-//! The search itself is in `engine`, plain Rust over slices; this file binds it to Python with PyO3:
+//! The search itself is in the `siann` crate (`crates/siann`), plain Rust over slices; this crate binds it
+//! to Python with PyO3:
 //! it reads NumPy arrays (in place where it can), releases the GIL while the engine runs, and raises the
 //! engine's errors as `ValueError`.
-
-mod engine;
 
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use engine::Mat;
-use engine::elem::widen_half;
-use engine::flat::Flat;
-use engine::ivf::{Ivf, Options, Stored};
-use engine::metric::Kind;
-use engine::ops::{self, Buffer, Changes};
-use engine::products::ListProducts;
+use siann::Mat;
+use siann::elem::widen_half;
+use siann::flat::Flat;
+use siann::ivf::{Ivf, Options, Stored};
+use siann::metric::Kind;
+use siann::ops::{self, Buffer, Changes};
+use siann::products::ListProducts;
 
 /// The engine's error, as Python's `ValueError`.
 fn value_error(e: String) -> PyErr {
@@ -240,14 +239,14 @@ impl IvfIndex {
 /// ranks by |x|^2 - 2 q.x (|q|^2 is the same for all of a query's candidates). Reads NumPy's arrays in
 /// place, without copying; the queries' rows are split over threads.
 #[pyclass]
-struct L2TopK(engine::products::L2TopK);
+struct L2TopK(siann::products::L2TopK);
 
 #[pymethods]
 impl L2TopK {
     #[new]
     fn py_new(nq: usize, k: usize) -> PyResult<Self> {
         Ok(L2TopK(
-            engine::products::L2TopK::new(nq, k).map_err(value_error)?,
+            siann::products::L2TopK::new(nq, k).map_err(value_error)?,
         ))
     }
 

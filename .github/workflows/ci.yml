@@ -33,9 +33,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-    defaults:
-      run:
-        working-directory: crates/siann-py
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -43,15 +40,20 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/siann-py
+          workspaces: |
+            crates/siann
+            crates/siann-py
       - name: Format
-        run: cargo fmt --check
+        run: |
+          cargo fmt --check --manifest-path crates/siann/Cargo.toml
+          cargo fmt --check --manifest-path crates/siann-py/Cargo.toml
       - name: Clippy
-        run: cargo clippy --release --all-targets -- -D warnings
+        run: |
+          cargo clippy --release --all-targets --manifest-path crates/siann/Cargo.toml -- -D warnings
+          cargo clippy --release --all-targets --manifest-path crates/siann-py/Cargo.toml -- -D warnings
       - name: Tests
-        # the engine against brute force; on Windows the test program would need Python's library at start-up
-        if: runner.os != 'Windows'
-        run: cargo test --release
+        # the engine against brute force: no Python involved, so on every platform
+        run: cargo test --release --manifest-path crates/siann/Cargo.toml
 
   python:
     name: Python (${{ matrix.os }})
@@ -67,7 +69,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/siann-py
+          workspaces: |
+            crates/siann
+            crates/siann-py
       - uses: astral-sh/setup-uv@v10.3.3
       - name: Build the package
         run: uv sync --group dev

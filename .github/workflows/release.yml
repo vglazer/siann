@@ -15,7 +15,8 @@ name: Release
 #
 # One-time setup: this repository is a trusted publisher on pypi.org (environment pypi) and must be one on
 # test.pypi.org too (owner vglazer, repository siann, workflow release.yml, environment testpypi).
-# The siann crate on crates.io is a name placeholder: the Rust code ships inside the wheels.
+# The siann crate on crates.io is a name placeholder: the Rust code (crates/siann, the engine, and
+# crates/siann-py, its Python bindings) ships inside the wheels.
 
 on:
   release:

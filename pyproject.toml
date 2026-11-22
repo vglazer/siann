@@ -43,7 +43,8 @@ features = ["pyo3/extension-module"]
 
 [tool.uv]
 # rebuild the Rust extension when its sources change
-cache-keys = [{ file = "pyproject.toml" }, { file = "crates/siann-py/Cargo.toml" }, { file = "crates/siann-py/src/**/*.rs" }]
+cache-keys = [{ file = "pyproject.toml" }, { file = "crates/siann-py/Cargo.toml" }, { file = "crates/siann-py/src/**/*.rs" },
+              { file = "crates/siann/Cargo.toml" }, { file = "crates/siann/src/**/*.rs" }]
 
 [tool.ruff.lint]
 # Ruff's defaults, plus sorted imports

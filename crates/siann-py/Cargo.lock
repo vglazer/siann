@@ -248,12 +248,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
+name = "siann"
+version = "0.2.0"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
 name = "siann-py"
 version = "0.2.0"
 dependencies = [
  "numpy",
  "pyo3",
  "rayon",
+ "siann",
 ]
 
 [[package]]
