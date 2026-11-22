@@ -115,6 +115,29 @@ Every choice can be overridden: `kind="exact"` or `"ivf"`, `nlist=`, `storage=`,
 `"gpu"` (for the index or for one search), `search(..., nprobe=)` for one search, and a profile with
 thresholds of its own for both exact and approximate routing ([TUNING](TUNING.md)).
 
+### Memory
+
+On Apple silicon the GPU's memory is the machine's, so a GPU search that outgrows it does not fail: the
+system swaps or stalls. siann keeps each GPU call's working memory within a budget, 4 GB, or a quarter of
+the GPU's recommended working set (what Metal says it can use without paging) on a machine where that is
+smaller:
+
+- **A large batch is searched in equal chunks.** The IVF's working memory grows with the batch: each
+  query's distances to every centroid, and in the list-major scan 16 lanes of k candidates per probed list.
+  The chunk is the budget over that, 25,600 queries on SIFT1M at nprobe 46. Exact search works on 256
+  queries at a time, fewer once a tile's distances to every base vector would exceed the budget (from
+  about 2.8 million vectors).
+- **Splitting never changes results,** as each query's depends on it alone, so the budget may depend on
+  the machine and the neighbors still do not.
+- **MLX's cache of freed buffers is capped** at twice the budget (by default it may hold as much as the
+  working set), unless the program has set a lower cap itself.
+- **An index whose GPU copy would take more than half the working set stays on the CPU,** at the build, at
+  a load, or at the merge that grows it past that; `device="gpu"` is then refused with the reason, and
+  `index.plan` says so.
+
+What the index holds grows with it, not with the batch: the vectors, each device's copy, and during a
+merge, copies of the vectors as the lists are rebuilt (BENCHMARKS, [Memory](BENCHMARKS.md#memory)).
+
 ### Saving and loading
 
 `index.save(path)` writes one NumPy `.npz` file, read back with pickling disabled: the base vectors (as

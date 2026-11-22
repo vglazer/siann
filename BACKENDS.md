@@ -47,7 +47,12 @@ costs](BENCHMARKS.md#what-a-new-batch-size-costs)).
   Left full of one computation's buffers, it slows the next one, whose buffers are of other sizes: siann's
   GPU IVF ran slower after a built-in IVF had filled it, until `mx.clear_cache()`. A computation whose
   buffer sizes change on every call (gathers padded to each batch's longest row) defeats the cache, and
-  rounding the sizes up to a few fixed ones restores it (`builtin_ivf.py` does both).
+  rounding the sizes up to a few fixed ones restores it (`builtin_ivf.py` does both). By default the
+  cache may hold as much as the GPU's working set, so siann caps it at twice its memory budget, unless the
+  program has set a lower cap ([IMPLEMENTATION](IMPLEMENTATION.md#memory)).
+- **A kernel's output past 2^31 elements overflows** (an `OverflowError` that terminates the process): the
+  list-major scan's candidates for 100,000 GloVe queries at nprobe 364 come to 5.8 billion. siann's chunks
+  keep each call far below it.
 
 ## PyTorch (MPS)
 

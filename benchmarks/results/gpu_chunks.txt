@@ -1,0 +1,9 @@
+
+sift, l2: 1,000,000 vectors, 4,000 lists, nprobe 46; queries per chunk by budget: 4,096 MB: 25,600
+  path         batch     one call: q/s, MB     4,096 MB: q/s, MB  identical
+  gpu-query    1,000      198,108       92      210,506       92  True
+  gpu-query   10,000      242,604      924      242,862      924  True
+  gpu-query  100,000      237,959    9,239      263,287    2,310  True
+  gpu-list     1,000      177,292      157      171,887       93  True
+  gpu-list    10,000      252,837    1,569      251,065    1,569  True
+  gpu-list   100,000      166,861   15,663      249,855    3,923  True

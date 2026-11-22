@@ -474,6 +474,16 @@ else:
     print(next(line for line in str(on_torch.plan).splitlines() if "GPU backend" in line))
 """),
     md("""
+## Memory
+
+On Apple silicon the GPU's memory is the machine's. siann splits each GPU search so that a call works within
+a budget (4 GB, or a quarter of what the GPU can use on smaller machines), which never changes its results,
+and keeps an index too large for the GPU on the CPU. The plan says which:
+"""),
+    code("""
+print(next(line for line in str(index.plan).splitlines() if line.lstrip().startswith(("memory:", "GPU found, but", "no GPU"))))
+"""),
+    md("""
 ## When fewer than k exist
 
 Asking for more neighbors than there are vectors returns all of them, then `-1` in the missing slots, with

@@ -17,6 +17,9 @@ CALIBRATION_K = 10
 # "The coarse step"). For L1 and L-infinity each query finds its lists in Rust.
 FEW_ON_CPU = 32          # adding fewer vectors finds their lists on the CPU: faster than a GPU call for a few
 BLAS_CHUNK = 2048        # queries per matrix multiply: products of at most 2,048 x nlist floats
+# A GPU search's working memory grows with its batch: the coarse step's distances to every centroid, and the
+# list-major scan's candidates, 16 lanes of k per probed list. So a batch is searched in equal chunks sized to
+# keep that within siann._memory's budget per call; each query's result depends on it alone.
 
 
 def default_nlist(n: int) -> int:
@@ -59,7 +62,9 @@ class IVF:
             lists = "uint8" if self.storage == "uint8" else "float16"      # as on MLX
             self._gpu = TorchIVF(self.x, self.built.centroids, self.metric, built=self.built, lists=lists)
         if self._gpu is None:
+            from ._memory import cap_mlx_cache
             from .ivf_gpu import GpuIVF
+            cap_mlx_cache()
             lists = "uint8" if self.storage == "uint8" else "float16"      # float16 for GPU batches
             self._gpu = GpuIVF(self.x, self.nlist, self.metric, lists, built=self.built)
         return self._gpu
@@ -103,10 +108,15 @@ class IVF:
         find each query's lists ("auto": as the path says; the list-major scan through BLAS).
         All return the same neighbors."""
         nprobe = min(nprobe, self.nlist)
-        if path == "gpu-query":
-            return np.asarray(self.gpu().search(q, k, nprobe), dtype=np.int64)
-        if path == "gpu-list":
-            return np.asarray(self.gpu().search_list_major(q, k, nprobe), dtype=np.int64)
+        if path in ("gpu-query", "gpu-list"):
+            scan = self.gpu().search if path == "gpu-query" else self.gpu().search_list_major
+            from ._memory import budget
+            chunks = -(-len(q) // gpu_chunk(k, nprobe, self.nlist, budget(self.gpu_backend)))
+            if chunks == 1:
+                return np.asarray(scan(q, k, nprobe), dtype=np.int64)
+            step = -(-len(q) // chunks)                                 # equal chunks: none left small
+            return np.concatenate([np.asarray(scan(q[s:s + step], k, nprobe), dtype=np.int64)
+                                   for s in range(0, len(q), step)])
         index = self.cpu()
         blas = path != "cpu-split" and self.metric in ("l2", "ip") and (
             coarse == "blas" or (coarse == "auto" and path in ("cpu-query-blas", "cpu-list")))
@@ -124,6 +134,15 @@ class IVF:
         out = np.asarray(flat, dtype=np.int64).reshape(len(q), k)
         out[out >= len(self.x)] = -1                                     # the Rust IVF's "none found"
         return out
+
+
+def gpu_chunk(k: int, nprobe: int, nlist: int, budget: int) -> int:
+    """Queries per GPU call: ``budget`` bytes over a query's working memory, its distances to the centroids (with the
+    probe selection's copies) and its candidates in the list-major scan (a value and an index, 16 lanes of k
+    per probed list, held twice as they are selected), in multiples of 1,024: on SIFT1M (4,000 lists, nprobe
+    46), within 10% of the memory MLX reports (`memory.py`)."""
+    per_query = 12 * nlist + 16 * 16 * k * nprobe
+    return max(1024, budget // per_query // 1024 * 1024)
 
 
 def recall_of(found: np.ndarray, truth_scores_kth: np.ndarray, found_scores: np.ndarray, larger_better: bool) -> float:

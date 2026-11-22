@@ -104,6 +104,9 @@ TestPyPI, with the version `VERSION.devN`, N the run number, since an index acce
 
 - **Write each kernel once,** in `siann._metal`: MLX and PyTorch compile the same text, so the two GPU
   backends cannot drift apart.
+- **Keep a GPU call's working memory within `siann._memory`'s budget,** splitting the batch where it grows
+  with it, and check the split returns exactly what one call does. On Apple silicon a GPU allocation past
+  the machine's memory swaps or stalls the system instead of failing (`memory.py` measures each path).
 - **Pass sizes such as the batch size at run time, not as compile-time constants.** Compiled in, every
   new batch size recompiles the kernel, 26-74 ms on top of a 1-4 ms search. Compile in only what sizes an
   array in registers or threadgroup memory (k, threads per query) or a loop worth unrolling (the

@@ -153,15 +153,28 @@ def _exact_gpu(x: np.ndarray, layouts: dict, q: np.ndarray, k: int, metric: str,
             xt = torch.from_numpy(x).to("mps")
             layouts["gpu"] = (xt, (xt * xt).sum(1) if metric == "l2" else None)
         xt, norms = layouts["gpu"]
-        return torch_knn(xt, norms, q, k, metric)
+        return torch_knn(xt, norms, q, k, metric, tile=_exact_tile(len(x), backend))
     import mlx.core as mx
 
+    from ._memory import cap_mlx_cache
     from .exact import mlx_knn
     if "gpu" not in layouts:
+        cap_mlx_cache()
         a = mx.array(x)
         mx.eval(a)
         layouts["gpu"] = a
-    return np.asarray(mlx_knn(layouts["gpu"], q, k, metric), dtype=np.int64)
+    return np.asarray(mlx_knn(layouts["gpu"], q, k, metric, tile=_exact_tile(len(x), backend)), dtype=np.int64)
+
+
+EXACT_TILE = 256          # queries per exact GPU call, fewer for large collections
+EXACT_BYTES = 6           # its working memory per query and base vector: 6 bytes for L2 on SIFT1M, 4 for L1
+
+
+def _exact_tile(n: int, backend: str) -> int:
+    """Queries per exact GPU call: EXACT_TILE, or fewer where a tile's distances to all n vectors would
+    exceed the memory budget (above about 2.8 million vectors on a machine with a 4 GB budget)."""
+    from ._memory import budget
+    return int(max(1, min(EXACT_TILE, budget(backend) // (EXACT_BYTES * max(n, 1)))))
 
 
 def _exact_cpu(x: np.ndarray, layouts: dict, q: np.ndarray, k: int, metric: str) -> np.ndarray:
@@ -237,6 +250,11 @@ class Index:
             raise RuntimeError("device='gpu', but no GPU is available")
         self.metric = metric
         self._x = _normalized(x, "xb") if metric == "cosine" else x
+        self._too_big = self._gpu_too_big()
+        if self._too_big and device == "gpu":
+            raise RuntimeError(f"device='gpu', but {self._too_big}")
+        if self._too_big:
+            gpu = False
         # cosine ranks as inner product on unit vectors
         self._kernel_metric = "ip" if metric == "cosine" else metric
         from ._profile import Profile, current_profile
@@ -282,6 +300,18 @@ class Index:
         self._added = self._removed = self._merges = self._reclusters = 0
         self._last_merge = self._last_recluster = None
         self._clustered = (clustered_n, clustered_imbalance)
+
+    def _gpu_too_big(self) -> str | None:
+        """Why the index cannot go on the GPU, where its copy there (float32, as exact search holds it) would
+        exceed half the GPU's recommended working set; None where it fits or there is no GPU."""
+        if self._gpu is None:
+            return None
+        from ._memory import fits, gb, working_set
+        nbytes = self._x.nbytes
+        if fits(nbytes, self._gpu):
+            return None
+        return (f"the index is too large for the GPU: its copy there would take {gb(nbytes)}, more than half the "
+                f"{gb(working_set(self._gpu))} the GPU can use")
 
     def _checked_queries(self, queries) -> np.ndarray:
         cq = _as_matrix(queries, "calibration_queries")
@@ -342,7 +372,9 @@ class Index:
     def _finish_plan(self, reasons: list[str], device: str, gpu: bool) -> None:
         """The plan: the build's reasons, then the device's."""
         metric = self.metric
-        if device != "auto":
+        if self._too_big:
+            reasons.append(f"GPU found, but {self._too_big}: every search on the CPU")
+        elif device != "auto":
             reasons.append(f"device={device!r} given")
         elif gpu and self._ivf is not None:
             reasons.append("GPU found: approximate searches routed as above")
@@ -358,6 +390,12 @@ class Index:
         if self._gpu is not None:
             reasons.append(f"GPU backend: {GPU_NAMES[self._gpu]}"
                            + (f" (gpu={self._gpu_arg!r} given)" if self._gpu_arg != "auto" else ""))
+        if self._gpu is not None and not self._too_big and self._device != "cpu":
+            from ._memory import budget, gb, working_set
+            ws = working_set(self._gpu)
+            reasons.append(f"memory: {gb(self._x.nbytes)} of vectors, copied to the GPU when a search first needs "
+                           f"them; each GPU call works within {gb(budget(self._gpu))}"
+                           + (f" (the GPU can use {gb(ws)})" if ws else ""))
         if metric == "cosine":
             reasons.append("cosine: vectors normalized to unit length and ranked by inner product")
         from . import _build
@@ -573,6 +611,11 @@ class Index:
         gpu = resolved is not None
         self.metric = meta["metric"]
         self._x = np.ascontiguousarray(data["x"], dtype=np.float32)
+        self._too_big = self._gpu_too_big()
+        if self._too_big and device == "gpu":
+            raise RuntimeError(f"device='gpu', but {self._too_big}")
+        if self._too_big:
+            gpu = False
         self._kernel_metric = "ip" if self.metric == "cosine" else self.metric
         self._profile = profile if profile is not None else (current_profile() if redo else
                                                              Profile.from_dict(meta["profile"]))
@@ -699,6 +742,8 @@ class Index:
             raise ValueError(f"device must be 'gpu' or 'cpu', not {dev!r}")
         if dev == "gpu" and self._gpu is None:
             raise RuntimeError("device='gpu', but no GPU is available")
+        if dev == "gpu" and self._too_big:
+            raise RuntimeError(f"device='gpu', but {self._too_big}")
         if self.metric == "cosine":
             q = _normalized(q, "xq")
         kk = min(int(k), self.n)
@@ -879,6 +924,10 @@ class Index:
         self._buf, self._buf_store, self._dead, self._ndead = None, None, None, 0
         self._layouts, self._buf_layouts = {}, {}
         self._merges += 1
+        if not self._too_big:
+            self._too_big = self._gpu_too_big()
+            if self._too_big:                          # grown past what the GPU can hold: on the CPU from now
+                self._device = "cpu"
         if self._ivf is not None and len(self._x) == 0:
             self._to_empty()
         if self._ivf is None:

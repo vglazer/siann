@@ -726,6 +726,49 @@ The grown index chose an IVF at its first merge, at 10,000 vectors, and re-clust
 20,000, 40,000, 80,000 and 160,000 (1.0-1.6 s each); the other merges took 0.06-0.19 s. Adding all 200,000
 took 7.8 s, against 1.6 s for building from scratch, for the same recall and speed.
 
+## Memory
+
+*Reproduce with `memory.py` and `gpu_chunks.py`; `memory_sift.txt`, `gpu_chunks.txt`,
+`gpu_chunks_budgets.txt`.*
+
+**Peak memory of one search** (`memory.py`), by batch size, on SIFT1M's million vectors (488 MB as
+float32), each case in a fresh process after a warm-up search: on the GPU, MLX's own peak allocation during
+the search, in MB (MLX's buffers do not show in the process's resident memory); on the CPU, the peak of the
+resident memory above what it was before the search:
+
+| Path | Batch 1 | 100 | 1,000 | 10,000 | 100,000 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Exact L2, GPU | 496 | 887 | 1,504 | 1,504 | 1,504 |
+| Exact L1, GPU | 4 | 395 | 1,012 | 1,012 | 1,012 |
+| IVF (recall 0.95), GPU | 0 | 9 | 92 | 1,569 | 3,923 |
+| Exact L2, CPU | 4 | 26 | 22 | 36 | |
+| Exact L1, CPU | 0 | 0 | 1 | 9 | |
+| IVF, CPU | 0 | 0 | 1 | 8 | 90 |
+
+Every path levels off as the batch grows, the GPU's IVF at the 4 GB budget per call. In one call, the IVF on
+the GPU would take 15.7 GB at 100,000 queries, growing with the batch (a million queries would want about
+157 GB), and on GloVe, at nprobe 364, 100,000 queries in one call overflow a 32-bit size inside MLX. After
+the searches, MLX's cache held up to 4.4 GB, under its cap of 8 GB. A merge of 10,000 added vectors into the
+million-vector IVF takes 1.4 GB more on the CPU path, and 2.1 GB plus 1.9 GB inside MLX on the GPU path:
+copies of the vectors as the lists are rebuilt, which grow with the index.
+
+**Chunks against one call** (`gpu_chunks.py`): the IVF on SIFT1M (nprobe 46), queries per second and MLX's
+peak MB, the neighbors identical in every case:
+
+| Scan, batch | One call | Chunks within 4 GB |
+| --- | ---: | ---: |
+| Query-major, 1,000 | 198,108, 92 | 210,506, 92 |
+| Query-major, 10,000 | 242,604, 924 | 242,862, 924 |
+| Query-major, 100,000 | 237,959, 9,239 | 263,287, 2,310 |
+| List-major, 1,000 | 177,292, 157 | 171,887, 93 |
+| List-major, 10,000 | 252,837, 1,569 | 251,065, 1,569 |
+| List-major, 100,000 | 166,861, 15,663 | 249,855, 3,923 |
+
+Chunks within 4 GB run level with one call, and faster where one call's memory grows large. Smaller budgets
+cost speed in the list-major scan on large batches: 6% at 2 GB and 10% at 1 GB at 100,000 queries
+(`gpu_chunks_budgets.txt`), hence 4 GB. GloVe's GPU timings varied by 20% or more between runs on this
+machine, so they do not separate the budgets; its chunked results were identical too.
+
 ## Against mlxvs on the GPU
 
 *Reproduce with `mlxvs_compare.py --dataset sift|glove|music100`.*

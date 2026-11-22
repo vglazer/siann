@@ -39,6 +39,8 @@ The README's "Which to use" table and BENCHMARKS.md's main sections.
 | `index_routing_ab.py` | Routing measured per index against fixed thresholds, on the same index | Routing approximate search |
 | `drift.py` | An IVF trained on part of a collection with the rest inserted into its lists, against one re-clustered on the same contents: recall, list balance, speed, and the cost of inserting | Changing an index |
 | `add_remove.py` | What adding and removing vectors costs: searches with a buffer and with masked rows, merges and compaction | Changing an index |
+| `memory.py` | Peak memory of one search by path, batch size and index size, and of a merge | Memory |
+| `gpu_chunks.py` | GPU searches split into chunks within a memory budget against one call: speed, memory, identical neighbors | Memory |
 | `grow.py` | An index grown from empty by `add()`, against one built from scratch on the same vectors: recall, speed, the cost of adding | Changing an index |
 | `kmeans_check.py` | siann's k-means against FAISS's, as the IVF's centroids | The IVF's k-means |
 | `ip_lists.py` | Inner-product lists assigned by L2 rather than by inner product | Inner product |

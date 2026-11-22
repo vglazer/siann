@@ -1,0 +1,18 @@
+
+sift, l2: 1,000,000 vectors, 4,000 lists, nprobe 46; queries per chunk by budget: 1,024 MB: 6,144, 2,048 MB: 12,288, 4,096 MB: 25,600
+  path         batch     one call: q/s, MB     1,024 MB: q/s, MB     2,048 MB: q/s, MB     4,096 MB: q/s, MB  identical
+  gpu-query    1,000      218,162       92      214,915       92      215,983       92      215,513       92  True
+  gpu-query   10,000      242,072      924      238,487      446      242,066      924      240,987      923  True
+  gpu-query  100,000      264,421    9,239      258,728      544      261,648    1,027      264,470    2,310  True
+  gpu-list     1,000      176,016      157      176,143      157      175,739      157      177,460      157  True
+  gpu-list    10,000      250,773    1,569      239,171      785      250,822    1,569      253,356    1,569  True
+  gpu-list   100,000      255,489   15,691      230,440      923      239,758    1,744      251,302    3,923  True
+
+glove, cosine: 1,183,514 vectors, 4,352 lists, nprobe 364; queries per chunk by budget: 1,024 MB: 1,024, 2,048 MB: 2,048, 4,096 MB: 4,096
+  path         batch     one call: q/s, MB     1,024 MB: q/s, MB     2,048 MB: q/s, MB     4,096 MB: q/s, MB  identical
+  gpu-query    1,000       22,795      102       22,715      102       22,724      101       22,642      101  True
+  gpu-query   10,000       23,737    1,015       22,607      102       23,209      203       23,383      339  True
+  gpu-query  100,000       22,287   10,156       21,099      104       19,872      207       17,082      406  True
+  gpu-list     1,000       29,186      561       33,333      561       36,384      561       36,025      338  True
+  gpu-list    10,000       37,639    5,603       35,800      561       35,075    1,121       38,044    1,868  True
+  gpu-list   100,000             overflows       33,147      572       32,783    1,144       31,874    2,241  True
