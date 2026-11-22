@@ -20,6 +20,7 @@ the same sample of queries calibrates the index and times its routes.
 | Exact search or an IVF | the same sample, both timed | pass `calibration_queries=`; `kind="exact"` or `"ivf"` to choose |
 | Approximate search: CPU or GPU, which scan | the same sample, at 1 to 4,096 queries per batch | pass `calibration_queries=`; a profile's `ivf` thresholds to fix them |
 | Exact search: CPU or GPU | siann's default profile, from an Apple M3 Max and about a million vectors | `siann.tune(xb)` on your data and machine |
+| When an index that changes re-clusters | its lists' balance and size at each merge of added vectors | `index.recluster()`, when you choose |
 
 Everything here is optional: `siann.Index(xb, metric)` and `siann.Index(xb, metric, recall=0.95)` need
 nothing more. `index.plan` reports each choice, and what it was measured on.

@@ -128,6 +128,40 @@ lists and nprobe, and its choice between the IVF and exact search, are kept, so 
 same neighbors anywhere. What it decided from the machine, its routes and profile, is kept on the same
 machine and re-measured on another (`remeasure=` forces either). A file of a later format is refused.
 
+### Changing an index
+
+`index.add(x, ids=)` adds vectors and `index.remove(ids)` removes them. Each vector has an id, which searches
+return: its row number unless `ids=` names it. Rebuilding each device's copy of the index for every change
+would cost about a second per million vectors, so changes are gathered first:
+
+```mermaid
+flowchart LR
+    add(["add(x)"]) --> asg["each vector's list found now<br/>(an IVF: its nearest centroid)"] --> buf["a buffer,<br/>searched exactly"]
+    buf -- "10,000 vectors, or 1% of the index" --> merge["merge: the lists rebuilt,<br/>nprobe recalibrated"]
+    rm(["remove(ids)"]) --> mask["a mask: searches<br/>drop those rows"]
+    mask -- "512 rows" --> merge
+    merge -- "largest list doubled against the mean,<br/>or the index doubled" --> recl["re-cluster: k-means again,<br/>routes re-measured"]
+```
+
+- **Added vectors join the lists of their nearest centroids,** which stay as they are. That keeps the IVF's
+  recall: as a collection grows, even tenfold or into regions its centroids never saw, recall at the
+  calibrated nprobe holds or rises. Until the buffer is merged, its vectors are searched exactly and the
+  two sets of results merged by score.
+- **nprobe is recalibrated at every merge,** on the calibration sample (a fresh sample of the index's own
+  vectors, or the given queries), so that the target holds after changes: queries in new regions can fall
+  below it otherwise.
+- **The cost of inserting without re-clustering is speed, through unbalanced lists,** as new vectors crowd
+  into the lists nearest them. So the IVF is re-clustered when its largest list against the mean has
+  doubled since its last clustering, or the index has doubled in size (the number of lists grows with it).
+  `index.recluster()` does it on request. Re-clustering runs in the `add()` that crosses the threshold.
+- **Removed vectors are masked,** and each search fetches 8 more neighbors than asked and drops them; a
+  query that lost more than 8 is searched again, fetching as many more as are masked, so results stay
+  exact. The index is compacted, and nprobe recalibrated, once 512 are masked.
+- `index.save()` merges and compacts first, and the file keeps the ids. `index.plan` says what changed,
+  when the index last merged and re-clustered, and why.
+
+The measurements behind these choices are in BENCHMARKS, [Changing an index](BENCHMARKS.md#changing-an-index).
+
 ## Distances
 
 - **L2** (Euclidean): the square root of the sum of squared differences. Searches compare squared

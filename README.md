@@ -71,6 +71,9 @@ approx = siann.Index(xb, metric="cosine", recall=0.95)   # approximate: an IVF, 
 approx.search(xq, k=10)
 approx = siann.Index(xb, metric="cosine", recall=0.95, calibration_queries=xq[:1000])  # optional: on your queries
 approx.save("approx.siann")                  # and siann.Index.load("approx.siann"), on any machine
+
+ids = approx.add(xq)                         # add vectors: returns their ids, which searches return
+approx.remove(ids[:10])                      # remove vectors by id
 ```
 
 Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, the

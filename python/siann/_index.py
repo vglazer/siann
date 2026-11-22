@@ -17,7 +17,13 @@ from ._ivf import DEFAULT_ROUTES
 METRICS = ("l2", "l1", "linf", "cosine", "ip")
 DISTANCES = ("l2", "l1", "linf")          # smaller is nearer; cosine and ip are similarities
 FORMAT = "siann-index"
-FORMAT_VERSION = 1                        # files of a later version are refused
+FORMAT_VERSION = 2                        # files of a later version are refused; 2 adds the ids of added vectors
+# Changing an index (BENCHMARKS, DESIGN): added vectors wait in a buffer, searched exactly, until it holds
+# BUFFER_SHARE of the index or BUFFER_MIN vectors, whichever is more; removed vectors are masked until DEAD_MAX
+# are: a search fetches FETCH_EXTRA more and drops them, and searches again, fetching as many more as are
+# masked, only the queries left short; an IVF is re-clustered when its largest list against the mean has
+# grown REBALANCE times since its last clustering, or the index REGROW times.
+BUFFER_SHARE, BUFFER_MIN, DEAD_MAX, FETCH_EXTRA, REBALANCE, REGROW = 0.01, 10_000, 512, 8, 2.0, 2.0
 
 
 @dataclass(frozen=True)
@@ -97,6 +103,34 @@ def _as_matrix(x, name: str) -> np.ndarray:
     return a
 
 
+def _exact_gpu(x: np.ndarray, layouts: dict, q: np.ndarray, k: int, metric: str) -> np.ndarray:
+    """Exact search of x on the GPU; x's copy there is made on first use and kept in ``layouts``."""
+    import mlx.core as mx
+
+    from .exact import mlx_knn
+    if "gpu" not in layouts:
+        a = mx.array(x)
+        mx.eval(a)
+        layouts["gpu"] = a
+    return np.asarray(mlx_knn(layouts["gpu"], q, k, metric), dtype=np.int64)
+
+
+def _exact_cpu(x: np.ndarray, layouts: dict, q: np.ndarray, k: int, metric: str) -> np.ndarray:
+    """Exact search of x on the CPU: siann's Rust kernel for L1 and L-infinity, BLAS for L2 and inner product."""
+    if metric in ("l1", "linf"):
+        from ._cpu import FlatIndex
+        if "cpu" not in layouts:
+            layouts["cpu"] = FlatIndex(x, x.shape[1], metric)
+        flat = layouts["cpu"].search(q, k)
+        return np.asarray(flat, dtype=np.int64).reshape(len(q), k)
+    from .blas_l2 import default_tiles, siann_l2
+    if "cpu" not in layouts:
+        norms = np.einsum("ij,ij->i", x, x) if metric == "l2" else np.zeros(len(x), dtype=np.float32)
+        layouts["cpu"] = np.ascontiguousarray(norms, dtype=np.float32)
+    qtile, block = default_tiles(len(q))
+    return np.asarray(siann_l2(x, layouts["cpu"], q, k, qtile, block), dtype=np.int64)
+
+
 def _normalized(a: np.ndarray, name: str) -> np.ndarray:
     lengths = np.linalg.norm(a, axis=1, keepdims=True)
     if (lengths == 0).any():
@@ -161,6 +195,8 @@ class Index:
         self._routes = {}
         self._storage = None
         self._cal_q = self._cal_ids = None
+        self._device_arg = device
+        self._init_changes(len(self._x))
         reasons = []
         if recall is None or kind == "exact":
             reasons.append("exact search (no recall target): the results are the true nearest neighbors"
@@ -169,6 +205,18 @@ class Index:
             reasons += self._build_ivf(recall, kind, nlist, storage, gpu, calibration_queries)
         self._build_reasons = tuple(reasons)
         self._finish_plan(list(reasons), device, gpu)
+
+    def _init_changes(self, n: int, ids=None, clustered_n=None, clustered_imbalance=None) -> None:
+        """No vector added or removed yet: ids are row numbers unless given."""
+        self._ids = ids                                    # each row's id; None: the row number
+        self._next_id = int(ids.max()) + 1 if ids is not None and len(ids) else n
+        self._buf = None                                   # added vectors not yet merged: x, ids, lists
+        self._buf_layouts: dict[str, object] = {}
+        self._dead = None                                  # rows removed, masked until compacted
+        self._ndead = 0                                    # how many (the mask's sum, kept: it is searched often)
+        self._added = self._removed = self._merges = self._reclusters = 0
+        self._last_merge = self._last_recluster = None
+        self._clustered = (clustered_n, clustered_imbalance)
 
     def _finish_plan(self, reasons: list[str], device: str, gpu: bool) -> None:
         """The plan: the build's reasons, then the device's."""
@@ -193,21 +241,33 @@ class Index:
             reasons.append("NumPy's OpenBLAS was loaded before siann, so its threads spin after each call and "
                            "slow siann's CPU searches: import siann before NumPy, or set "
                            "OPENBLAS_THREAD_TIMEOUT=4 before starting Python (TUNING.md)")
-        self.plan = Plan(len(self._x), self._x.shape[1], metric, "ivf" if self._ivf else "exact", self._device,
-                         tuple(reasons))
+        self.plan = Plan(self.n, self.d, metric, "ivf" if self._ivf else "exact", self._device, tuple(reasons))
+
+    def _change_lines(self) -> list[str]:
+        """The plan's lines on what changed since the index was built or loaded."""
+        lines = []
+        if self._added or self._removed:
+            line = f"changed since built: {self._added:,} added, {self._removed:,} removed"
+            if self._buf is not None:
+                line += (f"; {len(self._buf['x']):,} in a buffer searched exactly, merged into the "
+                         f"{'lists' if self._ivf is not None else 'index'} at {self._buffer_limit():,}")
+            if self._dead is not None:
+                line += f"; {self._ndead:,} removed rows masked, compacted past {DEAD_MAX}"
+            lines.append(line)
+        if self._last_merge:
+            lines.append(f"merged {self._merges} time(s); at the last, {self._last_merge}")
+        if self._last_recluster:
+            lines.append(f"re-clustered {self._reclusters} time(s); the last {self._last_recluster}")
+        return lines
+
+    def _refresh_plan(self) -> None:
+        self._finish_plan(list(self._build_reasons) + self._change_lines(), self._device_arg, _gpu_available())
 
     def _build_ivf(self, recall: float, kind: str, nlist: int | None, storage: str, gpu: bool,
                    calibration_queries=None) -> list[str]:
         """Builds the IVF, calibrates nprobe and, with kind "auto", keeps it only if it is faster than exact
         search on the calibration sample. Returns the plan's lines."""
-        from ._ivf import (
-            CALIBRATION_K,
-            CALIBRATION_SAMPLE,
-            IVF,
-            calibrate,
-            default_nlist,
-            default_storage,
-        )
+        from ._ivf import CALIBRATION_K, IVF, default_nlist, default_storage
         n = self.n
         ivf_metric = "l2" if self.metric == "cosine" else self.metric      # cosine: L2 on unit vectors
         nlist = int(nlist) if nlist else default_nlist(n)
@@ -226,24 +286,46 @@ class Index:
         lines.append("lists stored as bytes (every coordinate an integer 0-255: lossless)" if st == "uint8" else
                      "lists stored as float16 on the GPU (recall moves by at most about 0.001) and float32 on the CPU"
                      if build_device == "gpu" else "lists stored as float32")
-        # calibration: the given queries, or a sample of the index's own vectors (each one's own match
-        # left out)
+        dev = "gpu" if build_device == "gpu" else "cpu"
+        q, ids, k1, source = self._calibration_sample(calibration_queries)
+        nprobe, reached, exact_seconds, ivf_seconds = self._calibrate(ivf, q, ids, k1, recall, dev)
+        lines.append(f"calibrated: nprobe {nprobe} reaches recall@{CALIBRATION_K} {reached:.3f} (target {recall}) "
+                     f"on {source}")
+        sample = f"{len(q):,} calibration queries on the {dev.upper()}"
+        if kind == "auto" and ivf_seconds >= exact_seconds:
+            lines.append(f"kept exact search: the IVF took {ivf_seconds * 1e3:.1f} ms for {sample}, exact search "
+                         f"{exact_seconds * 1e3:.1f} ms, with recall 1.0")
+            return lines
+        lines.append(f"IVF chosen: {ivf_seconds * 1e3:.1f} ms for {sample}, against {exact_seconds * 1e3:.1f} ms "
+                     "for exact search" + (" (kind='ivf' given)" if kind == "ivf" else ""))
+        self._ivf, self._nprobe = ivf, nprobe
+        self._cal_q, self._cal_ids = q, ids
+        sizes = ivf.built.sizes()
+        self._clustered = (len(self._x), float(sizes.max() / sizes.mean()))
+        lines.append(self._route())
+        return lines
+
+    def _calibration_sample(self, calibration_queries=None):
+        """The calibration sample: up to 1,000 of the given queries, or of the index's own vectors (each one's
+        own match then left out). Returns (queries, their ids or None, k to search, the plan's words)."""
+        from ._ivf import CALIBRATION_K, CALIBRATION_SAMPLE
         rng = np.random.default_rng(0)
+        n = len(self._x)
         if calibration_queries is not None:
             cq = _as_matrix(calibration_queries, "calibration_queries")
             if cq.shape[1] != self.d or len(cq) == 0:
                 raise ValueError(f"calibration_queries must be a non-empty (m, {self.d}) array")
             cq = cq[np.sort(rng.choice(len(cq), size=min(len(cq), CALIBRATION_SAMPLE), replace=False))]
-            q, ids = (_normalized(cq, "calibration_queries") if self.metric == "cosine" else cq), None
-            k1 = min(CALIBRATION_K, n)
-            source = f"{len(q):,} of the given calibration queries"
-        else:
-            ids = np.sort(rng.choice(n, size=min(n, CALIBRATION_SAMPLE), replace=False))
-            q = self._x[ids]
-            k1 = min(CALIBRATION_K + 1, n)
-            source = (f"{len(q):,} of its own vectors (the target holds for queries like them; pass "
-                      "calibration_queries= for others)")
-        dev = "gpu" if build_device == "gpu" else "cpu"
+            q = _normalized(cq, "calibration_queries") if self.metric == "cosine" else cq
+            return q, None, min(CALIBRATION_K, n), f"{len(q):,} of the given calibration queries"
+        ids = np.sort(rng.choice(n, size=min(n, CALIBRATION_SAMPLE), replace=False))
+        source = (f"{len(ids):,} of its own vectors (the target holds for queries like them; pass "
+                  "calibration_queries= for others)")
+        return self._x[ids], ids, min(CALIBRATION_K + 1, n), source
+
+    def _calibrate(self, ivf, q: np.ndarray, ids, k1: int, recall: float, dev: str):
+        """nprobe for the target on the sample, its recall, and exact search's and the IVF's time on it."""
+        from ._ivf import CALIBRATION_K, calibrate
         exact_search = self._search_gpu if dev == "gpu" else self._search_cpu
         exact = exact_search(q, k1)                                       # the truth, and a warm-up
         t = time.perf_counter()
@@ -263,20 +345,7 @@ class Index:
         ivf.search(q, k1, nprobe, path)                                   # warm the path before timing it
         t = time.perf_counter()
         ivf.search(q, k1, nprobe, path)
-        ivf_seconds = time.perf_counter() - t
-        lines.append(f"calibrated: nprobe {nprobe} reaches recall@{CALIBRATION_K} {reached:.3f} (target {recall}) "
-                     f"on {source}")
-        sample = f"{len(q):,} calibration queries on the {dev.upper()}"
-        if kind == "auto" and ivf_seconds >= exact_seconds:
-            lines.append(f"kept exact search: the IVF took {ivf_seconds * 1e3:.1f} ms for {sample}, exact search "
-                         f"{exact_seconds * 1e3:.1f} ms, with recall 1.0")
-            return lines
-        lines.append(f"IVF chosen: {ivf_seconds * 1e3:.1f} ms for {sample}, against {exact_seconds * 1e3:.1f} ms "
-                     "for exact search" + (" (kind='ivf' given)" if kind == "ivf" else ""))
-        self._ivf, self._nprobe = ivf, nprobe
-        self._cal_q, self._cal_ids = q, ids
-        lines.append(self._route())
-        return lines
+        return nprobe, reached, exact_seconds, time.perf_counter() - t
 
     def _route(self) -> str:
         """Sets the IVF's routes, from the profile or measured on the calibration sample; returns the plan's line."""
@@ -297,17 +366,24 @@ class Index:
     def save(self, path) -> None:
         """Writes the index to ``path`` (a NumPy ``.npz`` file, written at exactly that path): the base
         vectors, the IVF's centroids and lists, the calibration and its sample, the routes, the profile and
-        the plan. ``siann.Index.load(path)`` reads it back on any machine."""
+        the plan. ``siann.Index.load(path)`` reads it back on any machine. Added vectors still in the buffer
+        are merged, and removed ones compacted, first."""
         from . import __version__
+        if self._buf is not None or self._dead is not None:
+            self._merge("the index was saved")
+            self._refresh_plan()
         meta = {"format": FORMAT, "format_version": FORMAT_VERSION, "siann": __version__,
                 "saved": time.strftime("%Y-%m-%d"), "machine": _machine(), "metric": self.metric,
                 "recall": self.recall, "kind": self.kind, "nprobe": self._nprobe, "storage": self._storage,
                 "ivf_metric": self._ivf.metric if self._ivf else None, "routes": self._routes,
                 "profile": self._profile.to_dict(), "build_reasons": list(self._build_reasons),
-                "calibration": None if self._ivf is None else ("own" if self._cal_ids is not None else "given")}
+                "calibration": None if self._ivf is None else ("own" if self._cal_ids is not None else "given"),
+                "clustered": list(self._clustered), "next_id": self._next_id}
         bytes_ok = self._storage == "uint8"                 # every coordinate an integer 0-255: stored as bytes
         arrays = {"meta": np.frombuffer(json.dumps(meta).encode("utf-8"), dtype=np.uint8),
                   "x": self._x.astype(np.uint8) if bytes_ok else self._x}
+        if self._ids is not None:
+            arrays["ids"] = self._ids
         if self._ivf is not None:
             arrays["centroids"] = self._ivf.built.centroids
             arrays["assign"] = self._ivf.built.assign.astype(np.int32)
@@ -360,6 +436,11 @@ class Index:
         self._nprobe = meta["nprobe"]
         self._routes = dict(meta["routes"])
         self._ivf = self._cal_q = self._cal_ids = None
+        self._device_arg = device
+        clustered = meta.get("clustered") or [None, None]
+        self._init_changes(len(self._x), np.asarray(data["ids"], dtype=np.int64) if "ids" in data else None,
+                           clustered[0], clustered[1])
+        self._next_id = max(self._next_id, int(meta.get("next_id") or 0))
         reasons = [r if same or not r.startswith(("IVF chosen", "kept exact search")) else
                    r + " (timed on the machine that saved it, and kept, so that results do not change)"
                    for r in meta["build_reasons"] if not r.startswith("routing ")]
@@ -372,6 +453,9 @@ class Index:
                             "uint8" if self._storage == "uint8" else "float", "cpu", built=built)
             self._cal_q = np.ascontiguousarray(data["calibration_queries"], dtype=np.float32)
             self._cal_ids = data.get("calibration_ids")
+            if self._clustered[1] is None:             # format 1: the balance as loaded
+                sizes = built.sizes()
+                self._clustered = (len(self._x), float(sizes.max() / sizes.mean()))
             if redo:
                 reasons.append(self._route().replace("routing measured", "routing re-measured on this machine", 1))
             else:
@@ -411,7 +495,8 @@ class Index:
 
     @property
     def n(self) -> int:
-        return len(self._x)
+        """The number of vectors searched: those built from and added, less those removed."""
+        return len(self._x) - self._ndead + (len(self._buf["x"]) if self._buf is not None else 0)
 
     @property
     def d(self) -> int:
@@ -460,40 +545,221 @@ class Index:
             q = _normalized(q, "xq")
         kk = min(int(k), self.n)
         if len(q) == 0:
-            idx = np.empty((0, kk), dtype=np.int64)
-        elif self._ivf is not None:
-            idx = self._ivf.search(q, kk, int(nprobe or self._nprobe), path)
+            idx, sc = np.empty((0, kk), dtype=np.int64), np.empty((0, kk), dtype=np.float32)
+        elif self._buf is not None or self._dead is not None:
+            idx, sc = self._search_changed(q, kk, path, dev, nprobe)
         else:
-            idx = (self._search_gpu if dev == "gpu" else self._search_cpu)(q, kk)
+            if self._ivf is not None:
+                idx = self._ivf.search(q, kk, int(nprobe or self._nprobe), path)
+            else:
+                idx = (self._search_gpu if dev == "gpu" else self._search_cpu)(q, kk)
+            sc = self._scores(q, idx)
+            if self._ids is not None:
+                idx = np.where(idx >= 0, self._ids[np.maximum(idx, 0)], -1)
         if kk < k:
-            idx = np.concatenate([idx, np.full((len(q), k - kk), -1, dtype=np.int64)], axis=1)
-        return SearchResult(idx, self._scores(q, idx))
+            pad = (len(q), k - kk)
+            idx = np.concatenate([idx, np.full(pad, -1, dtype=np.int64)], axis=1)
+            sc = np.concatenate([sc, np.full(pad, self._worst(), dtype=np.float32)], axis=1)
+        return SearchResult(idx, sc)
+
+    def _worst(self) -> float:
+        return -np.inf if self.metric in ("cosine", "ip") else np.inf
+
+    def _search_changed(self, q: np.ndarray, kk: int, path, dev: str, nprobe):
+        """Search with added vectors in the buffer or removed ones masked: the main vectors (k more than the
+        rows masked, which are dropped), the buffer exactly, the two merged by score."""
+        from ._cpu import scores
+        parts_i, parts_s, worst = [], [], self._worst()
+        nm = len(self._x)
+        dead = self._dead
+        nd = self._ndead
+        if nm - nd > 0:
+            def main_search(qq, fetch):
+                if self._ivf is not None:
+                    found = self._ivf.search(qq, fetch, int(nprobe or self._nprobe), path)
+                else:
+                    found = (self._search_gpu if dev == "gpu" else self._search_cpu)(qq, fetch)
+                sc = self._scores(qq, found)
+                hit = (found >= 0) & dead[np.maximum(found, 0)] if nd else np.zeros(found.shape, dtype=bool)
+                return np.where(hit, -1, found), np.where(hit, worst, sc), hit.sum(axis=1)
+            fetch = min(kk + min(nd, FETCH_EXTRA), nm)
+            rows, s, hits = main_search(q, fetch)
+            if nd > FETCH_EXTRA:
+                # queries that lost more than FETCH_EXTRA of their neighbors to masked rows: again, fetching
+                # as many more as are masked
+                short = np.where(hits > fetch - kk)[0]
+                if len(short):
+                    full = min(kk + nd, nm)
+                    r2, s2, _ = main_search(np.ascontiguousarray(q[short]), full)
+                    rows = np.pad(rows, ((0, 0), (0, full - fetch)), constant_values=-1)
+                    s = np.pad(s, ((0, 0), (0, full - fetch)), constant_values=worst)
+                    rows[short], s[short] = r2, s2
+            ids = rows if self._ids is None else np.where(rows >= 0, self._ids[np.maximum(rows, 0)], -1)
+            parts_i.append(ids)
+            parts_s.append(s)
+        if self._buf is not None:
+            # on the CPU whatever the main search's device: for buffers of 1,000-10,000 vectors, faster than
+            # the GPU at nearly every batch size measured (`add_remove.py`)
+            bx = self._buf["x"]
+            brows = _exact_cpu(bx, self._buf_layouts, q, min(kk, len(bx)), self._kernel_metric)
+            parts_s.append(scores(bx, np.ascontiguousarray(q), brows, self._kernel_metric))
+            parts_i.append(np.where(brows >= 0, self._buf["ids"][np.maximum(brows, 0)], -1))
+        ids, s = np.concatenate(parts_i, axis=1), np.concatenate(parts_s, axis=1)
+        s = np.where(ids >= 0, s, worst)
+        order = np.argsort(-s if worst < 0 else s, axis=1, kind="stable")[:, :kk]
+        return np.take_along_axis(ids, order, axis=1), np.take_along_axis(s, order, axis=1)
+
+    def _row_ids(self) -> np.ndarray:
+        return np.arange(len(self._x), dtype=np.int64) if self._ids is None else self._ids
+
+    def _buffer_limit(self) -> int:
+        return max(int(BUFFER_SHARE * len(self._x)), BUFFER_MIN)
+
+    def add(self, x, ids=None) -> np.ndarray:
+        """Adds vectors ``x`` (m, d), or one (d,), and returns their ids: ``ids`` if given (int64, distinct,
+        none already in the index), otherwise continuing from the largest so far. Searches return these ids.
+        The vectors are searched exactly until enough of them are added, then merged into the index; an
+        IVF finds each one's list now, recalibrates nprobe at each merge, and re-clusters when its lists fall
+        out of balance or the index has doubled since its last clustering. ``index.plan`` says what changed."""
+        a = np.asarray(x)
+        a = _as_matrix(a[None, :] if a.ndim == 1 else a, "x")
+        if a.shape[1] != self.d:
+            raise ValueError(f"x has {a.shape[1]} dimensions, the index {self.d}")
+        if self.metric == "cosine":
+            a = _normalized(a, "x")
+        live = self._live_ids()
+        if ids is None:
+            new = np.arange(self._next_id, self._next_id + len(a), dtype=np.int64)
+        else:
+            new = np.asarray(ids)
+            if new.ndim != 1 or len(new) != len(a) or not np.issubdtype(new.dtype, np.integer):
+                raise ValueError(f"ids must be {len(a)} integers, one per vector")
+            new = new.astype(np.int64)
+            if len(np.unique(new)) != len(new):
+                raise ValueError("ids must be distinct")
+            taken = new[np.isin(new, live)]
+            if len(taken):
+                raise ValueError(f"ids already in the index: {', '.join(map(str, taken[:5]))}"
+                                 + (", ..." if len(taken) > 5 else ""))
+        if len(a) == 0:
+            return new
+        assign = None
+        if self._ivf is not None:
+            from .ivf_build import assign_metric, nearest
+            dev = "gpu" if _gpu_available() and self._device != "cpu" else "cpu"
+            assign = nearest(a, self._ivf.built.centroids, assign_metric(self._ivf.metric), dev)
+        if self._buf is None:
+            self._buf = {"x": a, "ids": new, "assign": assign}
+        else:
+            b = self._buf
+            self._buf = {"x": np.concatenate([b["x"], a]), "ids": np.concatenate([b["ids"], new]),
+                         "assign": None if assign is None else np.concatenate([b["assign"], assign])}
+        self._buf_layouts = {}
+        self._next_id = max(self._next_id, int(new.max()) + 1)
+        self._added += len(a)
+        if len(self._buf["x"]) >= self._buffer_limit():
+            self._merge(f"the buffer reached {self._buffer_limit():,} vectors")
+        self._refresh_plan()
+        return new
+
+    def _live_ids(self) -> np.ndarray:
+        main = self._row_ids() if self._dead is None else self._row_ids()[~self._dead]
+        return main if self._buf is None else np.concatenate([main, self._buf["ids"]])
+
+    def remove(self, ids) -> int:
+        """Removes the vectors with these ids, and returns how many were removed. An id not in the index is
+        refused, and nothing is removed then. Removed vectors are masked and never returned; past a few, the
+        index is compacted."""
+        gone = np.unique(np.asarray(ids, dtype=np.int64).ravel())
+        missing = gone[~np.isin(gone, self._live_ids())]
+        if len(missing):
+            raise KeyError(f"not in the index: {', '.join(map(str, missing[:5]))}" + (", ..." if len(missing) > 5 else ""))
+        if len(gone) >= self.n:
+            raise ValueError("removing every vector would leave the index empty; build a new one instead")
+        main = np.isin(self._row_ids(), gone)
+        if main.any():
+            self._dead = main if self._dead is None else (self._dead | main)
+            self._ndead = int(self._dead.sum())
+        if self._buf is not None:
+            keep = ~np.isin(self._buf["ids"], gone)
+            b = self._buf
+            self._buf = None if not keep.any() else {
+                "x": b["x"][keep], "ids": b["ids"][keep], "assign": None if b["assign"] is None else b["assign"][keep]}
+            self._buf_layouts = {}
+        self._removed += len(gone)
+        if self._ndead > DEAD_MAX:
+            self._merge(f"more than {DEAD_MAX} removed vectors were masked")
+        self._refresh_plan()
+        return len(gone)
+
+    def recluster(self) -> None:
+        """Merges added vectors, compacts removed ones and, for an IVF, rebuilds its lists from scratch
+        (k-means on every vector, the default number of lists for its size), then recalibrates nprobe and
+        re-measures routing. siann does this by itself when the lists fall out of balance."""
+        self._merge("index.recluster() was called", force=True)
+        self._refresh_plan()
+
+    def _merge(self, why: str, force: bool = False) -> None:
+        """Folds the buffer into the index and drops removed rows; for an IVF, re-clusters if due (or forced)
+        and recalibrates nprobe."""
+        live = np.ones(len(self._x), dtype=bool) if self._dead is None else ~self._dead
+        b = self._buf
+        x = self._x[live] if b is None else np.concatenate([self._x[live], b["x"]])
+        ids = self._row_ids()[live] if b is None else np.concatenate([self._row_ids()[live], b["ids"]])
+        assign = None
+        if self._ivf is not None:
+            assign = self._ivf.built.assign[live]
+            if b is not None:
+                assign = np.concatenate([assign, b["assign"]])
+        self._x = np.ascontiguousarray(x, dtype=np.float32)
+        self._ids = None if np.array_equal(ids, np.arange(len(ids))) else ids
+        self._buf, self._dead, self._ndead = None, None, 0
+        self._layouts, self._buf_layouts = {}, {}
+        self._merges += 1
+        if self._ivf is None:
+            self._last_merge = why
+            return
+        from ._ivf import IVF, default_nlist, default_storage
+        from .ivf_build import build_lists, lists_from_assign
+        if self._storage == "uint8" and default_storage(self._x) != "uint8":
+            self._storage = "float32"                  # an added vector is not bytes: the lists become float
+        storage = "uint8" if self._storage == "uint8" else "float"
+        dev = "gpu" if _gpu_available() and self._device != "cpu" else "cpu"
+        built = lists_from_assign(self._ivf.built.centroids, assign.astype(np.int64))
+        sizes = built.sizes()
+        imbalance = float(sizes.max() / sizes.mean())
+        n0, imb0 = self._clustered
+        n0, imb0 = n0 or len(self._x), imb0 or imbalance
+        reason = None
+        if force:
+            reason = why
+        elif imbalance >= REBALANCE * imb0:
+            reason = f"as its largest list reached {imbalance:.1f} times the mean, against {imb0:.1f} when clustered"
+        elif len(self._x) >= REGROW * n0:
+            reason = f"as the index grew to {len(self._x):,} vectors from {n0:,} when clustered"
+        if reason:
+            nlist = default_nlist(len(self._x))
+            t = time.perf_counter()
+            built = build_lists(self._x, nlist, self._ivf.metric, device=dev)
+            sizes = built.sizes()
+            self._clustered = (len(self._x), float(sizes.max() / sizes.mean()))
+            self._reclusters += 1
+            self._last_recluster = (f"{reason}: {nlist:,} lists in {time.perf_counter() - t:.1f} s")
+        self._ivf = IVF(self._x, self._ivf.metric, built.nlist, storage, dev, built=built)
+        if self._cal_ids is not None:                  # calibrated on its own vectors: a fresh sample of them
+            self._cal_q, self._cal_ids, k1, _ = self._calibration_sample()
+        else:
+            k1 = min(10, len(self._x))
+        self._nprobe, reached, _, _ = self._calibrate(self._ivf, self._cal_q, self._cal_ids, k1, self.recall, dev)
+        self._last_merge = f"{why}; nprobe recalibrated to {self._nprobe} (recall {reached:.3f})"
+        if reason:
+            self._route()
 
     def _search_gpu(self, q: np.ndarray, k: int) -> np.ndarray:
-        import mlx.core as mx
-
-        from .exact import mlx_knn
-        if "gpu" not in self._layouts:
-            x = mx.array(self._x)
-            mx.eval(x)
-            self._layouts["gpu"] = x
-        return np.asarray(mlx_knn(self._layouts["gpu"], q, k, self._kernel_metric), dtype=np.int64)
+        return _exact_gpu(self._x, self._layouts, q, k, self._kernel_metric)
 
     def _search_cpu(self, q: np.ndarray, k: int) -> np.ndarray:
-        m = self._kernel_metric
-        if m in ("l1", "linf"):
-            from ._cpu import FlatIndex
-            if "cpu" not in self._layouts:
-                self._layouts["cpu"] = FlatIndex(self._x, self.d, m)
-            flat = self._layouts["cpu"].search(q, k)
-            return np.asarray(flat, dtype=np.int64).reshape(len(q), k)
-        from .blas_l2 import default_tiles, siann_l2
-        if "cpu" not in self._layouts:
-            norms = (np.einsum("ij,ij->i", self._x, self._x) if m == "l2"
-                     else np.zeros(self.n, dtype=np.float32))
-            self._layouts["cpu"] = np.ascontiguousarray(norms, dtype=np.float32)
-        qtile, block = default_tiles(len(q))
-        return np.asarray(siann_l2(self._x, self._layouts["cpu"], q, k, qtile, block), dtype=np.int64)
+        return _exact_cpu(self._x, self._layouts, q, k, self._kernel_metric)
 
     def _scores(self, q: np.ndarray, idx: np.ndarray) -> np.ndarray:
         """Each returned neighbor's natural score, computed from the vectors in float32 (in Rust, for every

@@ -628,6 +628,58 @@ second of the measured route over the fixed one, at the batch sizes where the tw
   calls, favor the CPU; at each batch size the index times the GPU's scans before the CPU's, as a GPU left
   idle by three CPU scans otherwise looked slower than it is at 100-128 queries on Music-100 (0.74-0.90x).
 
+## Changing an index
+
+*Reproduce with `drift.py --dataset glove --base 200000`, `drift.py --dataset sift --base 1000000` and
+`add_remove.py`; `drift_*.txt`, `add_remove_sift.txt`.*
+
+**Inserting into the lists against re-clustering** (`drift.py`). An IVF trained on part of a collection, the
+rest inserted into the lists of their nearest centroids, against an IVF re-clustered on the same contents
+with the same number of lists, recall target 0.95 on the datasets' queries. Two splits: "growth", trained on
+a random 10% (the collection grows tenfold), and "new regions", the collection clustered into 50 regions and
+trained on all but 10 of them, which are then inserted (21% of GloVe's vectors, 24% of SIFT's). After
+inserting all of them, inserted / re-clustered:
+
+| Dataset, split | Recall at the nprobe calibrated when trained | Queries in the new regions | nprobe for 0.95 | Largest list / mean | Speed at 0.95, batches of 1,000 |
+| --- | --- | --- | --- | --- | ---: |
+| GloVe 200,000, growth | 0.967 / 0.961 (0.950 when trained) | | 98 / 108 | 4.6 / 2.8 | 0.82x |
+| GloVe 200,000, new regions | 0.958 / 0.959 | 0.937 / 0.953 | 261 / 255 | 5.4 / 3.4 | 0.85x |
+| SIFT1M, growth | 0.972 / 0.972 (0.951) | | 23 / 23 | 5.5 / 4.0 | 0.89x |
+| SIFT1M, new regions | 0.953 / 0.958 (0.951) | 0.957 / 0.964 | 43 / 40 | 23.6 / 5.9 | 0.52x |
+
+- **Inserting keeps recall:** at the nprobe calibrated on the training set, recall holds or rises as the
+  collection grows. Queries in regions the centroids never saw can fall below the target (GloVe, 0.937
+  against 0.953 re-clustered), which is why siann recalibrates nprobe after changes.
+- **The cost is speed, through unbalanced lists:** new vectors crowd into the lists nearest them, and on
+  SIFT's new regions the largest list reached 23.6 times the mean, halving the speed at matched recall.
+  Growth alone barely moves the balance (5.4 to 5.5 on SIFT).
+- **Inserting is cheap and re-clustering fast:** siann assigns 2.3-3.8 million vectors per second to their
+  lists, against 91,000-108,000 per second for FAISS's HNSW `add` (16 threads); re-clustering from scratch
+  takes 0.24-0.9 s for 200,000 vectors and 1.1-3.4 s for a million.
+
+**What changing an index costs** (`add_remove.py`): an IVF on 900,000 of SIFT1M's vectors (nprobe 48, recall
+0.95 on the queries), queries per second:
+
+| State | Batch 1 | 100 | 1,000 |
+| --- | ---: | ---: | ---: |
+| As built | 12,158 | 100,080 | 198,455 |
+| 1,000 added, in the buffer | 8,567 | 70,583 | 128,455 |
+| 10,000 added, in the buffer | 6,731 | 54,671 | 88,055 |
+| Merged | 12,316 | 85,651 | 190,618 |
+| 64 removed, masked | 9,539 | 84,143 | 131,750 |
+| 512 removed, masked | 9,374 | 81,110 | 141,066 |
+| Compacted | 11,982 | 90,070 | 164,729 |
+
+While added vectors wait in the buffer, searches run at 0.44-0.71 times full speed: the buffer is searched
+exactly and the results merged, a cost that is mostly fixed per call. The buffer is searched on the CPU,
+whatever device the main search runs on: for 1,000-10,000 vectors the CPU is faster than the GPU at nearly
+every batch size, as a GPU call's fixed cost outweighs so small a search (the last table of
+`add_remove_sift.txt`). Masked removals cost 0.66-0.84 times. Single runs vary by up to about 17%
+(merged and compacted, which should match as built, ran at 0.83-1.01 times it). A merge of 10,000 added
+vectors takes 0.83 s (the lists and each device's copy rebuilt, nprobe recalibrated), a compaction 0.82 s.
+Adding runs at 0.9 million vectors per second in one call, and about 1 millisecond per call one vector at
+a time.
+
 ## Against mlxvs on the GPU
 
 *Reproduce with `mlxvs_compare.py --dataset sift|glove|music100`.*
