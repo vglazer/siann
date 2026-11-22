@@ -47,7 +47,11 @@ jobs:
       - name: Format
         run: cargo fmt --check
       - name: Clippy
-        run: cargo clippy --release -- -D warnings
+        run: cargo clippy --release --all-targets -- -D warnings
+      - name: Tests
+        # the engine against brute force; on Windows the test program would need Python's library at start-up
+        if: runner.os != 'Windows'
+        run: cargo test --release
 
   python:
     name: Python (${{ matrix.os }})

@@ -25,10 +25,12 @@ Python module) whenever its sources change.
 ```sh
 uv run python -X warn_default_encoding -m pytest -W error::EncodingWarning   # Python tests
 uv run --only-group lint ruff check .                                          # lint the Python code
-cd crates/siann-py && cargo fmt --check && cargo clippy --release -- -D warnings   # the Rust code
+cd crates/siann-py && cargo fmt --check && cargo clippy --release --all-targets -- -D warnings \
+  && cargo test --release                                                       # the Rust code
 ```
 
-CI runs the tests and the Rust checks on Linux, macOS and Windows, and ruff on Linux. The GPU backend runs
+CI runs the tests and the Rust checks on Linux, macOS and Windows (`cargo test` on Linux and macOS: on
+Windows its test program would need Python's library at start-up), and ruff on Linux. The GPU backend runs
 only on Apple silicon and GitHub's Mac runners may lack a usable GPU, so the GPU tests skip in CI; run them
 locally on a Mac before each release. The encoding flags make any text read or written
 without a named encoding an error, so always pass `encoding="utf-8"`.
@@ -121,6 +123,10 @@ TestPyPI, with the version `VERSION.devN`, N the run number, since an index acce
 
 **Rust.**
 
+- **Keep the engine free of PyO3.** The search is in `crates/siann-py/src/engine/`, plain Rust over slices
+  that returns its errors as messages; `lib.rs` only binds it to Python (reads NumPy's arrays, releases the
+  GIL while the engine runs, raises its errors as `ValueError`). So the engine is tested by `cargo test`
+  alone (`engine/tests.rs`, against brute force), and could become a Rust crate of its own.
 - **Safe Rust only.** siann's code has no `unsafe` (code the compiler cannot check for memory safety),
   and every case so far has a safe alternative: NumPy for BLAS calls, a comparison and select for a
   maximum, a buffer for float16, plain loops over contiguous bytes for integer arithmetic. Calling
