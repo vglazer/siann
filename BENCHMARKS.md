@@ -200,6 +200,43 @@ broadcast absolute difference (MLX) or `torch.cdist` (PyTorch), then the framewo
 The ratios hold on SIFT1M and GloVe-100 (0.34-0.65x on the GPU). Built-in operations lose to FAISS's CPU
 everywhere, on the GPU too: the GPU's advantage comes entirely from custom kernels.
 
+### The IVF with built-in operations
+
+*Reproduce with `builtin_ivf.py --dataset sift --metric l2|l1`; `builtin_ivf_sift_*.txt`.*
+
+The IVF written with each framework's built-in operations only, against the same IVF on siann's custom
+kernels, on the same 4,000 lists (siann's k-means) of SIFT1M, 10,000 queries. The built-in IVF does the
+coarse step as a matrix multiply (L2) or a broadcast difference (L1) and a partial selection, gathers each
+query's candidates from its lists (padded to the most any query of a chunk has, rounded up to one of a few
+sizes so that buffers are reused) and keeps the k nearest by a partial selection. The custom IVF takes
+siann's routes: the query-major scan below 1,000 queries, the list-major scan from 1,000. Both return the
+same neighbors (ties counted either way) at the same recall. The custom IVF's queries per second as a
+multiple of the built-in one's, on each framework, at nprobe 16 (recall 0.84 for L2, 0.81 for L1) and 64
+(0.97, 0.96):
+
+| Framework, metric, nprobe | Batch 1 | 10 | 100 | 1,000 | 10,000 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| MLX, L2, 16 | 1.43 | 1.70 | 4.00 | 9.78 | 22.4 |
+| MLX, L2, 64 | **0.76** | 1.45 | 4.57 | 18.1 | 24.7 |
+| PyTorch, L2, 16 | 1.58 | 2.09 | 6.98 | 17.9 | 47.9 |
+| PyTorch, L2, 64 | 0.92 | 2.19 | 8.78 | 35.0 | 53.1 |
+| MLX, L1, 16 | 1.22 | 2.54 | 13.1 | 36.3 | 67.0 |
+| MLX, L1, 64 | **0.71** | 2.81 | 13.0 | 46.1 | 60.3 |
+| PyTorch, L1, 16 | 1.38 | 2.94 | 15.9 | 45.7 | 96.4 |
+| PyTorch, L1, 64 | 1.19 | 3.80 | 18.3 | 70.2 | 94.1 |
+
+- **The custom kernels' value grows with the batch:** from about level on single queries to 22-96 times at
+  10,000. The built-in IVF tops out by batches of 100 (MLX: about 22,900 queries per second at nprobe 16
+  by L2, 7,400 at 64), as each query's candidates are gathered and padded in memory, while the custom scans
+  read the lists in place, and the list-major one reads each list once for all the queries that probe it.
+- **Most for L1,** which has no matrix-multiply form: its built-in distances are a full-size difference and
+  absolute value of the gathered candidates.
+- **PyTorch's built-in operations trail MLX's,** 1.4-2.1 times on this algorithm at batches of 10 and up,
+  so the kernels add more on PyTorch; with them the two frameworks run within 0.7-1.05 times of each other
+  ([PyTorch against MLX](#pytorch-against-mlx)).
+- **Single queries at nprobe 64 are faster with MLX's built-in operations** (1,274 against 970 per second by
+  L2, 1,116 against 793 by L1), and level with PyTorch's by L2.
+
 ## Approximate search: batches
 
 *Reproduce with `ivf_cpu.py --dataset sift|glove --metric l2|l1`, `fp16_lists.py --faiss`,

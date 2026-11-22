@@ -40,6 +40,11 @@ with sizes passed as template arguments, so each new shape compiles once.
 - **`mx.compile`** (whole-function compilation) speeds up built-in L1 from 7.2 to 4.4 s, and does
   nothing for L2.
 - **Its CPU backend is not competitive:** 15 times slower than FAISS.
+- **A full buffer cache slows other code.** MLX keeps freed buffers for reuse, up to `mx.set_cache_limit`.
+  Left full of one computation's buffers, it slows the next one, whose buffers are of other sizes: siann's
+  GPU IVF ran slower after a built-in IVF had filled it, until `mx.clear_cache()`. A computation whose
+  buffer sizes change on every call (gathers padded to each batch's longest row) defeats the cache, and
+  rounding the sizes up to a few fixed ones restores it (`builtin_ivf.py` does both).
 
 ## PyTorch (MPS)
 

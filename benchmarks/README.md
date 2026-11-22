@@ -27,6 +27,7 @@ The README's "Which to use" table and BENCHMARKS.md's main sections.
 | `mlxvs_compare.py` | siann's GPU paths against mlxvs (exact search, IVF-Flat, CAGRA) | Against mlxvs on the GPU; High-dimensional text embeddings |
 | `index_recall.py` | `siann.Index(recall=)` on the full datasets: recall on the real queries, what it chose, speed by batch size | Approximate search through siann.Index |
 | `graph_faiss.py` | A CAGRA graph built on the GPU, searched by FAISS's HNSW code, against FAISS's own HNSW | A graph built on the GPU, searched on the CPU |
+| `builtin_ivf.py` | The IVF with each framework's built-in operations only, against the same IVF on siann's custom kernels, on MLX and PyTorch | The IVF with built-in operations |
 | `torch_select_ab.py` | The PyTorch GPU IVF against MLX's on the same lists | PyTorch against MLX |
 
 ## Measurements behind siann's defaults
