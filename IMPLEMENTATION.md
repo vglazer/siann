@@ -5,7 +5,8 @@
 siann answers k-nearest-neighbor queries: given base vectors and a query, find the k base vectors
 nearest the query, exactly or to a recall target. It is fast for two reasons. The main one is that it
 **chooses**: given a recall target, it measures on your data and your machine which method, which settings
-and which device meet the target fastest, for each batch size, and reports what it chose. The other is that
+and which device meet the target fastest, for each batch size, reports what it chose, and makes the choice
+again as the index changes (vectors added and removed, the collection grown from empty). The other is that
 **each of the paths it chooses between is fast**, through custom GPU kernels and CPU code laid out for the
 hardware. This page covers the choice first, then the methods, then the kernels in detail, where other
 libraries are faster, and how the code is organized. [BENCHMARKS](BENCHMARKS.md) has
@@ -508,7 +509,8 @@ flowchart TB
 | `python/siann/ivf_gpu.py` | The GPU IVF: query-major and list-major scans, float16 and uint8 lists |
 | `python/siann/blas_l2.py` | Exact L2 and inner product on the CPU through NumPy's BLAS and `L2TopK`, with the default tile sizes |
 | `python/siann/torch_kernels.py`, `ivf_torch.py` | The same kernels on PyTorch MPS |
-| `crates/siann-py/src/lib.rs` | The Rust extension, `siann._cpu`: `FlatIndex`, `IvfIndex` (storages, split queries), `L2TopK`, and the scoring, ranking, merging and bookkeeping the Python side calls |
+| `crates/siann-py/src/engine/` | The CPU search in plain Rust, over slices, without PyO3: the metrics (`metric.rs`), list storage (`elem.rs`), the blocked layout, distance loops and top-k (`kernels.rs`), exact search (`flat.rs`), the IVF (`ivf.rs`), ranking BLAS products (`products.rs`), and scoring, ranking, merging and bookkeeping (`ops.rs`); tested by `cargo test` (`tests.rs`) |
+| `crates/siann-py/src/lib.rs` | The Python bindings, `siann._cpu`: `FlatIndex`, `IvfIndex`, `L2TopK` and the functions, over the engine |
 | `benchmarks/check_kernels.py` | Every kernel and index against NumPy's exact search |
 | `benchmarks/` | The benchmarks against FAISS and mlxvs, their raw output in `results/` |
 

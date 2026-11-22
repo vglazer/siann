@@ -21,13 +21,17 @@ cells = [
     md("""
 # siann quickstart
 
-siann is fast similarity search on Apple silicon for dense vectors. Give it base vectors and a metric, and
-it finds each query's nearest neighbors, on the GPU or the CPU (BLAS through NumPy, and siann's own Rust
-kernels), choosing the device for each search unless you tell it which.
+siann is nearest-neighbor search that decides how to search, on Apple silicon. Tell it what you need, exact
+neighbors or a recall target, and it chooses the method (exact search, or an IVF calibrated to the target)
+and the device for each batch size (the CPU or the Apple GPU), from measurements on your data and machine,
+and says why in `index.plan`. The choice holds as the data changes: an index can start empty, grow and
+shrink, and be searched while it changes.
 
 This notebook covers what each metric means and how to choose one, the scores siann returns and how it
 explains its choices, how the GPU and the CPU compare as batches grow, tuning siann's routing to your own
-data and hardware, exact search as the ground truth, and approximate search to a recall target.
+data and hardware, exact search as the ground truth, approximate search to a recall target, saving and
+loading an index, changing one (adding, removing, starting empty, searching from several threads), the
+choice of GPU backend, and how siann keeps GPU memory in bounds.
 """),
     code("""
 import time

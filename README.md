@@ -4,15 +4,21 @@
 [![PyPI](https://img.shields.io/pypi/v/siann)](https://pypi.org/project/siann/)
 [![Documentation](https://img.shields.io/readthedocs/siann/latest)](https://siann.readthedocs.io)
 
-**Fast nearest-neighbor search on Apple silicon,** exact or to a recall target, for dense NumPy vectors,
-on the GPU and the CPU, by Euclidean (L2), cosine, inner product, Manhattan (L1) and Chebyshev (L-infinity)
-distance. Give siann a recall target rather than settings: it calibrates the index to your data, measures
-where each batch size runs fastest, on the CPU or the GPU, and `index.plan` says what it chose and why. Each
-path it chooses between is fast in its own right, through custom GPU kernels and CPU code laid out for the
-hardware ([IMPLEMENTATION](IMPLEMENTATION.md)).
+**Nearest-neighbor search that decides how to search, on Apple silicon.** Tell siann what you need, exact
+neighbors or a recall target, for dense NumPy vectors by Euclidean (L2), cosine, inner product, Manhattan
+(L1) or Chebyshev (L-infinity) distance, and it chooses the method (exact search, or an IVF calibrated to
+the target) and the device for each batch size (the CPU or the Apple GPU), from measurements on your data
+and machine. `index.plan` says what it chose and why.
 
-Exact search beats FAISS on the CPU and mlxvs on the GPU almost everywhere, most of all for L1 and
-L-infinity. Where another library is faster, as graph indexes are for approximate search on some data,
+The choice holds as the data changes. An index can start empty and grow, take removals, and be searched from
+several threads while it changes; siann merges, re-clusters and recalibrates as it goes, and switches from
+exact search to an IVF once that is faster. An index saves to one file that loads on any machine, and the
+CPU path runs on Linux and Windows too.
+
+Each path it chooses between is fast in its own right ([IMPLEMENTATION](IMPLEMENTATION.md)): exact search
+is 2.6-3.8 times the fastest alternative on the Mac for L2, cosine and inner product (1.1-1.2 times at 1,536
+dimensions, where the matrix multiply dominates) and 18-49 times for L1 and L-infinity, which other GPU
+libraries lack. Where another library is faster, as graph indexes are for approximate search on some data,
 [How it compares](#how-it-compares) says so.
 
 Start with the [quickstart notebook](https://github.com/vglazer/siann/blob/main/examples/quickstart.ipynb).
@@ -84,12 +90,43 @@ grown = siann.Index(np.empty((0, 128), np.float32), metric="l2", recall=0.95)  #
 ```
 
 Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, the
-similarity for cosine and inner product. `device="cpu"` or `"gpu"` overrides the choice of device, for the
-index or for one search; a profile from `siann.tune` changes it for the indexes it is given to
-([TUNING](TUNING.md)). With `recall=`, siann builds an IVF, finds the number of lists to probe that reaches
-the target on a sample of the index's own vectors, and keeps exact search instead where that is faster;
-the plan reports each choice. Passing `calibration_queries`, a sample of your own queries, is optional, and
-keeps the target where they differ from the base vectors ([TUNING](TUNING.md)).
+similarity for cosine and inner product. Every choice siann makes can be overridden: `device="cpu"` or
+`"gpu"` for the index or for one search, `kind="exact"` or `"ivf"`, `nlist=`, `storage=`, `nprobe=` for
+one search, and a profile from `siann.tune` for the routing ([TUNING](TUNING.md)).
+
+## What siann does for you
+
+**It takes a target, not settings.** Give `recall=0.95` and siann builds an IVF, finds the number of lists
+each query must probe to reach the target, times that against exact search and keeps the faster. The target
+holds for queries like the ones it calibrated on: the index's own vectors by default, or a sample of your
+queries, passed as `calibration_queries=` or later to `index.calibrate()`
+([TUNING](TUNING.md#calibration-meeting-the-recall-target-on-your-queries)).
+
+**One index searches on both the CPU and the Apple GPU,** each search sent where its batch size runs
+fastest: typically single queries to the CPU and batches to the GPU, but the crossovers move with the data
+and the machine. An approximate index times its paths at batch sizes from 1 to 4,096 when it is built;
+exact search routes by a profile, siann's own or one `siann.tune` measures on your data and machine
+([TUNING](TUNING.md#approximate-search-where-each-batch-runs)). The GPU kernels run through MLX, or through
+PyTorch's MPS backend with `gpu="torch"`, with the same results ([BACKENDS](BACKENDS.md)).
+
+**Every common metric is fast.** L1 and L-infinity get kernels of their own, on the GPU and in Rust on the
+CPU, rather than being left to plain loops; cosine and inner product return similarities, the distances
+are not squared ([IMPLEMENTATION](IMPLEMENTATION.md#distances)).
+
+**The index keeps choosing as it changes.** It can start empty and grow by `add()`, lose vectors by
+`remove()`, and keep ids of your own. Added vectors are searched exactly until enough have gathered to merge;
+at each merge siann recalibrates, re-clusters when the lists fall out of balance or the index has doubled,
+and makes the choice between exact search and an IVF again as the index grows. Searches from other threads
+see the index as it was when they began ([IMPLEMENTATION](IMPLEMENTATION.md#changing-an-index)).
+
+**It explains itself.** `index.plan` lists each choice and the measurement behind it: the method, nprobe and
+the recall it reached, the storage, the routes, the memory it may use, what changed since the build. Where
+another library is faster, [How it compares](#how-it-compares) says so.
+
+**It is safe on unified memory.** On Apple silicon the GPU's memory is the machine's, and a search that
+outgrows it stalls the system rather than failing. siann splits GPU searches to stay within a budget, which
+never changes their results, and keeps an index too large for the GPU on the CPU
+([IMPLEMENTATION](IMPLEMENTATION.md#memory)).
 
 ## How it compares
 

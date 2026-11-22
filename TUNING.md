@@ -38,7 +38,9 @@ calibrating on them pays (a million vectors, target 0.95, recall measured on 9,0
 | SIFT1M, L2 | nprobe 38, recall 0.940: below the target | nprobe 46, recall 0.955 |
 | Music-100, inner product | nprobe 129, recall 0.986: five times the lists needed | nprobe 25, recall 0.946, 2.0-2.8 times faster |
 
-Pass queries when you have them, drawn like the ones the index will serve; 1,000 are used. To trade recall
+Pass queries when you have them, drawn like the ones the index will serve; 1,000 are used. An index built
+before you had them, or grown from empty, takes them later: `index.calibrate(queries)` recalibrates nprobe
+on them at once and keeps them for every later recalibration. To trade recall
 for speed by hand, `search(..., nprobe=)` overrides the calibrated value for one search, and `kind=` picks
 exact search or the IVF regardless of which was faster.
 
