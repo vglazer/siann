@@ -1,7 +1,7 @@
 # Benchmark scripts
 
 These scripts produce every measurement in [BENCHMARKS.md](../BENCHMARKS.md), and the ones behind
-[IMPLEMENTATION.md](../IMPLEMENTATION.md)'s "What does not pay", [TUNING.md](../TUNING.md)'s defaults and
+[DEVELOPMENT.md](../DEVELOPMENT.md)'s "What does not pay", [TUNING.md](../TUNING.md)'s defaults and
 [DATASETS.md](../DATASETS.md)'s facts. Their raw output is in [results/](results/). Run them from this folder
 after `uv sync --group bench` (from the top of the repository), as `uv run --group bench python <script>`;
 `--help` lists each one's options. The datasets go in `../data` ([DATASETS.md](../DATASETS.md)).
@@ -49,7 +49,7 @@ The README's "Which to use" table and BENCHMARKS.md's main sections.
 
 ## Ideas that do not pay
 
-Each backs an entry in IMPLEMENTATION.md's "What does not pay".
+Each backs an entry in [DEVELOPMENT.md](../DEVELOPMENT.md#what-does-not-pay)'s "What does not pay".
 
 | Script | What it tried |
 | --- | --- |

@@ -491,19 +491,28 @@ step as the intercept and a list's cost as the slope; the call itself takes abou
 | 1,000 | 16 | 8.8 | 0.924, 156 |
 
 Fewer lists do not help: at matched recall, 1,000 lists (nprobe 8: 0.822 in 89 microseconds) are level
-with 4,000 (nprobe 16: 0.828 in 94), and 4,000 win from recall 0.92. The two-level coarse step does
-help (one thread, median microseconds; `coarse_two_level_*.txt`):
+with 4,000 (nprobe 16: 0.828 in 94), and 4,000 win from recall 0.92.
 
-| Dataset, lists (groups), nprobe | Exact coarse step: recall, latency | 16 groups probed | 8 groups probed |
+**A two-level coarse step** clusters the centroids into groups (64 for 4,000 lists) and compares a query
+with the groups' centres, then only with the centroids of its 16 nearest groups. Its gain depends on the
+path: large on one thread, small on the paths `siann.Index` routes to, a single query split over 4
+threads and a small batch with one thread per query. 4,000 lists, uint8 lists on SIFT and float32 on
+GloVe, median microseconds per call, exact coarse step against two-level
+(`coarse_step.py --nlists "" --gprobes 8,16`; `coarse_two_level_routes_sift.txt`,
+`coarse_two_level_routes_glove.txt`):
+
+| Dataset, nprobe: recall (exact / two-level) | One thread | Split over 4 threads | Batch of 8 |
 | --- | ---: | ---: | ---: |
-| SIFT, 4,000 (64), 16 | 0.828, 96 | 0.828, **60** | 0.821, 54 |
-| SIFT, 4,000 (64), 32 | 0.921, 141 | 0.920, **103** | 0.906, 98 |
-| SIFT, 8,000 (128), 32 | 0.879, 152 | 0.876, **71** | 0.851, 65 |
-| GloVe, 4,000 (64), 16 | 0.716, 89 | 0.712, **58** | 0.698, 52 |
-| GloVe, 4,000 (64), 64 | 0.843, 198 | 0.832, **173** | 0.813, 168 |
+| SIFT, 16: 0.824 / 0.823 | 75 / 42 (1.79x) | 54 / 46 (1.17x) | 192 / 137 (1.40x) |
+| SIFT, 32: 0.915 / 0.914 | 107 / 65 (1.65x) | 63 / 57 (1.11x) | 241 / 203 (1.19x) |
+| SIFT, 48: 0.955 / 0.953 | 123 / 91 (1.35x) | 71 / 65 (1.09x) | 292 / 260 (1.12x) |
+| GloVe, 16: 0.718 / 0.714 | 88 / 61 (1.44x) | 62 / 58 (1.07x) | 273 / 243 (1.12x) |
+| GloVe, 64: 0.840 / 0.835 | 202 / 174 (1.16x) | 113 / 111 (1.02x) | 656 / 645 (1.02x) |
+| GloVe, 128: 0.891 / 0.884 | 342 / 319 (1.07x) | 179 / 178 (1.01x) | 1,155 / 1,147 (1.01x) |
 
-Probing 16 of 64 groups makes single queries 1.1-2.1x faster, most at low nprobe and with many lists,
-and costs at most 0.011 in recall; 16 of 128 groups cost up to 0.022 on GloVe, and 8 groups up to 0.03.
+Probing 16 of 64 groups costs up to 0.007 in recall here; 8 groups up to 0.034. On the routed paths it
+gains at most 1.17x for a single query and 1.40x for a batch of 8, least at high recall and on GloVe, so
+`siann.Index` uses the exact coarse step.
 
 **For a batch, through BLAS** (`coarse_blas.py`; `coarse_blas_4threads.txt`, `coarse_blas_16threads.txt`).
 By L2, cosine and inner product, a batch's coarse step can be one matrix multiply of the queries against

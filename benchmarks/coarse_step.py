@@ -11,7 +11,8 @@ a cheaper coarse step pay at matched recall?
    float32).
 3. A two-level coarse step (`set_coarse_groups`, `search(..., gprobe=g)`): the centroids clustered by
    k-means into groups (--two-level lists:groups); a query is compared with the groups' centres, then
-   only with the centroids of its g nearest groups. Latency against recall for 4,000 and 8,000 lists.
+   only with the centroids of its g nearest groups. Latency against recall for 4,000 and 8,000 lists,
+   and the median time of a call of --batch queries (one thread per query, the CPU's small-batch path).
 
 Latency is the median over --queries single calls after a warm-up (single_query.latency); recall
 counts ties as correct (backends.agreement). L2.
@@ -42,6 +43,7 @@ def main() -> None:
     p.add_argument("--splits", default="1,4")
     p.add_argument("--two-level", default="4000:64,8000:128", help="lists:groups for the two-level step")
     p.add_argument("--gprobes", default="4,8,16")
+    p.add_argument("--batch", type=int, default=8, help="queries per call for the batch column (0: none)")
     p.add_argument("--two-level-nprobes", default="8,16,32")
     p.add_argument("--storage", default="float32", choices=["float32", "float16", "uint8"],
                    help="list storage for the two-level runs (uint8 only for integer data, SIFT)")
@@ -93,7 +95,9 @@ def main() -> None:
         index.set_coarse_groups(np.ascontiguousarray(km.centroids, dtype=np.float32), assign)
         print(f"\n  two-level: {nlist} lists in {ngroups} groups (largest {np.bincount(assign).max()} lists), "
               f"{a.storage} lists:")
-        print(f"    {'nprobe':>6s} {'gprobe':>6s} {'recall@10':>9s} " + " ".join(f"{f'split={s}':>8s}" for s in splits))
+        bcol = f" {f'batch {a.batch}':>9s}" if a.batch else ""
+        print(f"    {'nprobe':>6s} {'gprobe':>6s} {'recall@10':>9s} " + " ".join(f"{f'split={s}':>8s}" for s in splits)
+              + bcol)
         for nprobe in map(int, a.two_level_nprobes.split(",")):
             for g in [0] + list(map(int, a.gprobes.split(","))):
                 meds = []
@@ -102,9 +106,15 @@ def main() -> None:
                         lambda q, n=nprobe, s=split, g=g: np.array(index.search(q, K, n, split=s, gprobe=g),
                                                                    dtype=np.int64).reshape(-1, K), xq)
                     meds.append(med)
+                cell = ""
+                if a.batch:
+                    med, _, _ = latency(
+                        lambda q, n=nprobe, g=g: index.search(q[0], K, n, gprobe=g),
+                        np.stack([xq[s:s + a.batch] for s in range(0, len(xq) - a.batch + 1, a.batch)]))
+                    cell = f" {med:9.0f}"
                 gl = "exact" if g == 0 else str(g)
                 print(f"    {nprobe:6d} {gl:>6s} {agreement(xb, xq, found, truth, 'l2'):9.3f} "
-                      + " ".join(f"{m:8.0f}" for m in meds), flush=True)
+                      + " ".join(f"{m:8.0f}" for m in meds) + cell, flush=True)
 
 
 if __name__ == "__main__":

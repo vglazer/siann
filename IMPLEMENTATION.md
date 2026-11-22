@@ -8,7 +8,7 @@ nearest the query, exactly or to a recall target. It is fast for two reasons. Th
 and which device meet the target fastest, for each batch size, and reports what it chose. The other is that
 **each of the paths it chooses between is fast**, through custom GPU kernels and CPU code laid out for the
 hardware. This page covers the choice first, then the methods, then the kernels in detail, where other
-libraries are faster, what does not pay, and how the code is organized. [BENCHMARKS](BENCHMARKS.md) has
+libraries are faster, and how the code is organized. [BENCHMARKS](BENCHMARKS.md) has
 the measurements, on an Apple M3 Max, and the scripts behind them.
 
 ## Why siann is fast
@@ -103,8 +103,7 @@ seconds for a million vectors:
    calls run up to 40% slower, which would favor the CPU). A measured route replaces the default one
    (single queries on the CPU, the GPU's query-major scan below 1,000 queries, its list-major scan from
    1,000) only where it was at least 10% faster, about the timings' spread, and between the batch sizes
-   measured the default holds. Single queries use the exact coarse step: the two-level one lowers recall
-   by up to 0.011, below what calibration promised.
+   measured the default holds.
 
 Exact search routes by a *profile*: for each metric, the batch size from which the GPU is faster. siann's
 default profile was measured on an Apple M3 Max with about a million vectors; `siann.tune` measures one on
@@ -246,10 +245,9 @@ scan returns the same neighbors: among vectors at exactly the same distance, the
 comes first, whatever order the lists were scanned in (ties are common on integer data such as SIFT's).
 
 **The coarse step.** Finding the nearest nprobe centroids is itself a small exact search (4,000
-centroids), and for a single query it is half the work at nprobe 16. A two-level coarse step cuts it:
-the centroids are clustered into groups (64 for 4,000 lists), and a query is compared with the groups'
-centres, then only with the centroids of its nearest groups (16 of 64): single queries 1.1-2.1 times
-faster on one thread, with at most 0.011 less recall.
+centroids), and for a single query on one thread it is about half the work at nprobe 16. Splitting a
+single query over 4 threads spreads the coarse step with the lists, so a cheaper coarse step buys
+little there ([What does not pay](DEVELOPMENT.md#what-does-not-pay)).
 
 For a batch on the CPU, by L2, cosine or inner product, the coarse step can instead be one BLAS matrix
 multiply of the queries against the centroids, whose products Rust ranks as it ranks its own distances,
@@ -417,65 +415,6 @@ included, and mlxvs's on the GPU.
 
 GloVe-like data favors siann at every batch size, because a graph must walk much further for the same
 recall there, while an IVF's dense scans do not care.
-
-## What does not pay
-
-Each of these is measured; the scripts are named in parentheses, and their output is in
-[benchmarks/results/](benchmarks/results/).
-
-- **A matrix multiply in pure Rust instead of BLAS** (`faer_gemm/`, `numpy_gemm.py`). faer, the multiply in
-  safe Rust, on the products exact L2 search computes: BLAS is 1.2-5.0 times faster on the Mac (Accelerate)
-  and 1.1-10.4 times on Linux (OpenBLAS), most for single queries and small batches
-  ([A matrix multiply in Rust](BENCHMARKS.md#a-matrix-multiply-in-rust)). Rust would avoid OpenBLAS's
-  threads competing with siann's; setting `OPENBLAS_THREAD_TIMEOUT` avoids it at no such cost.
-
-- **LSH for dense vectors** (`lsh_l1.py`). Locality-sensitive hashing hashes vectors so that near ones
-  tend to collide, then compares only the colliding ones. With Cauchy random projections (the standard
-  LSH for L1) on SIFT1M, reaching recall 0.72 means re-ranking a tenth of the database, which exact
-  search on the GPU already does faster. Real data has low contrast: a neighbor and a point twice as
-  far collide with nearly the same probability (0.28 and 0.26).
-- **A fused L1 kernel** (distance and selection in one pass): it reads the whole base once per query,
-  so it is limited by memory speed, at a third of the tiled kernel's speed.
-- **`f32::max` for L-infinity in Rust** (`rust_cpu_sweep.py`): the compiler treats a maximum as a
-  reduction it may reorder, and vectorizes the wrong loop, taking twice L1's time (an unsigned-integer
-  maximum on the float bits does the same). A comparison and select keeps one running maximum per
-  lane: 1.4 times L1's time.
-- **Assigning an inner-product IVF's lists by inner product** (`ip_lists.py`), as FAISS's IVF does:
-  the lists fall out of balance (22% empty on Music-100, 39% on raw GloVe, the largest holding 20,645
-  and 35,725 vectors), and at matched recall the search is 1.7-8.4 times slower than with lists
-  assigned by L2. Probing by L2 as well fails (recall at most 0.40).
-- **Reducing inner product to L2** (`ip_reduction.py`): extending each vector to the same length
-  balances the lists, but recall falls (below 0.82 on Music-100, 0.35 on raw GloVe), and FAISS's HNSW
-  on the extended vectors does as badly: the added coordinate dominates the distances.
-- **Any IVF on vectors of very uneven length** (raw GloVe, lengths 0.04 to 18.7): siann's reaches
-  recall 0.443 by nprobe 128, FAISS's 0.641; use HNSW, or exact search on the GPU for recall 1.0.
-- **BLAS in the CPU IVF's list-major scan** (`blas_ivf.py`): one multiply per list, its queries against
-  its vectors, the products ranked in Rust. The multiplies are small (about 160 queries by 250 vectors
-  at nprobe 64), so overheads dominate: 0.5-0.8 times the Rust list-major scan on batches of 10,000,
-  and 0.14-0.19 times on batches of 100. With the coarse step and grouping free it would at best draw
-  level. BLAS pays for exact L2, where the multiplies are large.
-- **Splitting a single query on the global thread pool** (`single_query.py`): a query injected into
-  rayon's pool (all 16 cores) wakes its sleeping threads, about 100 microseconds per query, slower than
-  one thread at low nprobe. A pool of its own (4 threads) avoids it.
-- **Widening float16 inside the distance loops in Rust**, or over nested `[u16; 8]` arrays: the
-  compiler loads the halves one lane at a time. Widening each block into a buffer first, in a loop over
-  flat slices, is 1.3-1.9 times faster.
-- **Fewer IVF lists to cheapen the coarse step** (`coarse_step.py`): each list grows as the coarse step
-  shrinks, which cancels out at matched recall; the two-level coarse step is what helps.
-- **Finer partitions for small batches on the CPU** (`fine_lists.py`, `batch_profile.py`): 16,000 lists
-  touch 1.6 times fewer vectors than 4,000 at recall 0.97 and run at the same speed, held back by a
-  fixed cost per list. On the GPU they pay at high recall.
-- **An integer kernel in the blocked layout:** no faster than the float path (259 against 263
-  microseconds at nprobe 64, written with the `wide` crate's vector types); the integer path needs each
-  vector's bytes contiguous.
-- **The integer path in the CPU's list-major scan** (large batches; `fp16_lists.py`): Rust's list-major
-  scan with uint8 lists does 38,567 queries per second on SIFT at nprobe 64, against the GPU IVF's
-  199,347 and compressed HNSW's 153,710; even the single-query path's gain (1.6-1.8 times) would leave
-  it far behind both.
-- **Reading four coordinates per load in the GPU scan** (`uchar4`, `half4`, `float4`, with identical
-  results; `gpu_load4_ab.txt`): up to 6% faster on SIFT and 20-45% slower on GloVe.
-- **Routing timed with the devices in alternation** (`index_routing_ab.py`): after calls on the CPU, a GPU
-  call runs up to 40% slower, so timing the two in turn favors the CPU; each path is timed by itself.
 
 ## Code layout
 

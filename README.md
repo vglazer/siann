@@ -46,12 +46,12 @@ To run the quickstart notebook, clone the repository and, from its folder,
 | --- | --- |
 | [Quickstart notebook](https://github.com/vglazer/siann/blob/main/examples/quickstart.ipynb) | The metrics, scores, plans, devices and tuning, hands-on |
 | [siann.readthedocs.io](https://siann.readthedocs.io) | These pages, online |
-| [IMPLEMENTATION](IMPLEMENTATION.md) | Why siann is fast: how it chooses the fastest way to meet a recall target, the search methods, the kernels in detail, where other libraries are faster, and what does not pay |
+| [IMPLEMENTATION](IMPLEMENTATION.md) | Why siann is fast: how it chooses the fastest way to meet a recall target, the search methods, the kernels in detail, and where other libraries are faster |
 | [BACKENDS](BACKENDS.md) | MLX, PyTorch MPS, FAISS and siann's Rust code: what each offers, and their pitfalls |
 | [DATASETS](DATASETS.md) | SIFT1M, GloVe-100, Music-100, DBpedia OpenAI and Gaussian vectors: sources, preparation and quirks |
 | [BENCHMARKS](BENCHMARKS.md) | Which path to use for each workload, and every measurement behind it, with the scripts that reproduce them |
 | [TUNING](TUNING.md) | Calibration and tuning: what siann measures, on what, and how to measure it on your own queries, data and hardware |
-| [DEVELOPMENT](DEVELOPMENT.md) | Building, testing and linting, and the rules for changing the code |
+| [DEVELOPMENT](DEVELOPMENT.md) | Building, testing and linting, the rules for changing the code, and the ideas that do not pay |
 
 ## Python
 
