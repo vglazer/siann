@@ -540,19 +540,19 @@ queries (ties counted as found), and its speed at the batch sizes it routes (`in
 
 | Dataset | Calibrated on | nprobe | Recall on the queries | Build | Queries/s: 1 / 100 / 10,000 |
 | --- | --- | ---: | ---: | ---: | ---: |
-| SIFT, L2 | its own vectors | 38 | 0.940 | 6.0 s | 11,503 / 103,959 / 199,346 |
-| SIFT, L2 | 1,000 of the queries (recall on the other 9,000) | 46 | **0.955** | 6.0 s | 11,103 / 98,239 / 180,252 |
-| GloVe, cosine | its own vectors | 364 | 0.947 | 8.6 s | 2,396 / 21,616 / 46,450 |
-| Music-100, inner product | its own vectors | 129 | 0.986 | 5.7 s | 9,546 / 60,076 / 170,253 |
-| Music-100, inner product | 1,000 of the queries (recall on the other 9,000) | 25 | **0.946** | 4.8 s | 15,782 / 168,543 / 333,396 |
+| SIFT, L2 | its own vectors | 38 | 0.940 | 6.1 s | 12,991 / 108,880 / 263,708 |
+| SIFT, L2 | 1,000 of the queries (recall on the other 9,000) | 46 | **0.955** | 6.1 s | 12,564 / 100,081 / 235,178 |
+| GloVe, cosine | its own vectors | 364 | 0.947 | 8.8 s | 2,412 / 21,583 / 49,425 |
+| Music-100, inner product | its own vectors | 129 | 0.986 | 5.9 s | 10,261 / 62,212 / 184,307 |
+| Music-100, inner product | 1,000 of the queries (recall on the other 9,000) | 25 | **0.946** | 5.0 s | 18,292 / 166,167 / 438,664 |
 
 - **Calibrate on queries like the real ones.** A sample of the index's own vectors misses the target on
   real queries, either way: SIFT's queries are harder than its base vectors (0.940 against 0.95), Music-100's
   much easier (0.986, at five times the nprobe it needs). Calibrated on 1,000 of the queries, the other
   9,000 land within 0.005 of the target.
-- **The IVF is chosen on every dataset,** 2-11 times faster than exact search on the calibration sample.
+- **The IVF is chosen on every dataset,** 2-12 times faster than exact search on the calibration sample.
 - **The build takes 5-9 seconds for a million vectors:** k-means and the lists (3.5-4.0 s), calibration,
-  then the routing measurement (0.9-3.6 s).
+  then the routing measurement (1.0-3.7 s).
 
 ### Routing approximate search
 
@@ -567,14 +567,14 @@ second of the measured route over the fixed one, at the batch sizes where the tw
 
 | Dataset, calibrated on | 2-8 queries | 16-64 | 100-512 | 1,000-2,048 |
 | --- | ---: | ---: | ---: | ---: |
-| SIFT, its own vectors | 2.3-3.8x (CPU) | 1.4x at 16 (CPU) | same | 1.3x at 1,000 (query-major) |
-| SIFT, queries | 2.5-3.8x (CPU) | 1.6x at 16 (CPU) | same | 1.2x at 1,000 (query-major) |
+| SIFT, its own vectors | 2.3-3.9x (CPU) | 1.4x at 16 (CPU) | same | 1.1-1.3x (query-major) |
+| SIFT, queries | 2.5-3.6x (CPU) | 1.6x at 16 (CPU) | same | 1.2x at 1,000 (query-major) |
 | GloVe, its own vectors | 1.5-3.7x | 1.2-1.3x (list-major) | 1.3-1.9x (list-major) | same |
-| Music-100, its own vectors | 2.6-6.3x (CPU) | same | **0.77x at 512** (list-major) | same |
-| Music-100, queries | 3.2-5.3x (CPU) | 1.2-1.9x (CPU) | same | 1.6x (query-major) |
+| Music-100, its own vectors | 2.5-6.1x (CPU) | same | **0.77x at 512** (list-major) | same |
+| Music-100, queries | 3.3-5.2x (CPU) | 1.3-2.0x (CPU) | same | 1.5-1.6x (query-major) |
 
 - **Small batches gain most:** the GPU's fixed cost per call outweighs its speed below 8-64 queries,
-  depending on nprobe, and the CPU answers them 1.2-6.3 times faster.
+  depending on nprobe, and the CPU answers them 1.3-6.1 times faster.
 - **The crossovers move with nprobe** (`ivf_routing.txt`, `siann.tune` on each dataset's queries): at nprobe
   46 on SIFT the CPU wins up to 16 queries and the GPU's list-major scan beyond 1,024; at nprobe 370 on
   GloVe the GPU wins from 8 queries and its list-major scan at every size; at nprobe 25 on Music-100 the
@@ -586,9 +586,10 @@ second of the measured route over the fixed one, at the batch sizes where the tw
 - **A measured route replaces the default only where it was at least 10% faster,** about the spread of the
   timings, and between the batch sizes measured the default holds, so no threshold rests on a difference
   the timings cannot resolve.
-- **Time each route back to back, warmed up.** After calls on the CPU, the GPU's next calls run up to 40%
-  slower until it is busy again, so routes timed in alternation, or a fresh index's first calls, favor the
-  CPU.
+- **Time each route back to back, warmed up, the GPU first.** After calls on the CPU, the GPU's next calls
+  run up to 40% slower until it is busy again, so routes timed in alternation, or a fresh index's first
+  calls, favor the CPU; at each batch size the index times the GPU's scans before the CPU's, as a GPU left
+  idle by three CPU scans otherwise looked slower than it is at 100-128 queries on Music-100 (0.74-0.90x).
 
 ## Against mlxvs on the GPU
 
@@ -845,16 +846,17 @@ data are synthetic, since the datasets are too large for a runner: 200,000 vecto
 drawn from 100 clusters in 16 dimensions and projected to 128, so that an IVF at recall 0.95 probes 9 of
 1,789 lists, as on SIFT. The queries are 1,000 more from the same clusters, k is 10, and siann's exact
 neighbors are FAISS's in every case. `OPENBLAS_THREAD_TIMEOUT` is 4, as siann sets it when imported before
-NumPy (below).
+NumPy (below). Each figure is from one pass on a shared machine: L1, which makes no BLAS calls, varies by
+0.86-1.32x between two passes of the same build, so read differences of that size as noise.
 
 Exact search, siann's queries per second as a multiple of FAISS's flat index, by batch size:
 
 | Metric | x86-64: 1 | 10 | 100 | 1,000 | ARM: 1 | 10 | 100 | 1,000 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| L2 | 3.89 | 1.66 | 1.11 | 1.06 | 3.06 | 1.56 | 1.27 | 1.16 |
-| inner product | 2.84 | 1.36 | 0.95 | 0.91 | 2.24 | 1.25 | 1.01 | 0.97 |
-| L1 | 1.89 | 2.78 | 2.47 | 2.75 | 1.69 | 1.88 | 1.59 | 1.99 |
-| L-infinity | 18 | 27 | 30 | 33 | 16 | 17 | 14 | 18 |
+| L2 | 3.69 | 1.67 | 1.13 | 1.07 | 3.30 | 1.59 | 1.27 | 1.18 |
+| inner product | 2.91 | 1.33 | 0.96 | 0.91 | 2.46 | 1.24 | 1.03 | 0.97 |
+| L1 | 1.87 | 2.17 | 2.53 | 2.67 | 1.93 | 1.94 | 1.65 | 2.07 |
+| L-infinity | 20 | 29 | 30 | 34 | 15 | 17 | 14 | 18 |
 
 Approximate search by L2: `siann.Index(recall=0.95)` calibrated on 1,000 separate queries reaches recall
 0.961 at nprobe 9. FAISS's IVF-Flat, on the same number of lists, reaches 0.972 at nprobe 10, and its HNSW
@@ -863,14 +865,15 @@ multiple of each:
 
 | Against | x86-64: 1 | 10 | 100 | 1,000 | ARM: 1 | 10 | 100 | 1,000 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| FAISS IVF-Flat | 1.80 | 0.88 | 0.84 | 1.16 | 2.08 | 0.65 | 0.84 | 0.95 |
-| FAISS HNSW | 0.18 | 0.36 | 0.63 | 0.92 | 0.22 | 0.28 | 0.52 | 0.60 |
+| FAISS IVF-Flat | 3.57 | 0.94 | 0.92 | 1.24 | 5.42 | 0.81 | 0.62 | 1.05 |
+| FAISS HNSW | 0.39 | 0.47 | 0.75 | 1.08 | 0.59 | 0.36 | 0.40 | 0.75 |
 
-On these 4-thread machines siann's IVF leads FAISS's on single queries and on x86-64 at 1,000 queries,
-and trails it at 10 and 100; on the M3 Max, on the same lists, it leads at every batch size on SIFT and
-GloVe ([The coarse step](#the-coarse-step)). These synthetic vectors suit a graph index more than SIFT
-does: HNSW leads siann's IVF 1.1-5.6x here, against 1.2-1.8x for siann's CPU IVF on SIFT1M on the M3 Max,
-single queries and batches of 10,000 ([Approximate search: batches](#approximate-search-batches)).
+On these 4-thread machines siann's IVF leads FAISS's on single queries and at 1,000 queries, and trails it
+at 10 and 100 queries (0.62-0.94); on the M3 Max, on the same lists, it leads at every batch size on SIFT
+and GloVe ([The coarse step](#the-coarse-step)). These
+synthetic vectors suit a graph index more than SIFT does: HNSW leads siann's IVF up to 2.8x below 1,000
+queries, against 1.2-1.8x for siann's CPU IVF on SIFT1M on the M3 Max, single queries and batches of
+10,000 ([Approximate search: batches](#approximate-search-batches)).
 
 **NumPy's OpenBLAS.** On Linux NumPy's BLAS is OpenBLAS, whose threads spin after each call, slowing the
 Rust code that follows on the same cores. With `OPENBLAS_THREAD_TIMEOUT=4` they sleep at once; siann's
@@ -878,16 +881,17 @@ queries per second with it, as a multiple of OpenBLAS's default (28), the same b
 
 | Search | x86-64: 1 | 10 | 100 | 1,000 | ARM: 1 | 10 | 100 | 1,000 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Exact L2 | 1.05 | 1.22 | 1.45 | 1.52 | 0.95 | 1.23 | 1.40 | 1.34 |
-| Exact L1 | 1.04 | 1.01 | 1.00 | 1.00 | 0.98 | 0.99 | 1.00 | 1.00 |
-| IVF, L2 | 1.00 | 1.01 | 1.22 | 1.63 | 0.97 | 1.13 | 1.54 | 1.79 |
+| Exact L2 | 0.93 | 1.22 | 1.47 | 1.49 | 0.83 | 1.16 | 1.33 | 1.33 |
+| Exact L1 | 1.00 | 0.86 | 1.00 | 0.99 | 1.32 | 0.97 | 0.99 | 1.00 |
+| IVF, L2 | 1.02 | 1.03 | 1.37 | 2.00 | 1.01 | 1.07 | 1.01 | 1.73 |
 
-L1 and L-infinity make no BLAS calls and do not change. With OpenBLAS's default, the IVF's routing
-measures the BLAS coarse step slower and does not take it; with the short timeout it takes it from 16
-queries (x86-64) and 8 (ARM). [TUNING](TUNING.md#numpys-blas-on-linux-and-windows) says how to set it.
+L1 makes no BLAS calls, so its row shows the passes' spread. With OpenBLAS's default, the IVF's routing
+measures the BLAS coarse step slower and does not take it; with the short timeout it took it from 32
+queries on x86-64 and, in this pass, only from 128 on ARM, which is why ARM's batch of 100 does not gain
+here. [TUNING](TUNING.md#numpys-blas-on-linux-and-windows) says how to set it.
 
 **x86-64-v3.** The x86-64 wheels are compiled for x86-64-v3 (AVX2 and FMA). Built for any x86-64 processor
-instead (`x86_cpu_linux_x86_64_baseline.txt`), siann runs L1 1.61-1.78x and L-infinity 1.67-1.80x slower
+instead (`x86_cpu_linux_x86_64_baseline.txt`), siann runs L1 1.46-1.75x and L-infinity 1.85-2.04x slower
 on this runner, and 1.9-2.4x slower on an Intel Xeon 6975P-C runner (`x86_cpu_linux_xeon_*.txt`), where
 single L1 queries fall to 0.65x FAISS's speed. L2 and inner product do not change, as NumPy's BLAS does
 their arithmetic.

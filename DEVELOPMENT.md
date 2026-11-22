@@ -66,7 +66,7 @@ for each platform:
 | Windows, x86-64 | needs AVX2 |
 
 The x86-64 wheels are compiled for x86-64-v3, which requires AVX2 and FMA (Intel processors from Haswell,
-2013, and AMD's from Excavator, 2015): that makes L1 and L-infinity search 1.6-2.4x faster than a build for
+2013, and AMD's from Excavator, 2015): that makes L1 and L-infinity search 1.5-2.4x faster than a build for
 any x86-64 processor (BENCHMARKS, [On Linux](BENCHMARKS.md#on-linux)). On an older processor, `import
 siann` raises an ImportError saying so (`siann._build`, checked before the Rust extension loads), and
 `pip install --no-binary siann siann` builds siann for that machine from the source distribution.

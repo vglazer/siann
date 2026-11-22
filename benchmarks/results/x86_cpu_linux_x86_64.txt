@@ -3,17 +3,17 @@ AMD EPYC 7763 64-Core Processor, 4 threads, Linux; siann 0.1.0, FAISS 1.16.0
 
 exact search, siann / FAISS (ratio); siann's neighbors against FAISS's
   metric                         1                        10                       100                     1,000   agree
-  l2               379 / 97 (3.89)          850 / 512 (1.66)      2,083 / 1,875 (1.11)      2,593 / 2,450 (1.06)   1.0000
-  ip              371 / 131 (2.84)          826 / 606 (1.36)      2,091 / 2,197 (0.95)      2,552 / 2,803 (0.91)   1.0000
-  l1              312 / 166 (1.89)        1,149 / 413 (2.78)        1,313 / 531 (2.47)        1,462 / 532 (2.75)   1.0000
-  linf            305 / 17 (18.42)        1,117 / 41 (27.12)        1,300 / 44 (29.87)        1,419 / 43 (33.18)   1.0000
+  l2               360 / 98 (3.69)          856 / 514 (1.67)      2,165 / 1,922 (1.13)      2,608 / 2,449 (1.07)   1.0000
+  ip              384 / 132 (2.91)          827 / 620 (1.33)      2,156 / 2,253 (0.96)      2,614 / 2,874 (0.91)   1.0000
+  l1              308 / 164 (1.87)          972 / 449 (2.17)        1,304 / 516 (2.53)        1,400 / 524 (2.67)   1.0000
+  linf            326 / 17 (19.74)        1,180 / 40 (29.14)        1,310 / 44 (29.96)        1,475 / 44 (33.75)   1.0000
 
 approximate search, L2: siann.Index(recall=0.95) calibrated on 1,000 separate queries
-  siann IVF (1,789 lists, nprobe 9, built in 12.0 s): recall 0.961
-  routing measured in 2.1 s: single queries split over 4 threads, batches on the CPU (coarse step through BLAS from 16; list-major from 512)
+  siann IVF (1,789 lists, nprobe 9, built in 11.9 s): recall 0.961
+  routing measured in 2.1 s: single queries split over 4 threads, batches on the CPU (coarse step through BLAS from 32; list-major from 512)
            1        10       100     1,000
-       3,984    19,032    40,254    60,677
-  FAISS IVF-Flat (1,789 lists) built in 6.5 s
-  FAISS IVF-Flat, nprobe at 10 (recall 0.972): 1: 2,211 (siann 1.80x), 10: 21,587 (siann 0.88x), 100: 47,894 (siann 0.84x), 1,000: 52,416 (siann 1.16x)
-  FAISS HNSW (M 32) built in 6.2 s
-  FAISS HNSW, efSearch at 12 (recall 0.968): 1: 22,272 (siann 0.18x), 10: 53,216 (siann 0.36x), 100: 64,186 (siann 0.63x), 1,000: 65,776 (siann 0.92x)
+       8,313    24,835    47,331    68,630
+  FAISS IVF-Flat (1,789 lists) built in 6.7 s
+  FAISS IVF-Flat, nprobe at 10 (recall 0.972): 1: 2,330 (siann 3.57x), 10: 26,433 (siann 0.94x), 100: 51,495 (siann 0.92x), 1,000: 55,566 (siann 1.24x)
+  FAISS HNSW (M 32) built in 6.1 s
+  FAISS HNSW, efSearch at 12 (recall 0.968): 1: 21,453 (siann 0.39x), 10: 52,712 (siann 0.47x), 100: 62,788 (siann 0.75x), 1,000: 63,761 (siann 1.08x)

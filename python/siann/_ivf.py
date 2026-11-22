@@ -205,7 +205,8 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
     blas = ("cpu-query-blas",) if ivf.metric in ("l2", "ip") else ()
     for b in batches:
         paths = (("cpu-split",) if b == 1 else ("cpu-query",) + blas + ("cpu-list",)) if cpu_on else ()
-        measured, slowest = time_paths(b, paths + (("gpu-query", "gpu-list") if gpu else ()))
+        # the GPU's paths first: after the CPU's, a GPU left idle runs its next calls slower
+        measured, slowest = time_paths(b, (("gpu-query", "gpu-list") if gpu else ()) + paths)
         rates.update({(path, b): r for path, r in measured.items()})
         if cpu_on:
             if gpu:

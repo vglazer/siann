@@ -3,13 +3,13 @@ aarch64, 4 threads, Linux; siann 0.1.0, FAISS 1.16.0
 
 exact search, siann / FAISS (ratio); siann's neighbors against FAISS's
   metric                         1                        10                       100                     1,000   agree
-  l2                         1,114                     1,413                     1,931                     2,141   1.0000
-  ip                         1,102                     1,464                     1,956                     2,175   1.0000
-  l1                           330                     1,180                     1,179                     1,472   1.0000
-  linf                         255                       880                       869                     1,091   1.0000
+  l2                         1,210                     1,424                     1,992                     2,151   1.0000
+  ip                         1,203                     1,412                     1,936                     2,109   1.0000
+  l1                           247                     1,173                     1,179                     1,482   1.0000
+  linf                         254                       872                       870                     1,085   1.0000
 
 approximate search, L2: siann.Index(recall=0.95) calibrated on 1,000 separate queries
-  siann IVF (1,789 lists, nprobe 9, built in 14.4 s): recall 0.961
-  routing measured in 3.3 s: single queries split over 4 threads, batches on the CPU
+  siann IVF (1,789 lists, nprobe 9, built in 14.2 s): recall 0.961
+  routing measured in 3.5 s: single queries split over 4 threads, batches on the CPU
            1        10       100     1,000
-       4,909    19,672    36,803    39,991
+      11,767    25,144    41,685    45,812

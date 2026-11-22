@@ -3,17 +3,17 @@ aarch64, 4 threads, Linux; siann 0.1.0, FAISS 1.16.0
 
 exact search, siann / FAISS (ratio); siann's neighbors against FAISS's
   metric                         1                        10                       100                     1,000   agree
-  l2            1,055 / 345 (3.06)      1,740 / 1,113 (1.56)      2,695 / 2,117 (1.27)      2,873 / 2,466 (1.16)   1.0000
-  ip            1,083 / 483 (2.24)      1,721 / 1,377 (1.25)      2,663 / 2,640 (1.01)      2,827 / 2,924 (0.97)   1.0000
-  l1              323 / 191 (1.69)        1,164 / 620 (1.88)        1,176 / 741 (1.59)        1,479 / 744 (1.99)   1.0000
-  linf            251 / 16 (16.04)          869 / 52 (16.70)          866 / 62 (13.98)        1,086 / 62 (17.52)   1.0000
+  l2              999 / 303 (3.30)      1,651 / 1,038 (1.59)      2,650 / 2,079 (1.27)      2,862 / 2,429 (1.18)   1.0000
+  ip            1,131 / 459 (2.46)      1,644 / 1,323 (1.24)      2,682 / 2,612 (1.03)      2,876 / 2,963 (0.97)   1.0000
+  l1              326 / 169 (1.93)        1,138 / 586 (1.94)        1,172 / 712 (1.65)        1,479 / 714 (2.07)   1.0000
+  linf            236 / 16 (15.13)          863 / 52 (16.55)          862 / 62 (13.93)        1,088 / 62 (17.59)   1.0000
 
 approximate search, L2: siann.Index(recall=0.95) calibrated on 1,000 separate queries
   siann IVF (1,789 lists, nprobe 9, built in 10.5 s): recall 0.961
-  routing measured in 1.9 s: single queries split over 4 threads, batches on the CPU (coarse step through BLAS from 8)
+  routing measured in 1.9 s: single queries split over 4 threads, batches on the CPU (coarse step through BLAS from 128)
            1        10       100     1,000
-       4,749    22,224    56,737    71,673
-  FAISS IVF-Flat (1,789 lists) built in 6.3 s
-  FAISS IVF-Flat, nprobe at 10 (recall 0.972): 1: 2,289 (siann 2.08x), 10: 34,120 (siann 0.65x), 100: 67,232 (siann 0.84x), 1,000: 75,581 (siann 0.95x)
-  FAISS HNSW (M 32) built in 3.8 s
-  FAISS HNSW, efSearch at 12 (recall 0.968): 1: 21,684 (siann 0.22x), 10: 80,253 (siann 0.28x), 100: 110,028 (siann 0.52x), 1,000: 118,519 (siann 0.60x)
+      11,869    26,981    41,898    79,154
+  FAISS IVF-Flat (1,789 lists) built in 6.4 s
+  FAISS IVF-Flat, nprobe at 10 (recall 0.972): 1: 2,191 (siann 5.42x), 10: 33,501 (siann 0.81x), 100: 67,674 (siann 0.62x), 1,000: 75,654 (siann 1.05x)
+  FAISS HNSW (M 32) built in 4.3 s
+  FAISS HNSW, efSearch at 12 (recall 0.968): 1: 20,177 (siann 0.59x), 10: 75,243 (siann 0.36x), 100: 105,091 (siann 0.40x), 1,000: 105,684 (siann 0.75x)

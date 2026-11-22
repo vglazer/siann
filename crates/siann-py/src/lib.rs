@@ -1480,7 +1480,7 @@ fn scores<'py>(
         let rows = out
             .chunks_mut(k.max(1))
             .zip(is.chunks(k.max(1)).zip(qs.chunks(d.max(1))));
-        if nq * k * d < 1 << 16 {
+        if nq * k * d < 1 << 22 {
             rows.for_each(one);
         } else {
             out.par_chunks_mut(k.max(1))

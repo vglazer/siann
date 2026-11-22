@@ -55,7 +55,7 @@ jobs:
         include:
           # each wheel is built on a runner of its own architecture, so that it can be smoke-tested there.
           # x86-64 wheels target x86-64-v3 (AVX2 and FMA: Intel from Haswell, AMD from Excavator), which
-          # makes L1 and L-infinity search 1.6-2.4x faster (x86_bench.yml measures it); siann._build
+          # makes L1 and L-infinity search 1.5-2.4x faster (x86_bench.yml measures it); siann._build
           # refuses to load them on older processors, with a message saying to build from source
           - { os: ubuntu-latest, target: x86_64, v3: true }
           - { os: ubuntu-24.04-arm, target: aarch64 }
