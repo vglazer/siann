@@ -382,6 +382,56 @@ print(loaded.plan)
 assert (loaded.search(rest, 10).indices == approx.search(rest, 10).indices).all()
 """),
     md("""
+## Changing an index
+
+`index.add(x)` adds vectors and returns their ids; `index.remove(ids)` removes vectors by id. Searches return
+ids: a vector's row number unless `add(x, ids=...)` names it. Added vectors are searched exactly until
+10,000 of them (or 1% of the index) have gathered; then they are merged into the index, and an approximate
+index recalibrates nprobe, so that the recall target keeps holding. Here, an index built on the first
+150,000 vectors gets the other 50,000 in batches of 10,000. Their ids continue from 150,000, which are
+their row numbers in `xb`, so the true neighbors from above still apply.
+"""),
+    code("""
+growing = siann.Index(xb[:150_000], "l2", recall=0.95, calibration_queries=xq[:1000])
+for s in range(150_000, 200_000, 10_000):
+    ids = growing.add(xb[s:s + 10_000])
+print(f"ids of the last batch: {ids[0]:,} to {ids[-1]:,}; the index holds {growing.n:,}")
+found = growing.search(rest, 10).indices
+print(f"recall@10 on the other {len(rest):,} queries: {recall(found, truth[1000:]):.3f}")
+print(growing.plan)
+"""),
+    md("""
+Adding to an approximate index puts each vector in the list of its nearest centroid, and the centroids stay
+as they were. That keeps recall, but vectors from regions the centroids never saw crowd into a few lists,
+which slows searches. When the largest list has doubled against the mean since the index was clustered, or
+the index has doubled in size, siann clusters it again (in the `add` that crosses the line), and the plan
+says why. Here, 30,000 vectors from 20 new centres:
+"""),
+    code("""
+new_centers = 3 + rng.standard_normal((20, 128), dtype=np.float32)
+elsewhere = (new_centers[rng.integers(0, 20, 30_000)]
+             + 0.3 * rng.standard_normal((30_000, 128), dtype=np.float32))
+start = time.perf_counter()
+for s in range(0, 30_000, 10_000):
+    growing.add(elsewhere[s:s + 10_000])
+print(f"added in {time.perf_counter() - start:.1f} s")
+print("\\n".join(line for line in str(growing.plan).splitlines() if "merged" in line or "clustered" in line))
+"""),
+    md("""
+Removed vectors are never returned, and the results stay exact. Vectors added with ids of your own are found
+by them:
+"""),
+    code("""
+near = growing.search(xq[:1], 3).indices[0]
+growing.remove(near)
+print(f"removed {near}; the nearest now: {growing.search(xq[:1], 3).indices[0]}")
+mine = growing.add(xq[:2], ids=[10**9, 10**9 + 1])
+print(f"added with ids {mine}: the nearest to the first query is {growing.search(xq[:1], 1).indices[0, 0]:,}")
+"""),
+    md("""
+`index.recluster()` clusters the index again when you choose, and `index.save()` merges and compacts first
+and keeps the ids.
+
 ## When fewer than k exist
 
 Asking for more neighbors than there are vectors returns all of them, then `-1` in the missing slots, with
