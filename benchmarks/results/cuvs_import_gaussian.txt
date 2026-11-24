@@ -1,0 +1,23 @@
+cuVS IVF-Flat: 100,000 vectors, 128 dimensions, 316 lists, metric code 0
+  every id once: True
+  each list's vectors, de-interleaved, against the regenerated ones: 99,987 of 100,000 identical, the rest within 4.8e-07 (NumPy's Gaussian sampler rounds a few tail values a unit in the last place differently on another machine)
+  in the list of its nearest centroid: 1.0000
+
+  recall@10 on 1,000 queries, at nprobe: cuVS's lists searched by siann / siann's own lists (316 lists each)
+      4: 0.082 / 0.097
+     16: 0.221 / 0.269
+     64: 0.538 / 0.626
+  calibrated for 0.9 on 1,000 other queries: nprobe 189, recall 0.898
+  CPU and GPU, the same neighbors: 0.9995
+
+siann.Index: 100,000 vectors, 128 dimensions, metric l2
+  kind: ivf
+  device: auto
+  approximate search: an IVF of 316 lists built by cuVS (IVF-Flat, on an NVIDIA GPU), imported
+  lists stored as float16 on the GPU (recall moves by at most about 0.001) and float32 on the CPU
+  calibrated: nprobe 189 reaches recall@10 0.900 (target 0.9) on 1,000 of the given calibration queries, given to index.calibrate()
+  routing measured in 1.7 s: below 5 queries on the CPU (list-major from 4); on the GPU query-major up to 4,096 queries, list-major from 4,097
+  profile: this process's, as the saved one was measured on another machine
+  GPU found: approximate searches routed as above
+  GPU backend: MLX
+  memory: 49 MB of vectors, copied to the GPU when a search first needs them; each GPU call works within 4.0 GB (the GPU can use 48.0 GB)

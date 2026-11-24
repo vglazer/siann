@@ -19,3 +19,6 @@ python/siann/*.so
 
 # PyPI's copy of the README, written by scripts/make_pypi_readme.py
 python/PYPI_README.md
+
+# index files from other libraries, brought in for format checks
+*.cuvs
