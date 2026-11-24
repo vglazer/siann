@@ -1,0 +1,13 @@
+Colab, Tesla T4 (PyTorch 2.14.1+cu130, cuVS 26.06.00; FAISS not installed in this run)
+python triton_probe.py --check
+  on cuda
+  n 1000, d 24, 37 queries, k 10: identical to exact search, ties included: True
+  n 777, d 13, 5 queries, k 3: identical to exact search, ties included: True
+  n 300, d 8, 20 queries, k 10: identical to exact search, ties included: True
+python triton_probe.py --bench   (BLOCK_Q 16, BLOCK_N 128, BLOCK_D 8, a full sort per block)
+Tesla T4: 1,000,000 Gaussian vectors, 128 dimensions, L1, k = 10; queries per second
+  (FAISS GPU skipped: ModuleNotFoundError: No module named 'faiss')
+                                 batch 100   batch 1,000  batch 10,000
+  siann's kernel, Triton             1,034         1,153         1,117
+  torch.cdist + topk                    95            91            91
+  cuVS brute force                   6,020         5,942         6,133

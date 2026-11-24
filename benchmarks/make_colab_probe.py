@@ -37,21 +37,28 @@ the file browser at the end. Copy the outputs of the check and benchmark cells b
         code('''
 # FAISS's and cuVS's GPU packages for the CUDA version this machine's PyTorch was built with, cuVS only if it is
 # not already installed (Colab comes with it): mixing CUDA 12 and 13 packages breaks NVIDIA's other libraries
-import subprocess, sys, torch
+import subprocess
+import sys
+
+import torch
+
 cuda = torch.version.cuda.split(".")[0]
 print("PyTorch", torch.__version__, "for CUDA", torch.version.cuda)
 
 
 def cuvs_works():
-    r = subprocess.run([sys.executable, "-c", "from cuvs.neighbors import brute_force"], capture_output=True, text=True)
+    r = subprocess.run([sys.executable, "-c", "from cuvs.neighbors import brute_force"], check=False,
+                       capture_output=True, text=True)
     return r.returncode == 0
 
 
 # cuVS's Python package can be present without its library (libcuvs_c.so): reinstall both, for this CUDA
 wanted = [f"faiss-gpu-cu{cuda}"] + ([] if cuvs_works() else [f"libcuvs-cu{cuda}", f"cuvs-cu{cuda}"])
+
+
 def install(pkg):
     r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", pkg, "--extra-index-url=https://pypi.nvidia.com"],
-                       capture_output=True, text=True)
+                       check=False, capture_output=True, text=True)
     print(pkg, "installed" if r.returncode == 0 else "not installed: " + (r.stderr.strip().splitlines() or ["?"])[-1])
     return r.returncode == 0
 
@@ -66,16 +73,19 @@ print("cuVS", "works" if cuvs_works() else "still missing its library: the bench
         code("!python triton_probe.py --check"),
         code("!python triton_probe.py --bench"),
         code('''
+import os
+
 import numpy as np
+
 x = np.random.default_rng(0).standard_normal((100_000, 128), dtype=np.float32)   # siann regenerates the same
 try:
     import cupy as cp
+    import cuvs
     from cuvs.neighbors import ivf_flat
     index = ivf_flat.build(ivf_flat.IndexParams(n_lists=316, metric="sqeuclidean"), cp.asarray(x))
     ivf_flat.save("ivf_flat_gaussian.cuvs", index, include_dataset=True)
-    import cuvs, os
     print("cuVS", getattr(cuvs, "__version__", "?"), "saved", os.path.getsize("ivf_flat_gaussian.cuvs"), "bytes")
-except Exception as e:
+except Exception as e:  # noqa: BLE001 (report whatever went wrong, for the user to paste back)
     print(type(e).__name__, e)
 '''),
     ]
