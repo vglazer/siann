@@ -129,7 +129,7 @@ def check(both: bool = False) -> None:
     """Against exact search by NumPy, ties broken by index, on sizes that leave partial blocks: on the GPU where
     there is one (the compiled kernel), otherwise on the CPU through Triton's interpreter."""
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"  on {dev}")
+    print(f"  on {dev}", flush=True)
     rng = np.random.default_rng(0)
     for n, d, nq, k in ((1000, 24, 37, 10), (777, 13, 5, 3), (300, 8, 20, 10)):
         x = rng.integers(0, 4, (n, d)).astype(np.float32)          # small integers: many ties
@@ -142,11 +142,13 @@ def check(both: bool = False) -> None:
         for c in CONFIGS_2D:                                       # every configuration the auto-tuner may pick
             cfg = {**c.kwargs, "num_warps": c.num_warps}
             same.append(np.array_equal(l1_knn(xd, qd, k, cfg, xt=xtd).cpu().numpy(), truth))
+            print("." if same[-1] else "x", end="", flush=True)            # one mark per configuration
         if both:
             for c in CONFIGS:
                 cfg = {**c.kwargs, "num_warps": c.num_warps}
                 same.append(np.array_equal(l1_knn(xd, qd, k, cfg).cpu().numpy(), truth))
-        print(f"  n {n}, d {d}, {nq} queries, k {k}: identical to exact search, ties included, in "
+                print("." if same[-1] else "x", end="", flush=True)
+        print(f"\n  n {n}, d {d}, {nq} queries, k {k}: identical to exact search, ties included, in "
               f"{sum(same)} of {len(same)} configurations")
         assert all(same)
 
@@ -158,7 +160,7 @@ def bench(n: int, d: int, batches) -> None:
     xq = rng.standard_normal((max(batches), d), dtype=np.float32)
     x, q = torch.from_numpy(xb).to(dev), torch.from_numpy(xq).to(dev)
     k = 10
-    print(f"{torch.cuda.get_device_name()}: {n:,} Gaussian vectors, {d} dimensions, L1, k = {k}; queries per second")
+    print(f"{torch.cuda.get_device_name()}: {n:,} Gaussian vectors, {d} dimensions, L1, k = {k}; queries per second", flush=True)
 
     def timed(fn, qb):
         fn(qb)
@@ -177,8 +179,29 @@ def bench(n: int, d: int, batches) -> None:
             out.append(torch.topk(torch.cdist(qb[s:s + 64], x, p=1), k, largest=False).indices)
         return torch.cat(out)
     xt = x.T.contiguous()                                          # the 2D-tile kernel's layout, made once
-    contenders = {"siann, 2D tiles, tuned": lambda qb: l1_knn(x, qb, k, xt=xt),
-                  "siann, 3D tiles, tuned": lambda qb: l1_knn(x, qb, k),
+    # the 2D kernel's configurations timed one by one, each printed as it is measured (Triton's auto-tuner says
+    # nothing until all are done); the 3D kernel at the configuration its auto-tuner chose on the T4
+    best_cfg, best_t = None, float("inf")
+    print("  tuning the 2D-tile kernel on 1,000 queries (seconds per call):", flush=True)
+    for c in CONFIGS_2D:
+        cfg = {**c.kwargs, "num_warps": c.num_warps}
+        try:
+            l1_knn(x, q[:1000], k, cfg, xt=xt)                     # compiles
+            torch.cuda.synchronize()
+            t = time.perf_counter()
+            l1_knn(x, q[:1000], k, cfg, xt=xt)
+            torch.cuda.synchronize()
+            t = time.perf_counter() - t
+        except Exception as e:  # noqa: BLE001 (a configuration the GPU cannot run: skip it)
+            print(f"    {cfg}: failed ({type(e).__name__})", flush=True)
+            continue
+        print(f"    {cfg}: {t:.3f}", flush=True)
+        if t < best_t:
+            best_cfg, best_t = cfg, t
+    print(f"  fastest 2D-tile configuration: {best_cfg}", flush=True)
+    best_3d = {"BLOCK_Q": 64, "BLOCK_N": 128, "BLOCK_D": 2, "SORT": True, "num_warps": 4}
+    contenders = {"siann, 2D tiles, tuned": lambda qb: l1_knn(x, qb, k, best_cfg, xt=xt),
+                  "siann, 3D tiles, tuned": lambda qb: l1_knn(x, qb, k, best_3d),
                   "siann, 3D tiles, untuned": lambda qb: l1_knn(x, qb, k, {"BLOCK_Q": 16, "BLOCK_N": 128,
                                                                             "BLOCK_D": 8, "SORT": True}),
                   "torch.cdist + topk": cdist}
@@ -195,15 +218,11 @@ def bench(n: int, d: int, batches) -> None:
         contenders["cuVS brute force"] = lambda qb: brute_force.search(bf, qb, k)
     except Exception as e:  # noqa: BLE001 (cuVS missing: skip it)
         print(f"  (cuVS skipped: {type(e).__name__}: {e})")
-    l1_knn(x, q[:1000], k)                                          # the auto-tuners' trials, once for this shape
-    l1_knn(x, q[:1000], k, xt=xt)
-    for name, tuned in (("2D tiles", _tiles_tuned), ("3D tiles", _l1_tuned)):
-        best = tuned.best_config
-        print(f"  auto-tuner's choice, {name}: {best.kwargs}, {best.num_warps} warps")
     if "FAISS GPU brute force" in contenders:
         _, fi = contenders["FAISS GPU brute force"](q[:100])
         fi = torch.as_tensor(fi).cpu().numpy()
-        for name, ours in (("2D tiles", l1_knn(x, q[:100], k, xt=xt)), ("3D tiles", l1_knn(x, q[:100], k))):
+        for name, ours in (("2D tiles", l1_knn(x, q[:100], k, best_cfg, xt=xt)),
+                           ("3D tiles", l1_knn(x, q[:100], k, best_3d))):
             same = (np.sort(fi, 1) == np.sort(ours.cpu().numpy(), 1)).mean()
             print(f"  {name}: the same neighbors as FAISS's on 100 queries: {same:.4f}")
     print(f"  {'':26s}" + "".join(f"{f'batch {b:,}':>14s}" for b in batches), flush=True)

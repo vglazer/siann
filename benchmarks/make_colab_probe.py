@@ -70,8 +70,8 @@ for pkg in wanted:
 print("cuVS", "works" if cuvs_works() else "still missing its library: the benchmark skips it")
 '''),
         code("%%writefile triton_probe.py\n" + probe),
-        code("!python triton_probe.py --check"),
-        code("!python triton_probe.py --bench"),
+        code("!python -u triton_probe.py --check"),
+        code("!python -u triton_probe.py --bench"),
         code('''
 import os
 
