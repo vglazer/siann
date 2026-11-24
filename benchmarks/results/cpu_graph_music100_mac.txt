@@ -1,0 +1,20 @@
+music100, ip: 1,000,000 vectors, 100 dimensions, 2,000 queries, 16 CPUs; graph built on the Mac's GPU by mlxvs in 5.0 s; queries per second
+  build here: siann, CAGRA graph 0.1 s, siann, CPU IVF 9.9 s, FAISS HNSW, float32 8.7 s
+
+  recall 0.9:      setting  recall    batch 1   batch 10  batch 100
+  siann, CAGRA graph              ef 24   0.901     30,461     96,782    242,358
+  FAISS, the same graph           ef 24   0.901     36,273     50,460    224,721
+  siann, CPU IVF              nprobe 11   0.900     20,075     63,873    158,389
+  FAISS HNSW, float32             ef 23   0.901     33,546     48,523    202,101
+
+  recall 0.95:      setting  recall    batch 1   batch 10  batch 100
+  siann, CAGRA graph              ef 56   0.950     18,309     69,899    154,794
+  FAISS, the same graph           ef 56   0.950     18,416     40,623    142,421
+  siann, CPU IVF              nprobe 25   0.950     18,138     55,798    116,473
+  FAISS HNSW, float32             ef 56   0.951     14,991     37,978    127,571
+
+  recall 0.98:      setting  recall    batch 1   batch 10  batch 100
+  siann, CAGRA graph             ef 146   0.981      7,773     40,699     80,201
+  FAISS, the same graph          ef 146   0.981      7,701     26,540     73,111
+  siann, CPU IVF              nprobe 83   0.980     12,800     26,796     42,434
+  FAISS HNSW, float32            ef 164   0.980      5,777     21,422     54,510

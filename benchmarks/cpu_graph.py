@@ -107,13 +107,13 @@ def cpus() -> int:
     return len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()
 
 
-def run(path, dataset, nq):
+def run(path, dataset, nq, only_graph=False, targets=TARGETS, float32=False):
     faiss.omp_set_num_threads(cpus())            # FAISS's threads as many as siann's (Rust follows the pinning)
     data = np.load(path)
     xb = np.ascontiguousarray(data["xb"], dtype=np.float32)
     xq = np.ascontiguousarray(data["xq"][:nq], dtype=np.float32)
     graph = data["graph"]
-    integer = data["xb"].dtype == np.uint8
+    integer = data["xb"].dtype == np.uint8 and not float32
     metric = METRIC[dataset]
     n, d = xb.shape
     truth = np.array(FlatIndex(xb, d, metric).search(xq, K), dtype=np.int64).reshape(-1, K)
@@ -138,6 +138,8 @@ def run(path, dataset, nq):
             return index.search(q, K)[1].astype(np.int64)
         return search
     contenders["FAISS, the same graph"] = (0.0, "ef", faiss_search(fg), (K, 1024))
+    if only_graph:
+        return compare(contenders, rec, xq, targets)
     t = time.perf_counter()
     ivf = siann.Index(xb, metric, recall=0.95, kind="ivf", device="cpu", calibration_queries=xq[:1000])
     contenders["siann, CPU IVF"] = (time.perf_counter() - t, "nprobe",
@@ -152,7 +154,12 @@ def run(path, dataset, nq):
         h.add(xb)
         contenders[f"FAISS HNSW, {name}"] = (time.perf_counter() - t, "ef", faiss_search(h), (K, 1024))
     print("  build here: " + ", ".join(f"{k} {v[0]:.1f} s" for k, v in contenders.items() if v[0]))
-    for target in TARGETS:
+    compare(contenders, rec, xq, targets)
+
+
+def compare(contenders, rec, xq, targets):
+    """Each contender at the smallest setting reaching each target, timed at each batch size."""
+    for target in targets:
         print(f"\n  recall {target}: {'setting':>12s} {'recall':>7s}" + "".join(f"{f'batch {b}':>11s}" for b in BATCHES))
         for label, (_, knob, search, (lo, hi)) in contenders.items():
             p, got = smallest(lambda v, search=search: rec(search(xq, v)), target, lo, hi)
@@ -166,12 +173,16 @@ def main() -> None:
     p.add_argument("--export", help="build the graph on the Mac and save it in this folder")
     p.add_argument("--run", help="search the saved graph from this folder, on this machine's CPU")
     p.add_argument("--queries", type=int, default=2000)
+    p.add_argument("--only-graph", action="store_true", help="only siann's and FAISS's search of the same graph")
+    p.add_argument("--targets", default=",".join(map(str, TARGETS)))
+    p.add_argument("--float32", action="store_true", help="siann reads float32 rows even for byte data")
     a = p.parse_args()
     if a.export:
         os.makedirs(a.export, exist_ok=True)
         export(os.path.join(a.export, f"{a.dataset}_cagra.npz"), a.dataset)
     if a.run:
-        run(os.path.join(a.run, f"{a.dataset}_cagra.npz"), a.dataset, a.queries)
+        run(os.path.join(a.run, f"{a.dataset}_cagra.npz"), a.dataset, a.queries, a.only_graph,
+            tuple(map(float, a.targets.split(","))), a.float32)
 
 
 if __name__ == "__main__":

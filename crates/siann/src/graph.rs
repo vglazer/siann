@@ -10,10 +10,15 @@ use std::collections::BinaryHeap;
 
 use super::Result;
 use super::elem::Elem;
+use super::ivf::split_pool;
 use super::metric::{Kind, Metric, with_metric};
 
 /// Lanes of running distances over a row: independent sums the compiler maps onto vector instructions.
 const LANES: usize = 16;
+/// Batches below this many queries run on a pool of their own, a thread per query up to the cores.
+const SMALL_BATCH: usize = 64;
+/// The most links per vector a graph may have (CAGRA's are 32 or 64).
+pub const MAX_DEGREE: usize = 128;
 
 /// The vectors as the graph's search reads them: rows of f32, or of bytes (SIFT's integer coordinates).
 pub enum Rows {
@@ -60,9 +65,44 @@ fn row_dist<M: Metric, T: Elem>(q: &[f32], x: &[T]) -> f32 {
     out
 }
 
+/// Rows read at once by `rows_dist`: their memory loads in flight together.
+const GROUP: usize = 4;
+/// Lanes per row in `rows_dist`: GROUP x GROUP_LANES running sums fit in the vector registers.
+const GROUP_LANES: usize = 8;
+
+/// Distances from the query to `GROUP` rows, computed in one interleaved pass, so that the rows' loads from
+/// memory overlap (a search reads rows scattered through memory, and is limited by fetching them).
+#[inline]
+fn rows_dist<M: Metric, T: Elem>(q: &[f32], xs: [&[T]; GROUP]) -> [f32; GROUP] {
+    let mut acc = [[0.0f32; GROUP_LANES]; GROUP];
+    let (q8, q_rest) = q.as_chunks::<GROUP_LANES>();
+    let rows = xs.map(|x| x.as_chunks::<GROUP_LANES>());
+    for (c, qs) in q8.iter().enumerate() {
+        for (g, (r, _)) in rows.iter().enumerate() {
+            let xs = &r[c];
+            for l in 0..GROUP_LANES {
+                acc[g][l] = M::combine(acc[g][l], qs[l], T::lane(xs[l]));
+            }
+        }
+    }
+    let mut out = [0.0f32; GROUP];
+    for (g, (_, rest)) in rows.iter().enumerate() {
+        for (l, (&a, &b)) in q_rest.iter().zip(rest.iter()).enumerate() {
+            acc[g][l] = M::combine(acc[g][l], a, T::lane(b));
+        }
+        let mut v = acc[g][0];
+        for &a in &acc[g][1..] {
+            v = M::join(v, a);
+        }
+        out[g] = v;
+    }
+    out
+}
+
 thread_local! {
-    /// Per thread: the epoch of the current query, and each vector's epoch when last visited.
-    static VISITED: RefCell<(u32, Vec<u32>)> = const { RefCell::new((0, Vec::new())) };
+    /// Per thread: the epoch of the current query, and each vector's epoch when last visited, a byte (a quarter
+    /// of the memory a search writes into at scattered places), cleared every 255 queries.
+    static VISITED: RefCell<(u8, Vec<u8>)> = const { RefCell::new((0, Vec::new())) };
 }
 
 /// A graph over n vectors of d dimensions: `links` holds each vector's `degree` neighbors in turn.
@@ -89,8 +129,10 @@ impl Graph {
         degree: usize,
     ) -> Result<Self> {
         let n = x.len() / d;
-        if n == 0 || degree == 0 || links.len() != n * degree {
-            return Err("links must be (n, degree), n > 0".into());
+        if n == 0 || degree == 0 || degree > MAX_DEGREE || links.len() != n * degree {
+            return Err(format!(
+                "links must be (n, degree), n > 0, degree at most {MAX_DEGREE}"
+            ));
         }
         if links.iter().any(|&l| l < -1 || l >= n as i64) {
             return Err("each link must be -1 or a row of x".into());
@@ -138,15 +180,28 @@ impl Graph {
         if k == 0 || ef < k {
             return Err("need k > 0 and ef >= k".into());
         }
-        let mut out = vec![u32::MAX; (xq.len() / self.d) * k];
-        out.par_chunks_mut(k)
-            .zip(xq.par_chunks(self.d))
-            .for_each(|(o, q)| {
-                with_metric!(self.metric, M => match &self.rows {
-                    Rows::F32(r) => self.one::<M, f32>(r, q, k, ef, o),
-                    Rows::U8(r) => self.one::<M, u8>(r, q, k, ef, o),
-                })
-            });
+        let nq = xq.len() / self.d;
+        let mut out = vec![u32::MAX; nq * k];
+        let one = |o: &mut [u32], q: &[f32]| {
+            with_metric!(self.metric, M => match &self.rows {
+                Rows::F32(r) => self.one::<M, f32>(r, q, k, ef, o),
+                Rows::U8(r) => self.one::<M, u8>(r, q, k, ef, o),
+            })
+        };
+        let batch = |out: &mut [u32]| {
+            out.par_chunks_mut(k)
+                .zip(xq.par_chunks(self.d))
+                .for_each(|(o, q)| one(o, q))
+        };
+        if nq == 1 {
+            one(&mut out, xq); // on this thread: handing one query to a pool costs a thread's wake-up
+        } else if nq < SMALL_BATCH {
+            // a pool of its own, as many threads as queries up to the cores: waking rayon's global pool costs
+            // more than a small batch
+            split_pool(nq.min(rayon::current_num_threads()))?.install(|| batch(&mut out));
+        } else {
+            batch(&mut out);
+        }
         Ok(out)
     }
 
@@ -161,7 +216,7 @@ impl Graph {
             let x = &rows[i as usize * d..(i as usize + 1) * d];
             match &q8 {
                 Some(q8) => T::int_dist::<M>(q8, x) as f32,
-                None => row_dist::<M, T>(q, x),
+                None => rows_dist::<M, T>(q, [x; GROUP])[0], // summed as the grouped rows are
             }
         };
         VISITED.with(|v| {
@@ -177,6 +232,7 @@ impl Graph {
             let epoch = *epoch;
             // candidates to expand, nearest first; the ef nearest found, farthest on top
             let mut todo: BinaryHeap<std::cmp::Reverse<Near>> = BinaryHeap::new();
+            let (mut ids, mut dists) = ([0u32; MAX_DEGREE], [0.0f32; MAX_DEGREE]);
             let mut best: BinaryHeap<Near> = BinaryHeap::with_capacity(ef + 1);
             let start = Near(dist(self.entry), self.entry);
             seen[self.entry as usize] = epoch;
@@ -186,13 +242,50 @@ impl Graph {
                 if best.len() >= ef && c > *best.peek().unwrap() {
                     break;
                 }
+                // the unvisited neighbors, then their distances, GROUP rows at a time
+                let mut m = 0;
                 for &nb in &self.links[c.1 as usize * self.degree..(c.1 as usize + 1) * self.degree]
                 {
-                    if nb == u32::MAX || seen[nb as usize] == epoch {
-                        continue;
+                    if nb != u32::MAX && seen[nb as usize] != epoch {
+                        seen[nb as usize] = epoch;
+                        ids[m] = nb;
+                        m += 1;
                     }
-                    seen[nb as usize] = epoch;
-                    let cand = Near(dist(nb), nb);
+                }
+                // Touch each neighbor's row, a value per cache line, before computing any distance: ordinary
+                // loads, so that the rows' fetches from memory all start now and overlap (a safe stand-in for
+                // a prefetch instruction).
+                let step = (64 / std::mem::size_of::<T>()).max(1);
+                let mut touched = 0.0f32;
+                for &nb in &ids[..m] {
+                    let row = &rows[nb as usize * d..(nb as usize + 1) * d];
+                    for v in row.iter().step_by(step) {
+                        touched += T::lane(*v);
+                    }
+                }
+                std::hint::black_box(touched);
+                let mut j = 0;
+                if q8.is_none() {
+                    let row = |i: u32| &rows[i as usize * d..(i as usize + 1) * d];
+                    while j + GROUP <= m {
+                        let g = rows_dist::<M, T>(
+                            q,
+                            [
+                                row(ids[j]),
+                                row(ids[j + 1]),
+                                row(ids[j + 2]),
+                                row(ids[j + 3]),
+                            ],
+                        );
+                        dists[j..j + GROUP].copy_from_slice(&g);
+                        j += GROUP;
+                    }
+                }
+                for k in j..m {
+                    dists[k] = dist(ids[k]);
+                }
+                for (&nb, &dv) in ids[..m].iter().zip(&dists[..m]) {
+                    let cand = Near(dv, nb);
                     if best.len() < ef || cand < *best.peek().unwrap() {
                         todo.push(std::cmp::Reverse(cand));
                         best.push(cand);

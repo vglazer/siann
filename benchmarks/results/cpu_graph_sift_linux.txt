@@ -1,23 +1,24 @@
+
 sift, l2: 1,000,000 vectors, 128 dimensions, 2,000 queries, 4 CPUs; graph built on the Mac's GPU by mlxvs in 4.5 s; queries per second
-  build here: siann, CAGRA graph 0.1 s, siann, CPU IVF 29.8 s, FAISS HNSW, float32 31.9 s, FAISS HNSW, uint8 17.2 s
+  build here: siann, CAGRA graph 0.1 s, siann, CPU IVF 29.7 s, FAISS HNSW, float32 32.5 s, FAISS HNSW, uint8 17.0 s
 
   recall 0.9:      setting  recall    batch 1   batch 10  batch 100
-  siann, CAGRA graph              ef 25   0.900     27,350     46,979     77,291
-  FAISS, the same graph           ef 25   0.900     16,039     40,521     46,428
-  siann, CPU IVF              nprobe 29   0.904      9,504     24,620     35,051
-  FAISS HNSW, float32             ef 26   0.905     13,626     34,381     42,749
-  FAISS HNSW, uint8               ef 26   0.905     21,267     62,833     73,960
+  siann, CAGRA graph              ef 25   0.900     37,239     55,465     82,709
+  FAISS, the same graph           ef 25   0.900     16,226     41,779     51,039
+  siann, CPU IVF              nprobe 29   0.904      9,524     24,236     34,706
+  FAISS HNSW, float32             ef 26   0.905     13,643     34,017     42,449
+  FAISS HNSW, uint8               ef 26   0.905     23,218     63,581     78,536
 
   recall 0.95:      setting  recall    batch 1   batch 10  batch 100
-  siann, CAGRA graph              ef 42   0.952     16,737     35,296     52,759
-  FAISS, the same graph           ef 42   0.952     10,719     27,118     34,310
-  siann, CPU IVF              nprobe 46   0.951      8,606     20,013     27,542
-  FAISS HNSW, float32             ef 43   0.951      9,105     22,741     28,272
-  FAISS HNSW, uint8               ef 43   0.951     15,189     42,464     53,522
+  siann, CAGRA graph              ef 42   0.952     22,637     42,039     63,157
+  FAISS, the same graph           ef 42   0.952     10,796     26,936     32,906
+  siann, CPU IVF              nprobe 46   0.951      7,825     20,260     27,036
+  FAISS HNSW, float32             ef 43   0.951      9,083     22,617     28,206
+  FAISS HNSW, uint8               ef 43   0.951     14,147     36,063     45,998
 
   recall 0.98:      setting  recall    batch 1   batch 10  batch 100
-  siann, CAGRA graph              ef 71   0.980     10,402     25,277     35,368
-  FAISS, the same graph           ef 71   0.980      7,072     17,881     22,112
-  siann, CPU IVF              nprobe 78   0.980      7,503     15,065     19,800
-  FAISS HNSW, float32             ef 75   0.980      5,718     14,580     17,705
-  FAISS HNSW, uint8               ef 75   0.980      8,246     24,349     31,257
+  siann, CAGRA graph              ef 71   0.980     13,892     30,085     42,063
+  FAISS, the same graph           ef 71   0.980      7,000     17,697     21,770
+  siann, CPU IVF              nprobe 78   0.980      6,980     15,136     19,978
+  FAISS HNSW, float32             ef 75   0.980      5,724     14,572     17,756
+  FAISS HNSW, uint8               ef 75   0.980      8,453     24,382     32,184

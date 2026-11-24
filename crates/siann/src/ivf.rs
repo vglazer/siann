@@ -18,7 +18,7 @@ use super::{Mat, Result};
 /// The thread pool for split queries of `threads` threads, made once and kept. Split queries run on
 /// a small pool of their own: on rayon's global pool (every core), a query injected into the pool
 /// wakes its sleeping threads, which costs more than the split saves (BENCHMARKS.md, "Approximate search: single queries").
-fn split_pool(threads: usize) -> Result<Arc<rayon::ThreadPool>> {
+pub(crate) fn split_pool(threads: usize) -> Result<Arc<rayon::ThreadPool>> {
     static POOLS: OnceLock<Mutex<HashMap<usize, Arc<rayon::ThreadPool>>>> = OnceLock::new();
     let mut pools = POOLS
         .get_or_init(|| Mutex::new(HashMap::new()))
