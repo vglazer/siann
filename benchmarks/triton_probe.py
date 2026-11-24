@@ -36,6 +36,31 @@ def _l1_block_topk(q_ptr, x_ptr, out_ptr, nq, n, d, stride,
         q = tl.load(q_ptr + rq[:, None] * d + rd[None, :], mask=(rq[:, None] < nq) & (rd[None, :] < d), other=0.0)
         x = tl.load(x_ptr + rn[:, None] * d + rd[None, :], mask=(rn[:, None] < n) & (rd[None, :] < d), other=0.0)
         acc += tl.sum(tl.abs(q[:, None, :] - x[None, :, :]), axis=2)
+    _keep_best(acc, rq, rn, pn, out_ptr, nq, n, stride, BLOCK_N, K, SORT)
+
+
+@triton.jit
+def _l1_tile_topk(qt_ptr, xt_ptr, out_ptr, nq, n, d, stride,
+                  BLOCK_Q: tl.constexpr, BLOCK_N: tl.constexpr, K: tl.constexpr, SORT: tl.constexpr):
+    """The same search with the queries and base vectors stored transposed (one dimension at a time): each step
+    reads one dimension of BLOCK_Q queries and of BLOCK_N base vectors, both contiguous, and adds their
+    differences into a 2D tile of running distances, as a matrix multiply's rank-1 update does."""
+    pq = tl.program_id(0)
+    pn = tl.program_id(1)
+    rq = pq * BLOCK_Q + tl.arange(0, BLOCK_Q)
+    rn = pn * BLOCK_N + tl.arange(0, BLOCK_N)
+    acc = tl.zeros((BLOCK_Q, BLOCK_N), dtype=tl.float32)
+    for j in range(d):
+        qj = tl.load(qt_ptr + j * nq + rq, mask=rq < nq, other=0.0)
+        xj = tl.load(xt_ptr + j * n + rn, mask=rn < n, other=0.0)
+        acc += tl.abs(qj[:, None] - xj[None, :])
+    _keep_best(acc, rq, rn, pn, out_ptr, nq, n, stride, BLOCK_N, K, SORT)
+
+
+@triton.jit
+def _keep_best(acc, rq, rn, pn, out_ptr, nq, n, stride, BLOCK_N: tl.constexpr, K: tl.constexpr,
+               SORT: tl.constexpr):
+    """Each query's best K of the block, written to its slots of the survivors."""
     # one sortable key per candidate: the (non-negative) distance's bits above, the index below
     bits = acc.to(tl.int32, bitcast=True).to(tl.int64)
     key = (bits << 32) | rn[None, :].to(tl.int64)
@@ -57,19 +82,28 @@ def _l1_block_topk(q_ptr, x_ptr, out_ptr, nq, n, d, stride,
 TILES = ((16, 128, 8), (32, 128, 4), (64, 64, 4), (32, 64, 8), (16, 256, 4), (64, 128, 2))
 CONFIGS = [triton.Config({"BLOCK_Q": bq, "BLOCK_N": bn, "BLOCK_D": bd, "SORT": sort}, num_warps=w)
            for bq, bn, bd in TILES for sort in (True, False) for w in (4, 8)]
-MIN_BLOCK_N = min(bn for _, bn, _ in TILES)
-_l1_tuned = triton.autotune(configs=CONFIGS, key=["n", "d", "K"])(_l1_block_topk)
+# the 2D-tile kernel: no third dimension in registers, so larger tiles
+TILES_2D = ((32, 128), (64, 128), (128, 128), (32, 256), (64, 256), (128, 64))
+CONFIGS_2D = [triton.Config({"BLOCK_Q": bq, "BLOCK_N": bn, "SORT": sort}, num_warps=w)
+              for bq, bn in TILES_2D for sort in (True, False) for w in (4, 8)]
+MIN_BLOCK_N = min([bn for _, bn, _ in TILES] + [bn for _, bn in TILES_2D])
+# each trial of the auto-tuner restores the survivors: configurations with other block sizes write other slots
+_l1_tuned = triton.autotune(configs=CONFIGS, key=["n", "d", "K"], restore_value=["out_ptr"])(_l1_block_topk)
+_tiles_tuned = triton.autotune(configs=CONFIGS_2D, key=["n", "d", "K"], restore_value=["out_ptr"])(_l1_tile_topk)
 
 
 SURVIVOR_BYTES = 1 << 30   # stage 1's output per call at most: larger batches go in chunks of queries
 
 
-def l1_knn(x: torch.Tensor, q: torch.Tensor, k: int, config: dict | None = None) -> torch.Tensor:
+def l1_knn(x: torch.Tensor, q: torch.Tensor, k: int, config: dict | None = None, xt: torch.Tensor | None = None):
     """Each query's k nearest rows of x by L1 (int64 indices, nearest first, ties by index): with the block sizes
     and selection of ``config`` ({"BLOCK_Q", "BLOCK_N", "BLOCK_D", "SORT"}, plus "num_warps"), or else the
-    fastest Triton's auto-tuner finds."""
+    fastest Triton's auto-tuner finds. With ``xt`` (x transposed, d x n, contiguous), the 2D-tile kernel."""
     nq, d = q.shape
     n = x.shape[0]
+    tiles = xt is not None
+    kernel, tuned = (_l1_tile_topk, _tiles_tuned) if tiles else (_l1_block_topk, _l1_tuned)
+    base = xt if tiles else x
     width = triton.cdiv(n, MIN_BLOCK_N) * k         # room for the smallest blocks' survivors; unused slots stay MAX
     step = max(64, SURVIVOR_BYTES // (width * 8) // 64 * 64)
     out = []
@@ -77,20 +111,21 @@ def l1_knn(x: torch.Tensor, q: torch.Tensor, k: int, config: dict | None = None)
         qs = q[s:s + step]
         survivors = torch.full((len(qs), width), MAX_KEY, dtype=torch.int64, device=x.device)
         m = len(qs)
+        qa = qs.T.contiguous() if tiles else qs
         if config is None:
             def grid(meta, m=m):
                 return (triton.cdiv(m, meta["BLOCK_Q"]), triton.cdiv(n, meta["BLOCK_N"]))
-            _l1_tuned[grid](qs, x, survivors, m, n, d, width, K=k)
+            tuned[grid](qa, base, survivors, m, n, d, width, K=k)
         else:
             cfg = dict(config)
             warps = cfg.pop("num_warps", 4)
-            grid = (triton.cdiv(len(qs), cfg["BLOCK_Q"]), triton.cdiv(n, cfg["BLOCK_N"]))
-            _l1_block_topk[grid](qs, x, survivors, len(qs), n, d, width, K=k, num_warps=warps, **cfg)
+            grid = (triton.cdiv(m, cfg["BLOCK_Q"]), triton.cdiv(n, cfg["BLOCK_N"]))
+            kernel[grid](qa, base, survivors, m, n, d, width, K=k, num_warps=warps, **cfg)
         out.append(torch.topk(survivors, k, dim=1, largest=False, sorted=True).values & 0xFFFFFFFF)
     return torch.cat(out)
 
 
-def check() -> None:
+def check(both: bool = False) -> None:
     """Against exact search by NumPy, ties broken by index, on sizes that leave partial blocks: on the GPU where
     there is one (the compiled kernel), otherwise on the CPU through Triton's interpreter."""
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -101,11 +136,16 @@ def check() -> None:
         q = rng.integers(0, 4, (nq, d)).astype(np.float32)
         dist = np.abs(q[:, None, :] - x[None, :, :]).sum(axis=2)
         truth = np.lexsort((np.broadcast_to(np.arange(n), dist.shape), dist), axis=1)[:, :k]
-        xt, qt = torch.from_numpy(x).to(dev), torch.from_numpy(q).to(dev)
+        xd, qd = torch.from_numpy(x).to(dev), torch.from_numpy(q).to(dev)
+        xtd = xd.T.contiguous()
         same = []
-        for c in CONFIGS:                                          # every configuration the auto-tuner may pick
+        for c in CONFIGS_2D:                                       # every configuration the auto-tuner may pick
             cfg = {**c.kwargs, "num_warps": c.num_warps}
-            same.append(np.array_equal(l1_knn(xt, qt, k, cfg).cpu().numpy(), truth))
+            same.append(np.array_equal(l1_knn(xd, qd, k, cfg, xt=xtd).cpu().numpy(), truth))
+        if both:
+            for c in CONFIGS:
+                cfg = {**c.kwargs, "num_warps": c.num_warps}
+                same.append(np.array_equal(l1_knn(xd, qd, k, cfg).cpu().numpy(), truth))
         print(f"  n {n}, d {d}, {nq} queries, k {k}: identical to exact search, ties included, in "
               f"{sum(same)} of {len(same)} configurations")
         assert all(same)
@@ -136,9 +176,11 @@ def bench(n: int, d: int, batches) -> None:
         for s in range(0, len(qb), 64):                            # cdist's broadcast exceeds memory beyond
             out.append(torch.topk(torch.cdist(qb[s:s + 64], x, p=1), k, largest=False).indices)
         return torch.cat(out)
-    contenders = {"siann's kernel, Triton": lambda qb: l1_knn(x, qb, k),
-                  "  untuned (16, 128, 8, sort)": lambda qb: l1_knn(x, qb, k, {"BLOCK_Q": 16, "BLOCK_N": 128,
-                                                                               "BLOCK_D": 8, "SORT": True}),
+    xt = x.T.contiguous()                                          # the 2D-tile kernel's layout, made once
+    contenders = {"siann, 2D tiles, tuned": lambda qb: l1_knn(x, qb, k, xt=xt),
+                  "siann, 3D tiles, tuned": lambda qb: l1_knn(x, qb, k),
+                  "siann, 3D tiles, untuned": lambda qb: l1_knn(x, qb, k, {"BLOCK_Q": 16, "BLOCK_N": 128,
+                                                                            "BLOCK_D": 8, "SORT": True}),
                   "torch.cdist + topk": cdist}
     try:
         import faiss
@@ -153,14 +195,17 @@ def bench(n: int, d: int, batches) -> None:
         contenders["cuVS brute force"] = lambda qb: brute_force.search(bf, qb, k)
     except Exception as e:  # noqa: BLE001 (cuVS missing: skip it)
         print(f"  (cuVS skipped: {type(e).__name__}: {e})")
-    truth = l1_knn(x, q[:100], k).cpu().numpy()
+    l1_knn(x, q[:1000], k)                                          # the auto-tuners' trials, once for this shape
+    l1_knn(x, q[:1000], k, xt=xt)
+    for name, tuned in (("2D tiles", _tiles_tuned), ("3D tiles", _l1_tuned)):
+        best = tuned.best_config
+        print(f"  auto-tuner's choice, {name}: {best.kwargs}, {best.num_warps} warps")
     if "FAISS GPU brute force" in contenders:
         _, fi = contenders["FAISS GPU brute force"](q[:100])
         fi = torch.as_tensor(fi).cpu().numpy()
-        print(f"  the same neighbors as FAISS's on 100 queries: {(np.sort(fi, 1) == np.sort(truth, 1)).mean():.4f}")
-    l1_knn(x, q[:1000], k)                                          # the auto-tuner's trials, once for this shape
-    best = _l1_tuned.best_config
-    print(f"  auto-tuner's choice: {best.kwargs}, {best.num_warps} warps")
+        for name, ours in (("2D tiles", l1_knn(x, q[:100], k, xt=xt)), ("3D tiles", l1_knn(x, q[:100], k))):
+            same = (np.sort(fi, 1) == np.sort(ours.cpu().numpy(), 1)).mean()
+            print(f"  {name}: the same neighbors as FAISS's on 100 queries: {same:.4f}")
     print(f"  {'':26s}" + "".join(f"{f'batch {b:,}':>14s}" for b in batches), flush=True)
     for name, fn in contenders.items():
         print(f"  {name:26s}", end="", flush=True)
@@ -175,13 +220,14 @@ def bench(n: int, d: int, batches) -> None:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--check", action="store_true")
+    p.add_argument("--all", action="store_true", help="with --check, every configuration of both kernels")
     p.add_argument("--bench", action="store_true")
     p.add_argument("--n", type=int, default=1_000_000)
     p.add_argument("--d", type=int, default=128)
     p.add_argument("--batches", default="100,1000,10000")
     a = p.parse_args()
     if a.check:
-        check()
+        check(a.all)
     if a.bench:
         bench(a.n, a.d, tuple(map(int, a.batches.split(","))))
 
