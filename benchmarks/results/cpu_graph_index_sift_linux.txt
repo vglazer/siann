@@ -1,0 +1,14 @@
+
+sift: the index built on the Mac, loaded here in 7.5 s (4 CPUs); recall@10 on 9,000 queries; queries per second
+  loaded from sift.siann, saved by siann 0.3.1 on 2026-11-23 on Apple M3 Max (arm64, Darwin)
+  graph index: CAGRA (32 links per vector), built in 4.5 s by mlxvs 0.16.1; on the GPU, search width 42 reaches recall@10 0.951; on the CPU, ef 42 reaches 0.952 (target 0.95, on the same sample)
+  the graph index searched on the CPU only: mlxvs runs on MLX
+  routing re-measured on this machine in 7.4 s: on the CPU (through the graph below 4,097 queries); single queries through the graph
+  no GPU found: every search on the CPU
+  neighbors depend on the path: each path (the graph on the CPU or the GPU, the IVF) is calibrated to the recall target on its own, and they find different neighbors
+  NumPy's OpenBLAS was loaded before siann, so its threads spin after each call and slow siann's CPU searches: import siann before NumPy, or set OPENBLAS_THREAD_TIMEOUT=4 before starting Python (TUNING.md)
+
+   batch    siann: path  recall       q/s   FAISS HNSW float32: ef, recall, q/s     FAISS HNSW uint8: ef, recall, q/s
+       1      cpu-graph   0.958    20,167                  43   0.959     8,970                  43   0.959    15,238
+      10      cpu-graph   0.958    34,804                  43   0.959    22,184                  43   0.959    41,792
+     100      cpu-graph   0.958    58,113                  43   0.959    29,749                  43   0.959    56,759

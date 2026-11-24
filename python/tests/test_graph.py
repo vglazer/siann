@@ -38,7 +38,7 @@ def built():
 def test_the_graph_meets_the_target_and_the_plan_says_so(built):
     _x, q, index, truth = built
     text = str(index.plan)
-    assert "graph index: CAGRA through mlxvs" in text and "search width" in text
+    assert "graph index: CAGRA" in text and "by mlxvs" in text and "search width" in text and "ef " in text
     assert "neighbors depend on the path" in text
     assert index._ivf_path(1000, None) == "gpu-graph"                # kind="graph": every GPU batch
     assert recall(index.search(q, 10).indices, truth) >= 0.85
@@ -47,9 +47,12 @@ def test_the_graph_meets_the_target_and_the_plan_says_so(built):
 
 
 @needs_mlxvs
-def test_small_batches_stay_on_the_cpu_ivf(built):
-    _, _q, index, _ = built
-    assert index.route(1) == "cpu" and index._ivf_path(1, None) == "cpu-split"
+def test_single_queries_search_the_graph_on_the_cpu(built):
+    _, q, index, truth = built
+    assert index.route(1) == "cpu" and index._ivf_path(1, None) == "cpu-graph"   # kind="graph": the CPU too
+    found = np.concatenate([index.search(q[i], 10).indices for i in range(len(q))])
+    assert recall(found, truth) >= 0.85
+    assert index._ivf.graph.ef >= 10 and "on the CPU, ef" in str(index.plan)
 
 
 @needs_mlxvs
@@ -63,13 +66,32 @@ def test_saved_and_loaded_with_its_graph(built, tmp_path):
 
 
 @needs_mlxvs
-def test_a_file_with_a_graph_loads_without_mlxvs(built, tmp_path, monkeypatch):
-    _, _q, index, _ = built
+def test_a_file_with_a_graph_searches_it_on_the_cpu_without_mlxvs(built, tmp_path, monkeypatch):
+    """As on a Linux machine: the graph built on the Mac's GPU, saved, loaded without mlxvs, searched by siann's
+    own CPU code at the CPU width calibrated when it was built."""
+    _, q, index, truth = built
     index.save(tmp_path / "g.siann")
     monkeypatch.setattr(_graph, "why_not", lambda metric, gpu: "no graph index: mlxvs is not installed")
-    again = siann.Index.load(tmp_path / "g.siann")
-    assert again._ivf.graph is None and "graph index in the file not loaded" in str(again.plan)
-    assert again._ivf_path(10_000, None).startswith("gpu-") and again._ivf_path(10_000, None) != "gpu-graph"
+    monkeypatch.setattr(_graph, "mlxvs_version", lambda: None)
+    again = siann.Index.load(tmp_path / "g.siann", device="cpu")
+    assert again._ivf.graph is not None and again._ivf.graph.ef == index._ivf.graph.ef
+    assert "searched on the CPU only" in str(again.plan) and again._ivf_path(1, None) == "cpu-graph"
+    np.testing.assert_array_equal(again.search(q, 10, device="cpu").indices, index._ivf.search(q, 10, 0, "cpu-graph"))
+    assert recall(again.search(q, 10).indices, truth) >= 0.85
+
+
+@needs_mlxvs
+def test_a_merge_without_mlxvs_drops_the_graph(tmp_path, monkeypatch):
+    monkeypatch.setattr(_index, "BUFFER_MIN", 300)
+    monkeypatch.setattr(_index, "BUFFER_SHARE", 0.0)
+    x, q = clustered(6_000, 16, 8), clustered(200, 16, 9)
+    siann.Index(x[:5_000], "l2", recall=0.9, kind="graph", calibration_queries=q).save(tmp_path / "m.siann")
+    monkeypatch.setattr(_graph, "why_not", lambda metric, gpu: "no graph index: mlxvs is not installed")
+    monkeypatch.setattr(_graph, "mlxvs_version", lambda: None)
+    again = siann.Index.load(tmp_path / "m.siann", device="cpu")
+    again.add(x[5_000:])                                              # merged: the graph cannot be extended here
+    assert again._ivf.graph is None and "graph index dropped at a merge" in str(again.plan)
+    assert again._ivf_path(1, None) == "cpu-split"
 
 
 @needs_mlxvs

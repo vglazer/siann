@@ -12,6 +12,10 @@ ef or nprobe whose recall@10 on the queries reaches each target, then timed at b
 
     uv run --group bench python cpu_graph.py --export /tmp/graphs --dataset sift   # on the Mac
     python cpu_graph.py --run /tmp/graphs --dataset sift                          # anywhere
+
+--export-index DIR builds and saves a whole siann.Index (recall target 0.95, its graph built by mlxvs) on the
+Mac; --run-index DIR loads it anywhere and searches it at the routes it re-measures there, against FAISS's
+HNSW built there at the efSearch matching its recall at each batch size.
 """
 import argparse
 import os
@@ -167,11 +171,64 @@ def compare(contenders, rec, xq, targets):
             print(f"  {label:24s} {f'{knob} {p}':>12s} {got:7.3f}{cells}", flush=True)
 
 
+def export_index(folder, dataset):
+    """A siann.Index built on the Mac (recall target 0.95, calibrated on 1,000 of the queries; its graph built on
+    the GPU by mlxvs), saved with the dataset's other queries for testing elsewhere."""
+    from datasets import load
+    xb, xq = load(dataset, 10_000)
+    t = time.perf_counter()
+    index = siann.Index(xb, METRIC[dataset], recall=0.95, calibration_queries=xq[:1000])
+    print(f"{dataset}: siann.Index built on the Mac in {time.perf_counter() - t:.1f} s\n{index.plan}")
+    index.save(os.path.join(folder, f"{dataset}.siann"))
+    np.save(os.path.join(folder, f"{dataset}_test_queries.npy"), np.ascontiguousarray(xq[1000:]))
+
+
+def run_index(folder, dataset):
+    """The index saved by export_index, loaded here and searched at its own routes, against FAISS's HNSW built here
+    at the efSearch that matches its recall at each batch size."""
+    faiss.omp_set_num_threads(cpus())
+    t = time.perf_counter()
+    index = siann.Index.load(os.path.join(folder, f"{dataset}.siann"))
+    loaded = time.perf_counter() - t
+    xq = np.load(os.path.join(folder, f"{dataset}_test_queries.npy"))
+    xb = np.ascontiguousarray(index._x)
+    metric = METRIC[dataset]
+    d = xb.shape[1]
+    truth = np.array(FlatIndex(xb, d, metric).search(xq, K), dtype=np.int64).reshape(-1, K)
+    rec = lambda found: agreement(xb, xq, found, truth, metric)
+    print(f"{dataset}: the index built on the Mac, loaded here in {loaded:.1f} s ({cpus()} CPUs); recall@10 on "
+          f"{len(xq):,} queries; queries per second\n{index.plan}\n")
+    hnsw = [("float32", faiss.IndexHNSWFlat(d, 32, FAISS_METRIC[metric]))]
+    if index._storage == "uint8":
+        hnsw.append(("uint8", faiss.IndexHNSWSQ(d, faiss.ScalarQuantizer.QT_8bit_direct, 32, FAISS_METRIC[metric])))
+    for name, h in hnsw:
+        if name != "float32":
+            h.train(xb)
+        h.add(xb)
+    print(f"  {'batch':>6s} {'siann: path':>14s} {'recall':>7s} {'q/s':>9s}" +
+          "".join(f"  {f'FAISS HNSW {name}: ef, recall, q/s':>36s}" for name, _ in hnsw))
+    for b in BATCHES:
+        found = np.concatenate([index.search(xq[s:s + b], K).indices for s in range(0, len(xq), b)])
+        got = rec(found)
+        line = (f"  {b:6d} {index._ivf_path(b, None):>14s} {got:7.3f} "
+                f"{rate(lambda q: index.search(q, K), xq, b):9,.0f}")
+        for _, h in hnsw:
+            def at(ef, h=h):
+                h.hnsw.efSearch = ef
+                return rec(h.search(xq, K)[1].astype(np.int64))
+            ef, r_h = smallest(at, got, K, 1024)
+            h.hnsw.efSearch = ef
+            line += f"  {ef:>18d} {r_h:7.3f} {rate(lambda q, h=h: h.search(q, K), xq, b):9,.0f}"
+        print(line, flush=True)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", default="sift", choices=sorted(METRIC))
     p.add_argument("--export", help="build the graph on the Mac and save it in this folder")
     p.add_argument("--run", help="search the saved graph from this folder, on this machine's CPU")
+    p.add_argument("--export-index", help="build and save a siann.Index (with its graph) in this folder, on the Mac")
+    p.add_argument("--run-index", help="load the saved siann.Index from this folder and search it here")
     p.add_argument("--queries", type=int, default=2000)
     p.add_argument("--only-graph", action="store_true", help="only siann's and FAISS's search of the same graph")
     p.add_argument("--targets", default=",".join(map(str, TARGETS)))
@@ -180,6 +237,11 @@ def main() -> None:
     if a.export:
         os.makedirs(a.export, exist_ok=True)
         export(os.path.join(a.export, f"{a.dataset}_cagra.npz"), a.dataset)
+    if a.export_index:
+        os.makedirs(a.export_index, exist_ok=True)
+        export_index(a.export_index, a.dataset)
+    if a.run_index:
+        run_index(a.run_index, a.dataset)
     if a.run:
         run(os.path.join(a.run, f"{a.dataset}_cagra.npz"), a.dataset, a.queries, a.only_graph,
             tuple(map(float, a.targets.split(","))), a.float32)

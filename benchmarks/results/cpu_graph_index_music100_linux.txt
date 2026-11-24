@@ -1,0 +1,15 @@
+music100: the index built on the Mac, loaded here in 4.7 s (4 CPUs); recall@10 on 9,000 queries; queries per second
+  loaded from music100.siann, saved by siann 0.3.1 on 2026-11-23 on Apple M3 Max (arm64, Darwin)
+  graph index: CAGRA (32 links per vector), built in 5.1 s by mlxvs 0.16.1; on the GPU, search width 65 reaches recall@10 0.952; on the CPU, ef 47 reaches 0.950 (target 0.95, on the same sample)
+  the graph index searched on the CPU only: mlxvs runs on MLX
+  routing re-measured on this machine in 4.6 s: on the CPU (through the graph below 17 queries); single queries through the graph
+  no GPU found: every search on the CPU
+  neighbors depend on the path: each path (the graph on the CPU or the GPU, the IVF) is calibrated to the recall target on its own, and they find different neighbors
+  NumPy's OpenBLAS was loaded before siann, so its threads spin after each call and slow siann's CPU searches: import siann before NumPy, or set OPENBLAS_THREAD_TIMEOUT=4 before starting Python (TUNING.md)
+
+   batch    siann: path  recall       q/s   FAISS HNSW float32: ef, recall, q/s
+       1      cpu-graph   0.947    15,149                  53   0.948    19,373
+      10      cpu-graph   0.947    33,895                  53   0.948    45,489
+     100      cpu-query   0.947    59,834                  52   0.947    60,878
+
+[exited with code 0]

@@ -1,5 +1,6 @@
 //! Search of a proximity graph on the CPU: each vector linked to `degree` near ones (a CAGRA graph, built on
-//! the GPU by mlxvs or cuVS), searched best first from an entry vector, keeping the `ef` nearest found so far,
+//! the GPU by mlxvs or cuVS), searched best first from a spread set of entry vectors (as CAGRA starts from
+//! many: a graph's clusters need not be linked to each other), keeping the `ef` nearest found so far,
 //! as HNSW searches its bottom layer. One thread per query; a query's visited vectors are marked in a
 //! per-thread array of epochs, so that nothing is cleared between queries.
 
@@ -17,6 +18,8 @@ use super::metric::{Kind, Metric, with_metric};
 const LANES: usize = 16;
 /// Batches below this many queries run on a pool of their own, a thread per query up to the cores.
 const SMALL_BATCH: usize = 64;
+/// Entry vectors every search starts from: the one nearest the mean, and the rest spread evenly through the rows.
+const ENTRIES: usize = 256;
 /// The most links per vector a graph may have (CAGRA's are 32 or 64).
 pub const MAX_DEGREE: usize = 128;
 
@@ -113,11 +116,13 @@ pub struct Graph {
     metric: Kind,
     rows: Rows,
     links: Vec<u32>,
-    entry: u32,
+    /// Where every search starts: the vector nearest the mean, and others spread evenly through the rows.
+    entries: Vec<u32>,
 }
 
 impl Graph {
-    /// From the vectors `x` (n rows of `d`, used to find the entry: the vector nearest their mean), the rows the
+    /// From the vectors `x` (n rows of `d`, used to find the entries: the vector nearest their mean and others
+    /// spread evenly through them), the rows the
     /// search reads (`rows`: x itself, or the same as bytes), and the links (n x `degree`, each below n, or -1
     /// for none).
     pub fn new(
@@ -160,6 +165,12 @@ impl Graph {
             .map(|(i, row)| Near(row_dist::<super::metric::L2, f32>(&mean, row), i as u32))
             .min()
             .map_or(0, |b| b.1);
+        let step = n.div_ceil(ENTRIES - 1).max(1);
+        let mut entries: Vec<u32> = std::iter::once(entry)
+            .chain((0..n).step_by(step).map(|i| i as u32))
+            .collect();
+        entries.sort_unstable();
+        entries.dedup();
         Ok(Graph {
             d,
             n,
@@ -170,7 +181,7 @@ impl Graph {
                 .iter()
                 .map(|&l| if l < 0 { u32::MAX } else { l as u32 })
                 .collect(),
-            entry,
+            entries,
         })
     }
 
@@ -234,10 +245,31 @@ impl Graph {
             let mut todo: BinaryHeap<std::cmp::Reverse<Near>> = BinaryHeap::new();
             let (mut ids, mut dists) = ([0u32; MAX_DEGREE], [0.0f32; MAX_DEGREE]);
             let mut best: BinaryHeap<Near> = BinaryHeap::with_capacity(ef + 1);
-            let start = Near(dist(self.entry), self.entry);
-            seen[self.entry as usize] = epoch;
-            todo.push(std::cmp::Reverse(start));
-            best.push(start);
+            let entry_dists: Vec<f32> = if q8.is_none() {
+                let row = |i: u32| &rows[i as usize * d..(i as usize + 1) * d];
+                self.entries
+                    .chunks(GROUP)
+                    .flat_map(|g| {
+                        let pick = |j: usize| row(g[j.min(g.len() - 1)]);
+                        rows_dist::<M, T>(q, [pick(0), pick(1), pick(2), pick(3)])
+                            .into_iter()
+                            .take(g.len())
+                    })
+                    .collect()
+            } else {
+                self.entries.iter().map(|&e| dist(e)).collect()
+            };
+            for (&e, &de) in self.entries.iter().zip(&entry_dists) {
+                let start = Near(de, e);
+                seen[e as usize] = epoch;
+                if best.len() < ef || start < *best.peek().unwrap() {
+                    todo.push(std::cmp::Reverse(start));
+                    best.push(start);
+                    if best.len() > ef {
+                        best.pop();
+                    }
+                }
+            }
             while let Some(std::cmp::Reverse(c)) = todo.pop() {
                 if best.len() >= ef && c > *best.peek().unwrap() {
                     break;
