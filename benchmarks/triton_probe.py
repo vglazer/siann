@@ -25,6 +25,24 @@ import triton
 import triton.language as tl
 
 MAX_KEY = 0x7FFFFFFFFFFFFFFF
+BEST_2D = {"BLOCK_Q": 32, "BLOCK_N": 128, "SORT": True, "num_warps": 4}   # the T4's fastest of the 24 (Colab)
+
+
+class Deadline:
+    """A hard limit on the whole run: work checks it before each step, and once it has passed, the step is
+    skipped with a line saying so (the results so far stand)."""
+
+    def __init__(self, seconds: float):
+        self.seconds, self.end = seconds, time.perf_counter() + seconds
+
+    def over(self, what: str) -> bool:
+        if time.perf_counter() < self.end:
+            return False
+        print(f"  out of time (the {self.seconds:.0f} s budget): {what} skipped", flush=True)
+        return True
+
+
+DEADLINE = Deadline(float("inf"))
 
 
 @triton.jit
@@ -215,7 +233,7 @@ def _mb(v):
 SLOW = 20.0      # seconds: a call slower than this is not repeated, and that contender's larger batches skipped
 
 
-def bench(n: int, d: int, batches, config_2d: dict | None = None, full: bool = False) -> None:
+def bench(n: int, d: int, batches, config_2d: dict | None = None, full: bool = False, tune: bool = False) -> None:
     dev = torch.device("cuda")
     rng = np.random.default_rng(0)
     xb = rng.standard_normal((n, d), dtype=np.float32)
@@ -255,32 +273,31 @@ def bench(n: int, d: int, batches, config_2d: dict | None = None, full: bool = F
     # the 2D kernel's configurations timed one by one, each printed as it is measured (Triton's auto-tuner says
     # nothing until all are done); the 3D kernel at the configuration its auto-tuner chose on the T4
     best_cfg, best_t = None, float("inf")
-    configs = [{**c.kwargs, "num_warps": c.num_warps} for c in CONFIGS_2D]
-    if config_2d is not None:
-        configs = [config_2d]                                       # tuning skipped: a configuration given
-    print(f"  tuning the 2D-tile kernel on 1,000 queries: {len(configs)} configurations, each compiled, run once "
-          f"and timed once (seconds per call; a configuration past {SLOW} s on its first call is not timed)",
+    configs = [{**c.kwargs, "num_warps": c.num_warps} for c in CONFIGS_2D] if tune else [config_2d or BEST_2D]
+    print(f"  the 2D-tile kernel on 1,000 queries: {len(configs)} configuration(s), each compiled (about 30 s on a "
+          f"T4) and then timed once (seconds per call; a configuration past {SLOW:.0f} s per call is dropped)",
           flush=True)
     for i, cfg in enumerate(configs, 1):
+        if best_cfg is not None and DEADLINE.over(f"configurations {i}-{len(configs)}"):
+            break
         try:
-            t = time.perf_counter()
-            l1_knn(x, q[:1000], k, cfg, xt=xt)                     # compiles
+            l1_knn(x, q[:100], k, cfg, xt=xt)                      # compiles, on a small batch: not timed
             torch.cuda.synchronize()
-            first = time.perf_counter() - t
-            if first > SLOW:
-                print(f"    [{i}/{len(configs)}] {cfg}: too slow ({first:.1f} s with compiling); {elapsed()}",
-                      flush=True)
-                continue
             t = time.perf_counter()
             l1_knn(x, q[:1000], k, cfg, xt=xt)
             torch.cuda.synchronize()
             t = time.perf_counter() - t
+            if t > SLOW:
+                print(f"    [{i}/{len(configs)}] {cfg}: too slow ({t:.1f} s per call); {elapsed()}", flush=True)
+                continue
         except Exception as e:  # noqa: BLE001 (a configuration the GPU cannot run: skip it)
             print(f"    [{i}/{len(configs)}] {cfg}: failed ({type(e).__name__}); {elapsed()}", flush=True)
             continue
         print(f"    [{i}/{len(configs)}] {cfg}: {t:.3f}; {elapsed()}", flush=True)
         if t < best_t:
             best_cfg, best_t = cfg, t
+    if best_cfg is None:                                           # never fall back to Triton's silent auto-tuner
+        raise SystemExit("  no 2D-tile configuration ran: nothing to benchmark")
     print(f"  fastest 2D-tile configuration: {best_cfg}", flush=True)
     best_3d = {"BLOCK_Q": 64, "BLOCK_N": 128, "BLOCK_D": 2, "SORT": True, "num_warps": 4}
     contenders = {"siann, 2D tiles, tuned": lambda qb: l1_knn(x, qb, k, best_cfg, xt=xt),
@@ -343,7 +360,7 @@ def bench(n: int, d: int, batches, config_2d: dict | None = None, full: bool = F
         print(f"  [{row}/{len(contenders)}] {name:26s}", end="", flush=True)
         mems, slow = [], False
         for b in batches:
-            if slow or (name in only_small and b > batches[0]):
+            if slow or (name in only_small and b > batches[0]) or DEADLINE.over(f"{name}, batch {b:,}"):
                 print(f"{'-':>20s}", end="", flush=True)
                 mems.append(None)
                 continue
@@ -368,12 +385,16 @@ def main() -> None:
     p.add_argument("--check", action="store_true")
     p.add_argument("--all", action="store_true", help="with --check, every configuration of both kernels")
     p.add_argument("--bench", action="store_true")
-    p.add_argument("--n", type=int, default=1_000_000)
+    p.add_argument("--n", type=int, default=200_000)
     p.add_argument("--d", type=int, default=128)
     p.add_argument("--batches", default="100,1000")
     p.add_argument("--full", action="store_true", help="also round two's kernel and torch.cdist")
-    p.add_argument("--config", help="the 2D kernel's configuration, skipping its tuning: BLOCK_Q,BLOCK_N,sort|min,warps")
+    p.add_argument("--config", help="the 2D kernel's configuration (default: the T4's fastest): BLOCK_Q,BLOCK_N,sort|min,warps")
+    p.add_argument("--tune", action="store_true", help="time all 24 configurations of the 2D kernel first (long)")
+    p.add_argument("--budget", type=float, default=180, help="seconds for the whole run; past it, the rest is skipped")
     a = p.parse_args()
+    global DEADLINE
+    DEADLINE = Deadline(a.budget)
     if a.check:
         check(a.all)
     if a.bench:
@@ -381,7 +402,7 @@ def main() -> None:
         if a.config:
             bq, bn, sel, w = a.config.split(",")
             cfg = {"BLOCK_Q": int(bq), "BLOCK_N": int(bn), "SORT": sel == "sort", "num_warps": int(w)}
-        bench(a.n, a.d, tuple(map(int, a.batches.split(","))), cfg, a.full)
+        bench(a.n, a.d, tuple(map(int, a.batches.split(","))), cfg, a.full, a.tune)
 
 
 if __name__ == "__main__":

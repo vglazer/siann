@@ -25,8 +25,25 @@ import torch
 
 CHUNK = 256          # queries per matrix multiply: 256 x 1,000,000 float32 scores is 1 GB
 BLOCK = 1000         # the first stage's block of the base (n must be a multiple)
-L1_Q, L1_N = 8, 31_250   # L1's tile: 8 queries x 31,250 vectors x 128 coordinates is 128 MB
+L1_Q, L1_N = 8, 25_000   # L1's tile: 8 queries x 25,000 vectors x 128 coordinates is 100 MB
 SLOW = 20.0               # seconds: a call slower than this is not repeated, and its row's larger batches skipped
+
+
+class Deadline:
+    """A hard limit on the whole run: work checks it before each step, and once it has passed, the step is
+    skipped with a line saying so (the results so far stand)."""
+
+    def __init__(self, seconds: float):
+        self.seconds, self.end = seconds, time.perf_counter() + seconds
+
+    def over(self, what: str) -> bool:
+        if time.perf_counter() < self.end:
+            return False
+        print(f"  out of time (the {self.seconds:.0f} s budget): {what} skipped", flush=True)
+        return True
+
+
+DEADLINE = Deadline(float("inf"))
 
 
 class Backend:
@@ -215,13 +232,16 @@ def run_l1(tile, x, q, k):
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--device", default="auto", choices=("auto", "tpu", "cpu"))
-    p.add_argument("--n", type=int, default=1_000_000)
+    p.add_argument("--n", type=int, default=200_000)
+    p.add_argument("--budget", type=float, default=150, help="seconds for the whole run; past it, the rest is skipped")
     p.add_argument("--d", type=int, default=128)
     p.add_argument("--batches", default="100,1000")
     p.add_argument("--l1-batch", type=int, default=100, help="L1's single batch size (its tiles are slow)")
     p.add_argument("--check-queries", type=int, default=20)
     p.add_argument("--full", action="store_true", help="every search in every mode (eager and compiled, both precisions)")
     a = p.parse_args()
+    global DEADLINE
+    DEADLINE = Deadline(a.budget)
     if a.n % BLOCK or a.n % L1_N and a.n > L1_N:
         raise SystemExit(f"--n must be a multiple of {BLOCK} and of {L1_N} (or below {L1_N})")
     be = Backend(a.device)
@@ -297,6 +317,8 @@ def main() -> None:
                 def call(qb, fn=fn):
                     return run_chunks(fn, qb, CHUNK)
                 row += 1
+                if DEADLINE.over(f"row {row} of {rows} and later ones"):
+                    return
                 label = f"[{row}/{rows}] {metric}, {how}"
                 print(f"    {label:30s}", end="", flush=True)
                 mems, slow = [], False
@@ -320,6 +342,8 @@ def main() -> None:
             if precision == "medium":                                 # L1 has no matrix multiply: once per mode
                 tile = torch.compile(l1_tile, backend=be.compile_backend) if compiled else l1_tile
                 row += 1
+                if DEADLINE.over(f"row {row} of {rows} and later ones"):
+                    return
                 print(f"    {f'[{row}/{rows}] l1, tiles':30s}", end="", flush=True)
                 try:
                     qb = q[:a.l1_batch]

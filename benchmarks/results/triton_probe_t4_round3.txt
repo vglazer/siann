@@ -1,0 +1,31 @@
+Colab, Tesla T4 (cuVS as Colab installs it; FAISS not installed in this run)
+python triton_probe.py --bench --budget 180   (2D-tile kernel at BLOCK_Q 32, BLOCK_N 128, sort, 4 warps)
+Tesla T4: 200,000 Gaussian vectors, 128 dimensions, L1, k = 10; queries per second
+  the 2D-tile kernel on 1,000 queries: 1 configuration(s), each compiled (about 30 s on a T4) and then timed once (seconds per call; a configuration past 20 s per call is dropped)
+    [1/1] {'BLOCK_Q': 32, 'BLOCK_N': 128, 'SORT': True, 'num_warps': 4}: 0.151; 0.3 min so far
+  fastest 2D-tile configuration: {'BLOCK_Q': 32, 'BLOCK_N': 128, 'SORT': True, 'num_warps': 4}
+  (FAISS GPU skipped: ModuleNotFoundError: No module named 'faiss')
+  queries per second; then memory per call, MB: PyTorch's peak / the device's peak / the host's peak
+  2 contenders x 2 batch sizes; '-' where a batch was skipped
+                                             batch 100         batch 1,000
+  [1/2] siann, 2D tiles, tuned                   8,909              12,510   (0.3 min so far)
+        memory                             24 / 24 / 0       241 / 242 / 0
+        kept on the device                           0 MB
+  [2/2] cuVS brute force                        22,488              44,444   (0.3 min so far)
+        memory                               0 / 0 / 0           0 / 2 / 0
+        kept on the device                           0 MB
+
+Tuning of the 2D-tile kernel on 1,000,000 vectors, 1,000 queries (an earlier Colab run, the first 10 of the 24
+configurations before the session stopped; seconds per call):
+    {'BLOCK_Q': 32, 'BLOCK_N': 128, 'SORT': True, 'num_warps': 4}: 0.362
+    {'BLOCK_Q': 32, 'BLOCK_N': 128, 'SORT': True, 'num_warps': 8}: 0.428
+    {'BLOCK_Q': 32, 'BLOCK_N': 128, 'SORT': False, 'num_warps': 4}: 0.531
+    {'BLOCK_Q': 32, 'BLOCK_N': 128, 'SORT': False, 'num_warps': 8}: 0.544
+    {'BLOCK_Q': 64, 'BLOCK_N': 128, 'SORT': True, 'num_warps': 4}: 0.453
+    {'BLOCK_Q': 64, 'BLOCK_N': 128, 'SORT': True, 'num_warps': 8}: 0.441
+    {'BLOCK_Q': 64, 'BLOCK_N': 128, 'SORT': False, 'num_warps': 4}: 0.757
+    {'BLOCK_Q': 64, 'BLOCK_N': 128, 'SORT': False, 'num_warps': 8}: 0.540
+    {'BLOCK_Q': 128, 'BLOCK_N': 128, 'SORT': True, 'num_warps': 4}: 7.377
+    {'BLOCK_Q': 128, 'BLOCK_N': 128, 'SORT': True, 'num_warps': 8}: 0.595
+The check (python triton_probe.py --check) passed on the T4: the 2D-tile kernel identical to exact search, ties
+included, in 24 of 24 configurations on each of three shapes.

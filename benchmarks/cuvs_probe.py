@@ -25,6 +25,23 @@ START = time.perf_counter()
 SIFT_URL = "http://ann-benchmarks.com/sift-128-euclidean.hdf5"
 
 
+class Deadline:
+    """A hard limit on the whole run: work checks it before each step, and once it has passed, the step is
+    skipped with a line saying so (the results so far stand)."""
+
+    def __init__(self, seconds: float):
+        self.seconds, self.end = seconds, time.perf_counter() + seconds
+
+    def over(self, what: str) -> bool:
+        if time.perf_counter() < self.end:
+            return False
+        print(f"  out of time (the {self.seconds:.0f} s budget): {what} skipped", flush=True)
+        return True
+
+
+DEADLINE = Deadline(float("inf"))
+
+
 def elapsed():
     return f"{(time.perf_counter() - START) / 60:.1f} min so far"
 
@@ -81,6 +98,8 @@ def capabilities() -> None:
     print(f"  {len(cases)} cases; recall@{k} up to ties against NumPy on {nq} queries, {n:,} x {d} (integer "
           f"data for int8 and uint8); IVF-Flat probes every list, so it should be exact", flush=True)
     for i, (what, metric, dt) in enumerate(cases, 1):
+        if DEADLINE.over(f"cases {i}-{len(cases)}"):
+            return
         if dt in ("int8", "uint8"):
             base, qs = (xbb - 128 if dt == "int8" else xbb), (xqb - 128 if dt == "int8" else xqb)
         else:
@@ -139,6 +158,8 @@ def cagra_export(path: str, out: str) -> None:
           f"algorithm) ({elapsed()})", flush=True)
     print(f"  [3/{steps}] cuVS's own search, 10,000 queries, recall@10 against ann-benchmarks' ground truth:", flush=True)
     for width in (32, 64, 128, 256):
+        if DEADLINE.over(f"the search at itopk_size {width} and wider (the graph is still saved)"):
+            break
         sp = cagra.SearchParams(itopk_size=width)
         cagra.search(sp, index, q, 10)                     # warm-up
         cp.cuda.Device().synchronize()
@@ -170,7 +191,10 @@ def main() -> None:
     p.add_argument("--cagra", action="store_true")
     p.add_argument("--sift", default="sift-128-euclidean.hdf5", help="where SIFT1M is, or is downloaded to")
     p.add_argument("--out", default=".", help="where the CAGRA files are saved")
+    p.add_argument("--budget", type=float, default=180, help="seconds for the whole run; past it, the rest is skipped")
     a = p.parse_args()
+    global DEADLINE
+    DEADLINE = Deadline(a.budget)
     if a.capabilities:
         capabilities()
     if a.cagra:

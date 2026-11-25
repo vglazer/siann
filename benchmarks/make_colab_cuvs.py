@@ -64,16 +64,16 @@ print("cuVS", "works" if works("from cuvs.neighbors import brute_force, cagra, i
 
 
 def write(name, intro, cells, plan):
-    nb = notebook(numbered([md(intro)] + shared() + cells, [("Which GPU", 0), ("Install cuVS", 5),
+    nb = notebook(numbered([md(intro)] + shared() + cells, [("Which GPU", 0), ("Install cuVS where missing", 1),
                                                              ("Write cuvs_probe.py", 0)] + plan), "GPU")
     out = HERE / "colab" / name
     out.write_text(json.dumps(nb, indent=1) + "\n", encoding="utf-8")
     print(out)
 
 
-SETUP = """Run with an NVIDIA GPU, a T4 or newer (Colab: Runtime, Change runtime type, T4 GPU; Kaggle: Accelerator, GPU
-T4, not the P100; Internet on). Every step runs; none needs skipping, and each says when it starts, when it ends
-and what comes next."""
+SETUP = """Run on Colab with a T4 GPU (Runtime, Change runtime type, T4 GPU): Colab comes with cuVS, so nothing heavy
+is installed (on Kaggle, installing cuVS alone takes several minutes). Every step runs; none needs skipping, each
+says when it starts, when it ends and what comes next, and the probe stops itself at its time budget."""
 
 
 def main() -> None:
@@ -84,18 +84,19 @@ def main() -> None:
 
 Which metrics cuVS's brute force accepts (L1 and L-infinity in particular), and which data types (float32,
 float16, int8, uint8) and metrics its IVF-Flat and CAGRA accept, each checked against NumPy on small data. About
-5-10 minutes in all, most of it the install. Copy the output of the last step back.
+3-5 minutes in all. Copy the output of the last step back.
 """, [
         code("!python -u cuvs_probe.py --capabilities"),
-    ], [("Capabilities", 3)])
+    ], [("Capabilities", 2)])
     write("cuvs_cagra.ipynb", f"""
 # A CAGRA graph built by cuVS, for siann
 
 {SETUP}
 
 cuVS builds a CAGRA graph on SIFT1M (32 links per vector, pruned from 64, as siann's graphs), measures its own
-search's recall, and saves the graph in cuVS's format and as a NumPy file. About 15-25 minutes in all, most of
-it downloading SIFT1M (about 500 MB) and the install. Copy the output of the last step back, and download
+search's recall, and saves the graph in cuVS's format and as a NumPy file. About 5 minutes in all, most of it
+downloading SIFT1M (about 500 MB: Colab's network usually takes under a minute). Copy the output of the last step
+back, and download
 `cagra_sift.cuvs` and `cagra_sift_links.npy` (Colab: the file browser on the left; Kaggle: the Output panel).
 """, [
         code('''
@@ -104,7 +105,7 @@ import os
 out = "/kaggle/working" if os.path.isdir("/kaggle/working") else "."     # Kaggle keeps only /kaggle/working
 !python -u cuvs_probe.py --cagra --out {out}
 '''),
-    ], [("CAGRA on SIFT1M", 15)])
+    ], [("CAGRA on SIFT1M", 4)])
 
 
 if __name__ == "__main__":

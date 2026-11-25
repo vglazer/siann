@@ -39,6 +39,23 @@ PALLAS_BLOCKS = ((8, 512), (16, 512))                                       # --
 PALLAS_BLOCKS_FULL = ((8, 512), (8, 1024), (16, 512), (32, 256), (8, 2048))
 
 
+class Deadline:
+    """A hard limit on the whole run: work checks it before each step, and once it has passed, the step is
+    skipped with a line saying so (the results so far stand)."""
+
+    def __init__(self, seconds: float):
+        self.seconds, self.end = seconds, time.perf_counter() + seconds
+
+    def over(self, what: str) -> bool:
+        if time.perf_counter() < self.end:
+            return False
+        print(f"  out of time (the {self.seconds:.0f} s budget): {what} skipped", flush=True)
+        return True
+
+
+DEADLINE = Deadline(float("inf"))
+
+
 def exact_numpy(xb, xq, k, metric):
     """NumPy's k nearest (int64 indices, ties by index): the reference."""
     out = []
@@ -256,6 +273,8 @@ def bench(n: int, d: int, batches, l1_batch: int, check_queries: int, full: bool
         def call(qb, fn=fn):
             return run_chunks(fn, qb, CHUNK)
         row += 1
+        if DEADLINE.over(f"row {row} of {rows} and later ones"):
+            return
         print(f"  {f'[{row}/{rows}] {metric}, {how}':50s}", end="", flush=True)
         try:
             slow = False
@@ -275,6 +294,8 @@ def bench(n: int, d: int, batches, l1_batch: int, check_queries: int, full: bool
     print(f"\n  L1, batch {l1_batch} (queries per second)", flush=True)
     search = builtin_l1(x, k)
     row += 1
+    if DEADLINE.over(f"rows {row}-{rows}"):
+        return
     try:
         def call_builtin(qq):
             return run_chunks(search, qq, 16)
@@ -286,6 +307,8 @@ def bench(n: int, d: int, batches, l1_batch: int, check_queries: int, full: bool
         print(f"    built-in tiles failed: {type(e).__name__}: {str(e)[:300]}", flush=True)
     for bq, bn in blocks:
         row += 1
+        if DEADLINE.over(f"rows {row}-{rows}"):
+            return
         try:
             xp = pad_base(x, bn)
 
@@ -303,13 +326,16 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--check", action="store_true")
     p.add_argument("--interpret", action="store_true", help="with --check: through Pallas's TPU interpreter")
-    p.add_argument("--n", type=int, default=1_000_000)
+    p.add_argument("--n", type=int, default=200_000)
+    p.add_argument("--budget", type=float, default=150, help="seconds for the whole run; past it, the rest is skipped")
     p.add_argument("--d", type=int, default=128)
     p.add_argument("--batches", default="100,1000")
     p.add_argument("--l1-batch", type=int, default=100)
     p.add_argument("--check-queries", type=int, default=20)
     p.add_argument("--full", action="store_true", help="every search, precision and Pallas block shape")
     a = p.parse_args()
+    global DEADLINE
+    DEADLINE = Deadline(a.budget)
     if a.check:
         check(a.interpret)
     else:

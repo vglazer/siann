@@ -38,9 +38,10 @@ Run on a TPU (Colab: Runtime, Change runtime type, TPU). Two parts, each in its 
 2. **PyTorch:** the same searches through PyTorch's built-in operations on TorchTPU (or PyTorch/XLA), eagerly
    and compiled.
 
-Every result is checked against NumPy, and each number prints as it is measured. In all about 15-25 minutes on a
-first run, most of it installing and compiling (each script's `--full` runs every search, precision and block
-shape, and takes several times longer). Copy the outputs of the check and benchmark cells back.
+Every result is checked against NumPy, and each number prints as it is measured; each run stops itself at its
+time budget. **The JAX part (steps 1-5) is the default, about 5 minutes:** Colab's and Kaggle's TPU runtimes come
+with JAX. The PyTorch part (steps 6-8) is optional: installing TorchTPU takes a few minutes, and it may not run on
+the TPU you are given. Copy the output of each step you run back.
 """),
         code('''
 # which TPU this runtime has, and Python's version (TorchTPU needs 3.11 or later)
@@ -69,7 +70,7 @@ print((r.stdout + r.stderr).strip())
 '''),
         code("%%writefile jax_probe.py\n" + jax_probe),
         code("!python -u jax_probe.py --check"),
-        code("!python -u jax_probe.py"),
+        code("!python -u jax_probe.py --budget 150"),
         md("## 2. PyTorch"),
         code('''
 # TorchTPU (validated on TPU v5e, v5p, v6e and v7); where it cannot run here, PyTorch/XLA if the runtime has it
@@ -96,11 +97,12 @@ if not ok:
     print("PyTorch/XLA", "works: the probe uses it" if ok else f"does not work either: {why}")
 '''),
         code("%%writefile tpu_probe.py\n" + probe),
-        code("!python -u tpu_probe.py"),
+        code("!python -u tpu_probe.py --budget 150"),
     ]
-    nb = notebook(numbered(cells, [("Which TPU", 0), ("JAX for the TPU", 3), ("Write jax_probe.py", 0),
-                           ("Check the Pallas kernel against exact search", 3), ("JAX benchmark", 5),
-                           ("TorchTPU or PyTorch/XLA", 5), ("Write tpu_probe.py", 0), ("PyTorch benchmark", 8)]), "TPU")
+    nb = notebook(numbered(cells, [("Which TPU", 0), ("JAX for the TPU", 1), ("Write jax_probe.py", 0),
+                           ("Check the Pallas kernel against exact search", 1), ("JAX benchmark", 3),
+                           ("TorchTPU or PyTorch/XLA", 4, "optional"), ("Write tpu_probe.py", 0, "optional"),
+                           ("PyTorch benchmark", 3, "optional")]), "TPU")
     out = HERE / "colab" / "tpu_probe.ipynb"
     out.write_text(json.dumps(nb, indent=1) + "\n", encoding="utf-8")
     print(out)

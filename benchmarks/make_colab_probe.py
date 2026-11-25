@@ -29,16 +29,15 @@ def main() -> None:
         md("""
 # siann's Triton probe
 
-Run with a GPU (Colab: Runtime, Change runtime type, T4 GPU; Kaggle: Accelerator, GPU). The notebook checks
-siann's exact L1 kernel, written in Triton, against exact search on the GPU, then times it against
-`torch.cdist`, FAISS's GPU brute force and cuVS's brute force, with the memory each takes. Last, it builds a cuVS IVF-Flat index of seeded
-Gaussian vectors and saves it, to check that siann reads cuVS's files: download `ivf_flat_gaussian.cuvs` from
-the file browser at the end. Copy the outputs of the check and benchmark cells back.
+Run on Colab with a T4 GPU (Runtime, Change runtime type, T4 GPU): Colab comes with PyTorch, Triton and cuVS, so
+the default steps install almost nothing. **Steps 1-4, about 5 minutes in all:** siann's exact L1 kernel, written
+in Triton, timed against cuVS's brute force on 200,000 Gaussian vectors, with the memory each takes; the run
+stops itself at its time budget. Steps 5 and later are optional: FAISS (its install takes a few minutes), the
+kernels' check against exact search, and the long tuning. Copy the output of each step you run back.
 """),
         code("!nvidia-smi --query-gpu=name,memory.total --format=csv"),
         code('''
-# FAISS's and cuVS's GPU packages for the CUDA version this machine's PyTorch was built with, cuVS only if it is
-# not already installed (Colab comes with it): mixing CUDA 12 and 13 packages breaks NVIDIA's other libraries
+# small packages for the memory figures; cuVS only where missing (Colab comes with it), for this CUDA
 import subprocess
 import sys
 
@@ -48,14 +47,8 @@ cuda = torch.version.cuda.split(".")[0]
 print("PyTorch", torch.__version__, "for CUDA", torch.version.cuda)
 
 
-def cuvs_works():
-    r = subprocess.run([sys.executable, "-c", "from cuvs.neighbors import brute_force"], check=False,
-                       capture_output=True, text=True)
-    return r.returncode == 0
-
-
-# cuVS's Python package can be present without its library (libcuvs_c.so): reinstall both, for this CUDA
-wanted = ["nvidia-ml-py", "psutil", f"faiss-gpu-cu{cuda}"] + ([] if cuvs_works() else [f"libcuvs-cu{cuda}", f"cuvs-cu{cuda}"])
+def works(stmt):
+    return subprocess.run([sys.executable, "-c", stmt], check=False, capture_output=True).returncode == 0
 
 
 def install(pkg):
@@ -65,46 +58,39 @@ def install(pkg):
     return r.returncode == 0
 
 
-for pkg in wanted:
-    # FAISS publishes no CUDA 13 build; its CUDA 12 one ships its own CUDA runtime, which sits beside CUDA 13
-    if not install(pkg) and pkg.startswith("faiss-gpu-cu") and pkg != "faiss-gpu-cu12":
-        install("faiss-gpu-cu12")
-print("cuVS", "works" if cuvs_works() else "still missing its library: the benchmark skips it")
+for pkg in ("nvidia-ml-py", "psutil"):
+    install(pkg)
+if not works("from cuvs.neighbors import brute_force"):
+    print("cuVS missing: installing it takes several minutes (Colab comes with it)")
+    install(f"libcuvs-cu{cuda}")
+    install(f"cuvs-cu{cuda}")
+print("cuVS", "works" if works("from cuvs.neighbors import brute_force") else "does not work: the benchmark skips it")
 '''),
         code("%%writefile triton_probe.py\n" + probe),
-        code("!python -u triton_probe.py --check"),
-        md("""
-The benchmark, with the 2D-tile kernel at the configuration the T4's tuning found fastest (32 x 128, sort, 4
-warps), against FAISS and cuVS at batches of 100 and 1,000: about 3-5 minutes, compiling included (`--full`
-adds round two's kernel and torch.cdist). Every row shows its number out of the total and the minutes so far.
-"""),
-        code("!python -u triton_probe.py --bench --config 32,128,sort,4"),
-        md("""
-Optional, long (30 minutes or more on a T4): the same benchmark after tuning all 24 configurations.
-"""),
-        code("!python -u triton_probe.py --bench"),
+        code("!python -u triton_probe.py --bench --budget 180"),
         code('''
-import os
+# FAISS's GPU package for this CUDA (it publishes no CUDA 13 build: its CUDA 12 one brings its own runtime)
+import subprocess  # noqa: F811 (again here, so that this step runs on its own too)
+import sys  # noqa: F811
 
-import numpy as np
+import torch
 
-x = np.random.default_rng(0).standard_normal((100_000, 128), dtype=np.float32)   # siann regenerates the same
-try:
-    import cupy as cp
-    import cuvs
-    from cuvs.neighbors import ivf_flat
-    index = ivf_flat.build(ivf_flat.IndexParams(n_lists=316, metric="sqeuclidean"), cp.asarray(x))
-    ivf_flat.save("ivf_flat_gaussian.cuvs", index, include_dataset=True)
-    print("cuVS", getattr(cuvs, "__version__", "?"), "saved", os.path.getsize("ivf_flat_gaussian.cuvs"), "bytes")
-except Exception as e:  # noqa: BLE001 (report whatever went wrong, for the user to paste back)
-    print(type(e).__name__, e)
+cuda = torch.version.cuda.split(".")[0]
+for pkg in (f"faiss-gpu-cu{cuda}", "faiss-gpu-cu12"):
+    r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", pkg], check=False, capture_output=True, text=True)
+    print(pkg, "installed" if r.returncode == 0 else "not installed: " + (r.stderr.strip().splitlines() or ["?"])[-1])
+    if r.returncode == 0:
+        break
 '''),
+        code("!python -u triton_probe.py --bench --budget 180"),
+        code("!python -u triton_probe.py --check"),
+        code("!python -u triton_probe.py --bench --tune --budget 3600"),
     ]
-    nb = notebook(numbered(cells, [("Which GPU", 0), ("Install FAISS and cuVS", 5), ("Write triton_probe.py", 0),
-                           ("Check the kernels against exact search", 15, "optional"),
-                           ("Benchmark at the tuned configuration", 5),
-                           ("Benchmark after tuning all 24 configurations", 45, "optional"),
-                           ("Save a cuVS IVF-Flat file", 2, "optional")]), "GPU")
+    nb = notebook(numbered(cells, [("Which GPU", 0), ("Small installs", 1), ("Write triton_probe.py", 0),
+                                   ("Benchmark against cuVS", 3),
+                                   ("Install FAISS", 4, "optional"), ("Benchmark with FAISS too", 3, "optional"),
+                                   ("Check the kernels against exact search", 15, "optional"),
+                                   ("Benchmark after tuning all 24 configurations", 45, "optional")]), "GPU")
     out = HERE / "colab" / "triton_probe.ipynb"
     out.write_text(json.dumps(nb, indent=1) + "\n", encoding="utf-8")
     print(out)
