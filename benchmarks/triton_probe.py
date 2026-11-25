@@ -105,14 +105,17 @@ def _l1_merge_topk(qt_ptr, xt_ptr, out_ptr, nq, n, d, per_split,
                    BLOCK_Q: tl.constexpr, BLOCK_N: tl.constexpr, K: tl.constexpr, KP: tl.constexpr):
     """The in-kernel merge: each program takes BLOCK_Q queries and one stretch of the base (per_split vectors),
     scans it BLOCK_N vectors at a time as the 2D-tile kernel does, and keeps its queries' best K in registers
-    (KP lanes, K of them used), merging a block only where some query has a candidate nearer than its current
-    K-th; it writes only those K keys, so stage 2 sorts K per stretch, not K per block."""
+    (KP lanes, K of them used, in no order). Each block's candidates no nearer than their query's current K-th
+    are dropped, and then as many passes run as the busiest query has candidates left (few, once the first
+    blocks are in), each replacing a query's worst kept key by its best new one. Only the K keys are written,
+    so stage 2 sorts K per stretch, not K per block."""
     pq = tl.program_id(0)
     ps = tl.program_id(1)
     nsplit = tl.num_programs(1)
     rq = pq * BLOCK_Q + tl.arange(0, BLOCK_Q)
     lane = tl.arange(0, KP)
-    run = tl.full((BLOCK_Q, KP), 0x7FFFFFFFFFFFFFFF, tl.int64)        # the best K so far, ascending; MAX unused
+    # the best K so far, in no order: MAX where not yet filled; -1 in the KP - K unused lanes (never the worst)
+    run = tl.where(lane[None, :] < K, tl.full((BLOCK_Q, KP), 0x7FFFFFFFFFFFFFFF, tl.int64), -1)
     start = ps * per_split
     stop = tl.minimum(start + per_split, n)
     for s0 in range(start, stop, BLOCK_N):
@@ -125,15 +128,16 @@ def _l1_merge_topk(qt_ptr, xt_ptr, out_ptr, nq, n, d, per_split,
         bits = acc.to(tl.int32, bitcast=True).to(tl.int64)
         key = (bits << 32) | rn[None, :].to(tl.int64)
         key = tl.where(rn[None, :] < stop, key, 0x7FFFFFFFFFFFFFFF)
-        kth = tl.sum(tl.where(lane[None, :] == K - 1, run, 0), axis=1)   # each query's K-th best so far
-        if tl.max((tl.min(key, axis=1) < kth).to(tl.int32), axis=0) > 0:  # some query improves: merge
-            new = tl.full((BLOCK_Q, KP), 0x7FFFFFFFFFFFFFFF, tl.int64)
-            for p in tl.static_range(K):                               # K passes of a minimum (keys unique)
-                m = tl.minimum(tl.min(run, axis=1), tl.min(key, axis=1))
-                new = tl.where(lane[None, :] == p, m[:, None], new)
-                run = tl.where(run == m[:, None], 0x7FFFFFFFFFFFFFFF, run)
-                key = tl.where(key == m[:, None], 0x7FFFFFFFFFFFFFFF, key)
-            run = new
+        worst = tl.max(run, axis=1)                                   # each query's K-th best so far
+        key = tl.where(key < worst[:, None], key, 0x7FFFFFFFFFFFFFFF)  # only candidates that would get in
+        passes = tl.minimum(tl.max(tl.sum((key < 0x7FFFFFFFFFFFFFFF).to(tl.int32), axis=1), axis=0), K)
+        for _ in range(passes):                                        # keys unique: each pass moves one in
+            m = tl.min(key, axis=1)
+            worst = tl.max(run, axis=1)
+            take = m < worst
+            slot = tl.min(tl.where(run == worst[:, None], lane[None, :], KP), axis=1)   # one slot: empty ones tie
+            run = tl.where((lane[None, :] == slot[:, None]) & take[:, None], m[:, None], run)
+            key = tl.where(key == m[:, None], 0x7FFFFFFFFFFFFFFF, key)
     out = out_ptr + rq[:, None] * (nsplit * K) + ps * K + lane[None, :]
     tl.store(out, run, mask=(rq[:, None] < nq) & (lane[None, :] < K))
 
@@ -147,14 +151,14 @@ def l1_knn_merge(xt: torch.Tensor, q: torch.Tensor, k: int, config: dict | None 
                  programs: int | None = None) -> torch.Tensor:
     """Each query's k nearest by L1 through the in-kernel merge (xt: the base transposed, d x n, contiguous),
     int64 indices, nearest first, ties by index. The base is split into stretches so that about ``programs``
-    programs run (by default four per streaming multiprocessor): many for small batches, few for large ones."""
+    programs run (by default eight per streaming multiprocessor): many for small batches, few for large ones."""
     d, n = xt.shape
     nq = q.shape[0]
     cfg = dict(config or MERGE_DEFAULT)
     warps = cfg.pop("num_warps", 4)
     bq, bn = cfg["BLOCK_Q"], cfg["BLOCK_N"]
     if programs is None:
-        programs = 4 * (torch.cuda.get_device_properties(xt.device).multi_processor_count
+        programs = 8 * (torch.cuda.get_device_properties(xt.device).multi_processor_count
                         if xt.device.type == "cuda" else 16)
     qblocks = triton.cdiv(nq, bq)
     nblocks = triton.cdiv(n, bn)

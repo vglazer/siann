@@ -50,3 +50,13 @@ Tesla T4: 200,000 Gaussian vectors, 128 dimensions, L1, k = 10; queries per seco
   [3/3] cuVS brute force                        27,850              48,452   (1.1 min so far)
         memory                               0 / 0 / 0           0 / 0 / 0
         kept on the device                           0 MB
+
+The in-kernel merge, first version (a block merged by K passes of a minimum whenever any of its 32 queries had a
+nearer candidate; four programs per streaming multiprocessor): triton_faiss.ipynb, Run All, same T4 setup.
+python triton_probe.py --bench --lean --budget 269
+  in-kernel merge: the same neighbors as FAISS's on 100 queries: 1.0000
+                                             batch 100         batch 1,000
+  [1/3] siann, in-kernel merge                   3,119               8,454   (0.6 min so far)
+        memory                               0 / 0 / 0           1 / 0 / 0
+  [2/3] FAISS GPU brute force                   10,366              11,568   (0.6 min so far)
+  [3/3] cuVS brute force                        27,804              48,489   (0.6 min so far)
