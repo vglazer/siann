@@ -17,12 +17,14 @@ Every line prints as it is measured, with its number out of the total and the mi
 import argparse
 import os
 import time
+import urllib.error
 import urllib.request
 
 import numpy as np
 
 START = time.perf_counter()
 SIFT_URL = "http://ann-benchmarks.com/sift-128-euclidean.hdf5"
+TEXMEX_URL = "ftp://ftp.irisa.fr/local/texmex/corpus/sift.tar.gz"
 
 
 class Deadline:
@@ -131,24 +133,52 @@ def capabilities() -> None:
         print(f"  {label:34s} " + "; ".join(results) + f"   ({elapsed()})", flush=True)
 
 
+def download(url: str, path: str, size: str) -> None:
+    """``url`` to ``path`` in 8 MB chunks, its progress printed every 100 MB, stopped at the time budget. A
+    generic User-Agent: some sites refuse Python's default one."""
+    print(f"  downloading {url} ({size})", flush=True)
+    t = time.perf_counter()
+    got, shown = 0, 0
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; benchmark-download)"})
+    with urllib.request.urlopen(req, timeout=60) as r, open(path + ".part", "wb") as f:
+        total = int(r.headers.get("Content-Length") or 0)
+        while chunk := r.read(8 << 20):
+            f.write(chunk)
+            got += len(chunk)
+            if got - shown >= 100 << 20:
+                shown = got
+                print(f"    {got >> 20:,} of {total >> 20:,} MB ({elapsed()})", flush=True)
+            if DEADLINE.over("the rest of the download, and the build"):
+                raise SystemExit(f"  stopped: {got >> 20:,} of {total >> 20:,} MB downloaded within the budget")
+    os.replace(path + ".part", path)
+    print(f"  downloaded in {time.perf_counter() - t:.0f} s ({elapsed()})", flush=True)
+
+
+def fvecs(data: bytes, dtype) -> np.ndarray:
+    """TEXMEX's .fvecs / .ivecs: each row its dimension (int32) then its values."""
+    d = int(np.frombuffer(data[:4], dtype=np.int32)[0])
+    return np.frombuffer(data, dtype=dtype).reshape(-1, d + 1)[:, 1:].copy()
+
+
 def load_sift(path: str):
+    """SIFT1M: ann-benchmarks' HDF5 file, or where that site refuses, the original TEXMEX corpus (the same base
+    vectors, queries and ground truth, in the same order)."""
     import h5py
     if not os.path.exists(path):
-        print(f"  downloading {SIFT_URL} (about 500 MB)", flush=True)
-        t = time.perf_counter()
-        got, shown = 0, 0
-        with urllib.request.urlopen(SIFT_URL) as r, open(path + ".part", "wb") as f:
-            total = int(r.headers.get("Content-Length") or 0)
-            while chunk := r.read(8 << 20):
-                f.write(chunk)
-                got += len(chunk)
-                if got - shown >= 100 << 20:
-                    shown = got
-                    print(f"    {got >> 20:,} of {total >> 20:,} MB ({elapsed()})", flush=True)
-                if DEADLINE.over("the rest of the download, and the build"):
-                    raise SystemExit(f"  stopped: {got >> 20:,} of {total >> 20:,} MB downloaded within the budget")
-        os.replace(path + ".part", path)
-        print(f"  downloaded in {time.perf_counter() - t:.0f} s ({elapsed()})", flush=True)
+        try:
+            download(SIFT_URL, path, "about 500 MB")
+        except urllib.error.URLError as e:                    # HTTPError included (a 403 on some machines)
+            print(f"  ann-benchmarks refused ({e}); the TEXMEX corpus instead", flush=True)
+            import tarfile
+            tgz = "sift.tar.gz"
+            if not os.path.exists(tgz):
+                download(TEXMEX_URL, tgz, "about 170 MB")
+            with tarfile.open(tgz) as t:
+                read = {m.name.split("/")[-1]: t.extractfile(m).read() for m in t.getmembers() if m.isfile()}
+            base, query = fvecs(read["sift_base.fvecs"], np.float32), fvecs(read["sift_query.fvecs"], np.float32)
+            truth = fvecs(read["sift_groundtruth.ivecs"], np.int32)
+            print(f"  TEXMEX read: {len(base):,} base vectors, {len(query):,} queries ({elapsed()})", flush=True)
+            return base, query, truth[:, :10]
     with h5py.File(path, "r") as f:
         return (np.asarray(f["train"], dtype=np.float32), np.asarray(f["test"], dtype=np.float32),
                 np.asarray(f["neighbors"])[:, :10])
@@ -164,14 +194,23 @@ def cagra_export(path: str, out: str) -> None:
     if DEADLINE.left() < 90:                                   # the build cannot be cut short: about a minute on a T4
         raise SystemExit(f"  stopped: {DEADLINE.left():.0f} s left of the budget, too little to build the graph")
     print(f"  [1/{steps}] SIFT1M loaded: {xb.shape[0]:,} x {xb.shape[1]}, {len(xq):,} queries ({elapsed()})", flush=True)
-    b, q = cp.asarray(xb), cp.asarray(xq)
-    params = cagra.IndexParams(metric="sqeuclidean", graph_degree=32, intermediate_graph_degree=64)
+    # SIFT's coordinates are integers to 255: its squared distances overflow the half-precision tables of the
+    # IVF-PQ index cuVS's default build starts from (its kNN graph came out empty on a T4). Scaled by 1/255, the
+    # L2 neighbors are the same (up to rounding) and the default build works; NN-descent is the fallback.
+    b, q = cp.asarray(xb / 255.0, dtype=cp.float32), cp.asarray(xq / 255.0, dtype=cp.float32)
+    how = "cuVS's default build (IVF-PQ), on the vectors scaled by 1/255"
     t = time.perf_counter()
-    index = cagra.build(params, b)
+    try:
+        index = cagra.build(cagra.IndexParams(metric="sqeuclidean", graph_degree=32, intermediate_graph_degree=64), b)
+    except Exception as e:  # noqa: BLE001 (cuVS's own errors: try its other build)
+        print(f"    the default build failed ({str(e).splitlines()[0][:160]}); NN-descent instead", flush=True)
+        how = "NN-descent, on the vectors scaled by 1/255"
+        t = time.perf_counter()
+        index = cagra.build(cagra.IndexParams(metric="sqeuclidean", graph_degree=32, intermediate_graph_degree=64,
+                                              build_algo="nn_descent"), b)
     cp.cuda.Device().synchronize()
     build = time.perf_counter() - t
-    print(f"  [2/{steps}] built: {build:.1f} s (graph degree 32, intermediate 64, cuVS's default build "
-          f"algorithm) ({elapsed()})", flush=True)
+    print(f"  [2/{steps}] built: {build:.1f} s (graph degree 32, intermediate 64; {how}) ({elapsed()})", flush=True)
     print(f"  [3/{steps}] cuVS's own search, 10,000 queries, recall@10 against ann-benchmarks' ground truth:", flush=True)
     for width in (32, 64, 128, 256):
         if DEADLINE.over(f"the search at itopk_size {width} and wider (the graph is still saved)"):

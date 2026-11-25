@@ -1,0 +1,20 @@
+Kaggle, Tesla T4, cuVS 26.06.00: benchmarks/colab/cuvs_cagra.ipynb, Run All
+python cuvs_probe.py --cagra --out /kaggle/working --budget 270
+cuVS 26.06.00: CAGRA on SIFT1M, 5 steps
+  downloading http://ann-benchmarks.com/sift-128-euclidean.hdf5 (about 500 MB)
+  downloaded in 3 s (0.1 min so far)
+  [1/5] SIFT1M loaded: 1,000,000 x 128, 10,000 queries (0.1 min so far)
+  [2/5] built: 7.0 s (graph degree 32, intermediate 64; cuVS's default build (IVF-PQ), on the vectors scaled by 1/255) (0.2 min so far)
+  [3/5] cuVS's own search, 10,000 queries, recall@10 against ann-benchmarks' ground truth:
+      itopk_size   32: recall 0.9041, 390,430 queries/s (0.3 min so far)
+      itopk_size   64: recall 0.9663, 207,647 queries/s (0.3 min so far)
+      itopk_size  128: recall 0.9899, 104,589 queries/s (0.3 min so far)
+      itopk_size  256: recall 0.9972, 46,887 queries/s (0.4 min so far)
+  [4/5] saved /kaggle/working/cagra_sift.cuvs: 128,000,924 bytes, cuVS's format without the vectors (0.4 min so far)
+  [5/5] saved /kaggle/working/cagra_sift_links.npy: links (1000000, 32), int32 (0.4 min so far)
+
+Unscaled (SIFT's integer coordinates as they are), cuVS's default build failed on the same T4: "Self-included
+ratio is low: 0.00 %" from its IVF-PQ step, then "Could not generate an intermediate CAGRA graph because the
+initial kNN graph contains too many invalid or duplicated neighbor nodes" (graph_core.cuh, line 1682).
+The two files are kept outside the repository (gitignored): links 1,000,000 x 32 int32, ids 0-999,999, no
+vector linked to itself; the .cuvs file framed as cuVS's IVF-Flat files are (a dtype string, then .npy records).
