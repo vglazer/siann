@@ -35,15 +35,17 @@ KP = 128                        # the kept best-k, padded to the TPU's 128 lanes
 BIG = 3.0e38                    # "no candidate" (finite: inf - inf would be NaN in a padded row)
 PAD = 1.0e30                    # padding rows of the base: never nearer than a real row
 SLOW = 20.0                     # seconds: a call slower than this is not repeated, and its row's larger batches skipped
-PALLAS_BLOCKS = ((8, 512), (8, 1024), (16, 512), (32, 256), (8, 2048))
+PALLAS_BLOCKS = ((8, 512), (16, 512))                                       # --full: the five below
+PALLAS_BLOCKS_FULL = ((8, 512), (8, 1024), (16, 512), (32, 256), (8, 2048))
 
 
 def exact_numpy(xb, xq, k, metric):
     """NumPy's k nearest (int64 indices, ties by index): the reference."""
     out = []
+    sq = (xb.astype(np.float64) ** 2).sum(axis=1) if metric == "l2" else None
     for q in xq:
         if metric == "l2":
-            d = ((xb - q) ** 2).sum(axis=1)
+            d = sq - 2 * (xb @ q).astype(np.float64)             # the rank of |x - q|^2, without a copy of xb
         elif metric == "ip":
             d = -(xb @ q)
         else:
@@ -116,7 +118,7 @@ def pad_base(x, block_n):
 
 # --- built-in operations -----------------------------------------------------------------------------------------
 
-def builtin_searches(x, k):
+def builtin_searches(x, k, full=False):
     sq = jnp.sum(x * x, axis=1)
 
     def scores(q, metric, precision):
@@ -129,13 +131,17 @@ def builtin_searches(x, k):
     def approx(q, metric, precision):
         return lax.approx_min_k(scores(q, metric, precision), k, recall_target=0.95)[1]
 
+    precisions = {"default": lax.Precision.DEFAULT, "highest": lax.Precision.HIGHEST}
+    if full:
+        plan = [(m, how, p) for m in ("l2", "ip") for p in precisions for how in ("top_k", "approx_min_k")]
+    else:                                   # the short default: what differs, once each
+        plan = [("l2", "top_k", "default"), ("l2", "top_k", "highest"), ("l2", "approx_min_k", "default"),
+                ("ip", "top_k", "default")]
     out = {}
-    for metric in ("l2", "ip"):
-        for pname, precision in (("default", lax.Precision.DEFAULT), ("highest", lax.Precision.HIGHEST)):
-            out[(metric, f"matmul + top_k, precision {pname}")] = jax.jit(
-                functools.partial(exact, metric=metric, precision=precision))
-            out[(metric, f"matmul + approx_min_k, precision {pname}")] = jax.jit(
-                functools.partial(approx, metric=metric, precision=precision))
+    for metric, how, pname in plan:
+        fn = exact if how == "top_k" else approx
+        out[(metric, f"matmul + {how}, precision {pname}")] = jax.jit(
+            functools.partial(fn, metric=metric, precision=precisions[pname]))
     return out
 
 
@@ -195,7 +201,7 @@ def check(interpret: bool) -> None:
         assert same
 
 
-def bench(n: int, d: int, batches, l1_batch: int, check_queries: int) -> None:
+def bench(n: int, d: int, batches, l1_batch: int, check_queries: int, full: bool = False) -> None:
     k = 10
     dev = jax.devices()[0]
     rng = np.random.default_rng(0)
@@ -238,8 +244,9 @@ def bench(n: int, d: int, batches, l1_batch: int, check_queries: int) -> None:
         used, peak = memory()
         return f"{'?' if used is None else f'{used:,.0f}'} / {'?' if peak is None else f'{peak:,.0f}'}"
 
-    searches = builtin_searches(x, k)
-    rows = len(searches) + 1 + len(PALLAS_BLOCKS)
+    searches = builtin_searches(x, k, full)
+    blocks = PALLAS_BLOCKS_FULL if full else PALLAS_BLOCKS
+    rows = len(searches) + 1 + len(blocks)
     print(f"  queries per second; then the device's memory after the row, MB: in use / peak so far; then recall@10 "
           f"and exact matches against NumPy. {rows} rows; '-' where a batch was skipped (a call past {SLOW:.0f} s "
           f"skips its row's larger batches)", flush=True)
@@ -277,7 +284,7 @@ def bench(n: int, d: int, batches, l1_batch: int, check_queries: int) -> None:
               f"exact matches {same:.4f}; {elapsed()}", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"    built-in tiles failed: {type(e).__name__}: {str(e)[:300]}", flush=True)
-    for bq, bn in PALLAS_BLOCKS:
+    for bq, bn in blocks:
         row += 1
         try:
             xp = pad_base(x, bn)
@@ -298,14 +305,15 @@ def main() -> None:
     p.add_argument("--interpret", action="store_true", help="with --check: through Pallas's TPU interpreter")
     p.add_argument("--n", type=int, default=1_000_000)
     p.add_argument("--d", type=int, default=128)
-    p.add_argument("--batches", default="100,1000,10000")
-    p.add_argument("--l1-batch", type=int, default=1000)
-    p.add_argument("--check-queries", type=int, default=100)
+    p.add_argument("--batches", default="100,1000")
+    p.add_argument("--l1-batch", type=int, default=100)
+    p.add_argument("--check-queries", type=int, default=20)
+    p.add_argument("--full", action="store_true", help="every search, precision and Pallas block shape")
     a = p.parse_args()
     if a.check:
         check(a.interpret)
     else:
-        bench(a.n, a.d, tuple(map(int, a.batches.split(","))), a.l1_batch, a.check_queries)
+        bench(a.n, a.d, tuple(map(int, a.batches.split(","))), a.l1_batch, a.check_queries, a.full)
 
 
 if __name__ == "__main__":

@@ -130,9 +130,10 @@ class HostPeak:
 def exact_numpy(xb, xq, k, metric):
     """NumPy's k nearest (int64 indices, ties by index) for a sample of queries: the reference."""
     out = []
+    sq = (xb.astype(np.float64) ** 2).sum(axis=1) if metric == "l2" else None
     for q in xq:
         if metric == "l2":
-            d = ((xb - q) ** 2).sum(axis=1)
+            d = sq - 2 * (xb @ q).astype(np.float64)             # the rank of |x - q|^2, without a copy of xb
         elif metric == "ip":
             d = -(xb @ q)
         else:
@@ -143,7 +144,7 @@ def exact_numpy(xb, xq, k, metric):
     return np.array(out)
 
 
-def make_searches(x, k):
+def make_searches(x, k, full=False):
     """Each search maps a fixed-size chunk of queries to its k nearest indices (int64, on the device)."""
     n = x.shape[0]
     sq = (x * x).sum(dim=1)
@@ -167,12 +168,15 @@ def make_searches(x, k):
         d = (q[:, None, :] - xs[None, :, :]).abs().sum(dim=2)
         return torch.topk(d, k, dim=1, largest=False)
 
-    return {
+    searches = {
         ("l2", "one-stage top-k"): lambda q: one_stage(q, "l2"),
         ("l2", "two-stage top-k"): lambda q: two_stage(q, "l2"),
         ("ip", "one-stage top-k"): lambda q: one_stage(q, "ip"),
         ("ip", "two-stage top-k"): lambda q: two_stage(q, "ip"),
-    }, l1_tile
+    }
+    if not full:                                                      # the short default
+        del searches[("ip", "two-stage top-k")]
+    return searches, l1_tile
 
 
 def run_chunks(fn, q, size):
@@ -213,9 +217,10 @@ def main() -> None:
     p.add_argument("--device", default="auto", choices=("auto", "tpu", "cpu"))
     p.add_argument("--n", type=int, default=1_000_000)
     p.add_argument("--d", type=int, default=128)
-    p.add_argument("--batches", default="100,1000,10000")
+    p.add_argument("--batches", default="100,1000")
     p.add_argument("--l1-batch", type=int, default=100, help="L1's single batch size (its tiles are slow)")
-    p.add_argument("--check-queries", type=int, default=100)
+    p.add_argument("--check-queries", type=int, default=20)
+    p.add_argument("--full", action="store_true", help="every search in every mode (eager and compiled, both precisions)")
     a = p.parse_args()
     if a.n % BLOCK or a.n % L1_N and a.n > L1_N:
         raise SystemExit(f"--n must be a multiple of {BLOCK} and of {L1_N} (or below {L1_N})")
@@ -268,14 +273,17 @@ def main() -> None:
         return f"{'?' if dev is None else f'{dev:,.0f}'} / {'?' if host is None else f'{host:,.0f}'}"
 
     modes = [(p, c) for p in ("medium", "highest") for c in (False, True) if not (c and be.name == "cpu")]
-    rows = len(modes) * 4 + sum(1 for p, _ in modes if p == "medium")
+    if not a.full:                       # the short default: eager and compiled at the default, highest compiled
+        modes = [m for m in modes if m != ("highest", False)] or modes[:1]
+    per_mode = 4 if a.full else 3
+    rows = len(modes) * per_mode + sum(1 for p, _ in modes if p == "medium")
     print(f"  queries per second, then memory per call, MB: the accelerator's peak / the host's peak; recall@10 and "
           f"exact matches against NumPy. {rows} rows; '-' where a batch was skipped (a call past {SLOW:.0f} s "
           f"skips its row's larger batches)", flush=True)
     row = 0
     for precision in ("medium", "highest"):
         torch.set_float32_matmul_precision(precision)
-        searches, l1_tile = make_searches(x, k)
+        searches, l1_tile = make_searches(x, k, a.full)
         for compiled in (False, True):
             if (precision, compiled) not in modes:
                 continue

@@ -215,7 +215,7 @@ def _mb(v):
 SLOW = 20.0      # seconds: a call slower than this is not repeated, and that contender's larger batches skipped
 
 
-def bench(n: int, d: int, batches, config_2d: dict | None = None) -> None:
+def bench(n: int, d: int, batches, config_2d: dict | None = None, full: bool = False) -> None:
     dev = torch.device("cuda")
     rng = np.random.default_rng(0)
     xb = rng.standard_normal((n, d), dtype=np.float32)
@@ -287,6 +287,9 @@ def bench(n: int, d: int, batches, config_2d: dict | None = None) -> None:
                   "siann, 3D tiles, tuned": lambda qb: l1_knn(x, qb, k, best_3d),
                   "torch.cdist + topk": cdist}
     only_small = {"torch.cdist + topk"}                             # ~90 queries/s on a T4: batch 100 only
+    if not full:                                                    # the short default: siann's kernel, FAISS, cuVS
+        for name in ("siann, 3D tiles, tuned", "torch.cdist + topk"):
+            del contenders[name]
     try:
         import faiss
         import faiss.contrib.torch_utils  # lets FAISS take PyTorch tensors
@@ -367,7 +370,8 @@ def main() -> None:
     p.add_argument("--bench", action="store_true")
     p.add_argument("--n", type=int, default=1_000_000)
     p.add_argument("--d", type=int, default=128)
-    p.add_argument("--batches", default="100,1000,10000")
+    p.add_argument("--batches", default="100,1000")
+    p.add_argument("--full", action="store_true", help="also round two's kernel and torch.cdist")
     p.add_argument("--config", help="the 2D kernel's configuration, skipping its tuning: BLOCK_Q,BLOCK_N,sort|min,warps")
     a = p.parse_args()
     if a.check:
@@ -377,7 +381,7 @@ def main() -> None:
         if a.config:
             bq, bn, sel, w = a.config.split(",")
             cfg = {"BLOCK_Q": int(bq), "BLOCK_N": int(bn), "SORT": sel == "sort", "num_warps": int(w)}
-        bench(a.n, a.d, tuple(map(int, a.batches.split(","))), cfg)
+        bench(a.n, a.d, tuple(map(int, a.batches.split(","))), cfg, a.full)
 
 
 if __name__ == "__main__":

@@ -38,8 +38,9 @@ Run on a TPU (Colab: Runtime, Change runtime type, TPU). Two parts, each in its 
 2. **PyTorch:** the same searches through PyTorch's built-in operations on TorchTPU (or PyTorch/XLA), eagerly
    and compiled.
 
-Every result is checked against NumPy, and each number prints as it is measured. Copy the outputs of the check
-and benchmark cells back.
+Every result is checked against NumPy, and each number prints as it is measured. In all about 15-25 minutes on a
+first run, most of it installing and compiling (each script's `--full` runs every search, precision and block
+shape, and takes several times longer). Copy the outputs of the check and benchmark cells back.
 """),
         code('''
 # which TPU this runtime has, and Python's version (TorchTPU needs 3.11 or later)
@@ -98,8 +99,8 @@ if not ok:
         code("!python -u tpu_probe.py"),
     ]
     nb = notebook(numbered(cells, [("Which TPU", 0), ("JAX for the TPU", 3), ("Write jax_probe.py", 0),
-                           ("Check the Pallas kernel against exact search", 3), ("JAX benchmark", 15),
-                           ("TorchTPU or PyTorch/XLA", 5), ("Write tpu_probe.py", 0), ("PyTorch benchmark", 20)]), "TPU")
+                           ("Check the Pallas kernel against exact search", 3), ("JAX benchmark", 5),
+                           ("TorchTPU or PyTorch/XLA", 5), ("Write tpu_probe.py", 0), ("PyTorch benchmark", 8)]), "TPU")
     out = HERE / "colab" / "tpu_probe.ipynb"
     out.write_text(json.dumps(nb, indent=1) + "\n", encoding="utf-8")
     print(out)

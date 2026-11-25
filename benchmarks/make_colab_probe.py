@@ -75,7 +75,8 @@ print("cuVS", "works" if cuvs_works() else "still missing its library: the bench
         code("!python -u triton_probe.py --check"),
         md("""
 The benchmark, with the 2D-tile kernel at the configuration the T4's tuning found fastest (32 x 128, sort, 4
-warps): about 5-10 minutes (compiling included). Every row shows its number out of the total and the minutes so far.
+warps), against FAISS and cuVS at batches of 100 and 1,000: about 3-5 minutes, compiling included (`--full`
+adds round two's kernel and torch.cdist). Every row shows its number out of the total and the minutes so far.
 """),
         code("!python -u triton_probe.py --bench --config 32,128,sort,4"),
         md("""
@@ -101,7 +102,7 @@ except Exception as e:  # noqa: BLE001 (report whatever went wrong, for the user
     ]
     nb = notebook(numbered(cells, [("Which GPU", 0), ("Install FAISS and cuVS", 5), ("Write triton_probe.py", 0),
                            ("Check the kernels against exact search", 15, "optional"),
-                           ("Benchmark at the tuned configuration", 10),
+                           ("Benchmark at the tuned configuration", 5),
                            ("Benchmark after tuning all 24 configurations", 45, "optional"),
                            ("Save a cuVS IVF-Flat file", 2, "optional")]), "GPU")
     out = HERE / "colab" / "triton_probe.ipynb"
