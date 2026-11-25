@@ -29,7 +29,7 @@ def main() -> None:
 
 Run with a GPU (Colab: Runtime, Change runtime type, T4 GPU; Kaggle: Accelerator, GPU). The notebook checks
 siann's exact L1 kernel, written in Triton, against exact search on the GPU, then times it against
-`torch.cdist`, FAISS's GPU brute force and cuVS's brute force. Last, it builds a cuVS IVF-Flat index of seeded
+`torch.cdist`, FAISS's GPU brute force and cuVS's brute force, with the memory each takes. Last, it builds a cuVS IVF-Flat index of seeded
 Gaussian vectors and saves it, to check that siann reads cuVS's files: download `ivf_flat_gaussian.cuvs` from
 the file browser at the end. Copy the outputs of the check and benchmark cells back.
 """),
@@ -53,7 +53,7 @@ def cuvs_works():
 
 
 # cuVS's Python package can be present without its library (libcuvs_c.so): reinstall both, for this CUDA
-wanted = [f"faiss-gpu-cu{cuda}"] + ([] if cuvs_works() else [f"libcuvs-cu{cuda}", f"cuvs-cu{cuda}"])
+wanted = ["nvidia-ml-py", "psutil", f"faiss-gpu-cu{cuda}"] + ([] if cuvs_works() else [f"libcuvs-cu{cuda}", f"cuvs-cu{cuda}"])
 
 
 def install(pkg):

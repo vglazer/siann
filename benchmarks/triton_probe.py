@@ -6,12 +6,17 @@ by sorting them or by k passes of a minimum. Triton's auto-tuner picks block siz
 
 --check: the neighbors must equal exact search's, ties included; on a GPU, or on any machine through Triton's
 interpreter (TRITON_INTERPRET=1, on the CPU). --bench, on an NVIDIA GPU: queries per second against torch.cdist with
-torch.topk, FAISS's GPU brute force and cuVS's brute force, all by L1, on Gaussian vectors.
+torch.topk, FAISS's GPU brute force and cuVS's brute force, all by L1, on Gaussian vectors, and the memory each
+takes: PyTorch's peak (exact, but blind to FAISS's and cuVS's own allocators), the device's peak above the level
+before the call (NVIDIA's management library, polled every 10 ms: short spikes may be missed), the device memory
+each keeps between calls (FAISS's scratch memory, cuVS's index), and the host process's peak.
 
     TRITON_INTERPRET=1 python triton_probe.py --check          # anywhere, on the CPU
     python triton_probe.py --bench                              # on a CUDA GPU (Colab, Kaggle)
 """
 import argparse
+import gc
+import threading
 import time
 
 import numpy as np
@@ -153,6 +158,60 @@ def check(both: bool = False) -> None:
         assert all(same)
 
 
+class Peaks:
+    """Peak memory during a block, in MB above the level at its start: the device's (all allocators, polled
+    through NVIDIA's management library) and the host process's; None where a library is missing."""
+
+    def __init__(self, interval: float = 0.01):
+        self.interval = interval
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            self._nvml = pynvml
+            self._handle = pynvml.nvmlDeviceGetHandleByIndex(torch.cuda.current_device())
+        except Exception:  # noqa: BLE001 (no NVML: device peaks unknown)
+            self._nvml = None
+        try:
+            import psutil
+            self._proc = psutil.Process()
+        except Exception:  # noqa: BLE001
+            self._proc = None
+
+    def device_used(self):
+        return None if self._nvml is None else self._nvml.nvmlDeviceGetMemoryInfo(self._handle).used / 2**20
+
+    def _host(self):
+        return None if self._proc is None else self._proc.memory_info().rss / 2**20
+
+    def __enter__(self):
+        self.d0, self.h0 = self.device_used(), self._host()
+        self.dmax, self.hmax = self.d0, self.h0
+        self._stop = threading.Event()
+
+        def poll():
+            while not self._stop.is_set():
+                d, h = self.device_used(), self._host()
+                if d is not None:
+                    self.dmax = max(self.dmax, d)
+                if h is not None:
+                    self.hmax = max(self.hmax, h)
+                time.sleep(self.interval)
+        self._thread = threading.Thread(target=poll, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join()
+        d, h = self.device_used(), self._host()             # one last reading, after the work
+        self.device = None if d is None else max(self.dmax, d) - self.d0
+        self.host = None if h is None else max(self.hmax, h) - self.h0
+
+
+def _mb(v):
+    return "?" if v is None else f"{v:,.0f}"
+
+
 def bench(n: int, d: int, batches) -> None:
     dev = torch.device("cuda")
     rng = np.random.default_rng(0)
@@ -214,8 +273,13 @@ def bench(n: int, d: int, batches) -> None:
         print(f"  (FAISS GPU skipped: {type(e).__name__}: {e})")
     try:
         from cuvs.neighbors import brute_force
-        bf = brute_force.build(x, metric="l1")
-        contenders["cuVS brute force"] = lambda qb: brute_force.search(bf, qb, k)
+        built = {}
+
+        def cuvs_search(qb):
+            if "index" not in built:                                # built at the first call: counted as kept
+                built["index"] = brute_force.build(x, metric="l1")
+            return brute_force.search(built["index"], qb, k)
+        contenders["cuVS brute force"] = cuvs_search
     except Exception as e:  # noqa: BLE001 (cuVS missing: skip it)
         print(f"  (cuVS skipped: {type(e).__name__}: {e})")
     if "FAISS GPU brute force" in contenders:
@@ -225,15 +289,45 @@ def bench(n: int, d: int, batches) -> None:
                            ("3D tiles", l1_knn(x, q[:100], k, best_3d))):
             same = (np.sort(fi, 1) == np.sort(ours.cpu().numpy(), 1)).mean()
             print(f"  {name}: the same neighbors as FAISS's on 100 queries: {same:.4f}")
-    print(f"  {'':26s}" + "".join(f"{f'batch {b:,}':>14s}" for b in batches), flush=True)
+    peaks = Peaks()
+
+    def settle():
+        gc.collect()
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()                                    # PyTorch's cached blocks back to the device
+
+    def memory(fn, qb):
+        """PyTorch's peak, the device's and the host's during one call, MB above the start."""
+        settle()
+        torch.cuda.reset_peak_memory_stats()
+        start = torch.cuda.memory_allocated()
+        with peaks as p:
+            fn(qb)
+            torch.cuda.synchronize()
+        return (torch.cuda.max_memory_allocated() - start) / 2**20, p.device, p.host
+
+    print("  queries per second; then memory per call, MB: PyTorch's peak / the device's peak / the host's peak",
+          flush=True)
+    print(f"  {'':26s}" + "".join(f"{f'batch {b:,}':>20s}" for b in batches), flush=True)
     for name, fn in contenders.items():
+        settle()
+        before = peaks.device_used()
         print(f"  {name:26s}", end="", flush=True)
+        mems = []
         for b in batches:
             try:
-                print(f"{timed(fn, q[:b]):14,.0f}", end="", flush=True)
+                print(f"{timed(fn, q[:b]):20,.0f}", end="", flush=True)
+                mems.append(memory(fn, q[:b]))
             except Exception as e:  # noqa: BLE001 (report and go on: one failure should not hide the rest)
                 print(f"\n    batch {b:,} failed: {type(e).__name__}: {str(e)[:200]}", end="")
+                mems.append(None)
         print(flush=True)
+        cells = ["" if m is None else f"{_mb(m[0])} / {_mb(m[1])} / {_mb(m[2])}" for m in mems]
+        print(f"  {'  memory':26s}" + "".join(f"{c:>20s}" for c in cells), flush=True)
+        settle()
+        after = peaks.device_used()
+        kept = None if before is None else after - before
+        print(f"  {'  kept on the device':26s}{_mb(kept):>20s} MB", flush=True)
 
 
 def main() -> None:
