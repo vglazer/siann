@@ -156,3 +156,28 @@ def test_routes_leave_the_default_only_for_a_clear_win():
     assert crossover_with_margin(a, {2: 200.0, 4: 200.0, 8: 200.0}, 4) == 2
     assert crossover_with_margin(a, {2: 200.0, 4: 200.0, 8: 50.0}, 4) == 9
     assert crossover_with_margin(a, {2: 200.0, 4: 200.0, 8: 50.0}, 1000) == 1000
+
+
+def test_single_queries_take_the_path_measured_fastest():
+    index = siann.Index(clustered(30_000, 16, 3), "l2", recall=0.9, kind="ivf")
+    index._routes = {**index._routes, "cpu_below": 1, "single": "cpu-split"}  # batches on the GPU, one on the CPU
+    assert index._ivf_path(1, None) == "cpu-split"
+    assert index._ivf_path(1, "cpu") == "cpu-split"
+    if siann.gpu_available():
+        assert index._ivf_path(2, None).startswith("gpu")
+        assert index._ivf_path(1, "gpu").startswith("gpu")             # a device given wins over the measurement
+    index._routes["single"] = "cpu-graph"                               # no graph here: the thresholds decide
+    assert index._ivf_path(1, None) != "cpu-graph"
+    found = index.search(clustered(30_000, 16, 3)[:1] + 0.01, 10).indices
+    assert found.shape == (1, 10) and (found >= 0).all()
+
+
+def test_single_path_is_what_the_thresholds_give():
+    from siann._ivf import DEFAULT_ROUTES, NEVER, single_path
+    r = dict(DEFAULT_ROUTES)
+    assert single_path(r, graph_gpu=False, graph_cpu=False) == "cpu-split"
+    assert single_path({**r, "cpu_ivf_from": 8}, graph_gpu=False, graph_cpu=True) == "cpu-graph"
+    assert single_path({**r, "cpu_below": 1}, graph_gpu=False, graph_cpu=False) == "gpu-query"
+    assert single_path({**r, "cpu_below": 1, "graph_from": 1}, graph_gpu=True, graph_cpu=True) == "gpu-graph"
+    assert single_path({**r, "cpu_below": 1, "gpu_list_from": 1, "graph_from": NEVER}, graph_gpu=True,
+                       graph_cpu=True) == "gpu-list"

@@ -639,6 +639,7 @@ class Index:
                                          rounds=2 if self._gpu == "torch" else 1)
         if self._kind_arg == "graph" and self._ivf.graph is not None:
             self._routes["cpu_ivf_from"] = 10 ** 9         # every batch through the graph, on either device
+            self._routes.pop("single", None)
             if self._ivf.graph.on_gpu:
                 self._routes["graph_from"] = 1
         return f"routing measured in {time.perf_counter() - t:.1f} s: {describe_routes(self._routes, on_gpu)}"
@@ -774,9 +775,17 @@ class Index:
     def _ivf_path(self, batch: int, device: str | None) -> str:
         """The IVF path a batch takes: by the device (given, or chosen by the profile) and the batch size."""
         r = {**DEFAULT_ROUTES, **self._routes}
+        graph = self._ivf.graph
+        single = r.get("single") if batch == 1 else None
+        if single:                                           # single queries: the path measured fastest
+            on = device or (self._device if self._device != "auto" else None)
+            usable = (not single.endswith("graph") or graph is not None) and (
+                single.startswith("cpu") or (self._gpu is not None and not self._too_big
+                                             and (not single.endswith("graph") or graph.on_gpu)))
+            if usable and (on is None or single.startswith(on)):
+                return single
         dev = device or (self._device if self._device != "auto" else
                          ("cpu" if batch < r["cpu_below"] else "gpu"))
-        graph = self._ivf.graph
         if dev == "gpu":
             if graph is not None and graph.on_gpu and batch >= r["graph_from"]:
                 return "gpu-graph"

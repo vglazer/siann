@@ -231,7 +231,10 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
     scan does its coarse step through BLAS), each departing from ``DEFAULT_ROUTES`` only where the other path is at least 10%
     faster (about the timings' run-to-run spread), and the rates, as {(path, batch): rate}. Where the IVF has a
     graph, its GPU search is timed with the GPU's scans (``graph_from``: the batch size from which it beats both)
-    and its CPU search with the CPU's (``cpu_ivf_from``: from which the CPU's IVF beats it)."""
+    and its CPU search with the CPU's (``cpu_ivf_from``: from which the CPU's IVF beats it). Single queries are
+    decided on their own (``single``: the path measured fastest at one query, where it is at least 10% faster
+    than the one the thresholds give it): the crossovers are one threshold each, and a path that wins at one
+    query, as the IVF split over 4 threads often does, can lose at every batch from 2 up."""
 
     def time_paths(b, paths):
         """Each path's rate at batch b and its slowest call. Each path is timed by itself, its calls back to
@@ -306,7 +309,26 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
         routes["cpu_below"] = crossover_with_margin(cpu, best_gpu, DEFAULT_ROUTES["cpu_below"])
     else:
         routes["cpu_below"], routes["gpu_list_from"], routes["graph_from"] = NEVER, NEVER, NEVER
+    one = {p: r for (p, b), r in rates.items() if b == 1}
+    given = single_path({**DEFAULT_ROUTES, **routes}, ivf.graph is not None and gpu, ivf.graph is not None)
+    best = max(one, key=one.get) if one else None
+    if best and given in one and best != given and one[best] >= MARGIN * one[given]:
+        routes["single"] = best
     return routes, rates
+
+
+def single_path(r: dict, graph_gpu: bool, graph_cpu: bool) -> str:
+    """The path the thresholds alone give a single query (no device given)."""
+    if 1 >= r["cpu_below"]:
+        if graph_gpu and 1 >= r["graph_from"]:
+            return "gpu-graph"
+        return "gpu-list" if 1 >= r["gpu_list_from"] else "gpu-query"
+    return "cpu-graph" if graph_cpu and 1 < r["cpu_ivf_from"] else "cpu-split"
+
+
+SINGLE_WORDS = {"cpu-split": "on the CPU, split over 4 threads", "cpu-graph": "on the CPU, through the graph",
+                "gpu-query": "on the GPU, query-major", "gpu-list": "on the GPU, list-major",
+                "gpu-graph": "on the GPU, through the graph"}
 
 
 def describe_routes(routes: dict, gpu: bool) -> str:
@@ -321,6 +343,12 @@ def describe_routes(routes: dict, gpu: bool) -> str:
         notes.insert(0, "through the graph" + ("" if ci >= min(c, NEVER) else f" below {ci:,} queries"))
     cpu_list = f" ({'; '.join(notes)})" if notes else ""
     single = "through the graph" if ci > 1 else "split over 4 threads"
+    measured = routes.get("single")
+    if measured:                                        # decided on its own: said last, as the exception
+        rest = describe_routes({k: v for k, v in routes.items() if k != "single"}, gpu)
+        for said in (f"single queries on the CPU, {single}; ", f"; single queries {single}"):
+            rest = rest.replace(said, "")                   # the thresholds' own word on single queries
+        return f"{rest}; single queries {SINGLE_WORDS.get(measured, measured)} (measured fastest)"
     if not gpu or c >= NEVER:
         return f"on the CPU{cpu_list}; single queries {single}"
     parts = [f"single queries on the CPU, {single}"] if c <= 2 else \
