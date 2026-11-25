@@ -161,6 +161,7 @@ def test_routes_leave_the_default_only_for_a_clear_win():
 def test_single_queries_take_the_path_measured_fastest():
     index = siann.Index(clustered(30_000, 16, 3), "l2", recall=0.9, kind="ivf")
     index._routes = {**index._routes, "cpu_below": 1, "single": "cpu-split"}  # batches on the GPU, one on the CPU
+    index._routes.pop("table")                                          # the thresholds, as set here, decide
     assert index._ivf_path(1, None) == "cpu-split"
     assert index._ivf_path(1, "cpu") == "cpu-split"
     if siann.gpu_available():
@@ -191,6 +192,7 @@ def test_exact_search_is_routed_from_where_it_is_faster():
         pytest.skip("exact search won at every batch size on this machine")
     index._routes = {**index._routes, "exact_from": 100}
     index._routes.pop("single", None)
+    index._routes.pop("table")                                          # the thresholds, as set here, decide
     assert index._ivf_path(100, None).endswith("exact") and not index._ivf_path(99, None).endswith("exact")
     assert index._ivf_path(100, "cpu") == "cpu-exact"
     truth = siann.Index(x, "l2").search(q, 10)
@@ -210,3 +212,33 @@ def test_routed_path_follows_the_thresholds():
     assert routed_path(r, 5000, False, False) == "gpu-exact"
     assert routed_path({**r, "exact_from": NEVER, "graph_from": 128}, 200, True, True) == "gpu-graph"
     assert routed_path({**r, "cpu_ivf_from": 32}, 10, True, True) == "cpu-graph"
+
+
+def test_the_route_table_takes_each_batch_to_its_measured_path():
+    from siann._ivf import describe_table, route_table, table_entry
+    rates = {("cpu-split", 1): 100.0, ("cpu-graph", 1): 50.0,
+             ("cpu-graph", 8): 900.0, ("gpu-graph", 8): 600.0, ("gpu-query", 8): 300.0,
+             ("gpu-graph", 64): 9000.0, ("gpu-query", 64): 3000.0, ("gpu-list", 64): 4000.0,
+             ("gpu-graph", 512): 20000.0, ("gpu-list", 512): 30000.0, ("gpu-query", 512): 21000.0}
+    table = route_table(rates, (1, 8, 64, 512), graph_gpu=True, graph_cpu=True)
+    assert [paths[0] for _, paths in table] == ["cpu-split", "cpu-graph", "gpu-graph", "gpu-list"]
+    # the default path (gpu-query below 1,000) is kept first unless another is 10% faster
+    close = route_table({("gpu-query", 64): 1000.0, ("gpu-graph", 64): 1050.0}, (64,), True, True)
+    assert close[0][1][0] == "gpu-query"
+    assert table_entry(table, 1)[0] == table_entry(table, 7)[0] == "cpu-split" and table_entry(table, 8)[0] == "cpu-graph"
+    assert table_entry(table, 100)[0] == "gpu-graph" and table_entry(table, 10_000)[0] == "gpu-list"
+    words = describe_table(table)
+    assert "1-7: the CPU, split" in words and "8-63: the CPU, through the graph" in words
+    assert "64-511: the GPU, through the graph" in words and "512 and up: the GPU, list-major" in words
+
+
+def test_a_search_takes_the_first_path_it_may_use():
+    index = siann.Index(clustered(30_000, 16, 3), "l2", recall=0.9, kind="ivf")
+    index._routes = {**index._routes, "table": [[1, ["cpu-split"]], [2, ["gpu-graph", "gpu-list", "cpu-query"]],
+                                                [256, ["gpu-exact", "gpu-list", "cpu-query"]]]}
+    assert index._ivf_path(1, None) == "cpu-split"
+    gpu = siann.gpu_available() and not index._too_big
+    assert index._ivf_path(10, None) == ("gpu-list" if gpu else "cpu-query")   # no graph here: the next path
+    assert index._ivf_path(10, "cpu") == "cpu-query"                             # a device given: its first path
+    assert index._ivf_path(300, None) == ("gpu-exact" if gpu else "cpu-query")
+    assert index._ivf_path(300, None, approximate=True) == ("gpu-list" if gpu else "cpu-query")

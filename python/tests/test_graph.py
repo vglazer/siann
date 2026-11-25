@@ -40,7 +40,7 @@ def test_the_graph_meets_the_target_and_the_plan_says_so(built):
     text = str(index.plan)
     assert "graph index: CAGRA" in text and "by mlxvs" in text and "search width" in text and "ef " in text
     assert "neighbors depend on the path" in text
-    assert index._ivf_path(1000, None) == "gpu-graph"                # kind="graph": every GPU batch
+    assert all(index._ivf_path(b, None).endswith("graph") for b in (1, 10, 1000))   # kind="graph": every batch
     assert recall(index.search(q, 10).indices, truth) >= 0.85
     found = index._ivf.search(q, 10, index.nprobe, "gpu-graph")
     assert recall(found, truth) >= 0.85 and (found >= 0).all()

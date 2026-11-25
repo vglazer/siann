@@ -430,7 +430,9 @@ class Index:
                            f"them; each GPU call works within {gb(budget(self._gpu))}"
                            + (f" (the GPU can use {gb(ws)})" if ws else ""))
         routes = {**DEFAULT_ROUTES, **self._routes}
+        firsts = {paths[0] for _, paths in routes.get("table") or []}
         if self._ivf is not None and self._ivf.graph is not None and (
+                any(p.endswith("graph") for p in firsts) if routes.get("table") else
                 routes["cpu_ivf_from"] > 1 or (self._device != "cpu" and routes["graph_from"] < 10 ** 9)):
             reasons.append("neighbors depend on the path: each path (the graph on the CPU or the GPU, the IVF) is "
                            "calibrated to the recall target on its own, and they find different neighbors")
@@ -502,7 +504,9 @@ class Index:
         lines += self._build_graph(kind, k1, dev)
         lines.append(self._route())
         r = self._routes
-        if kind == "auto" and r.get("exact_from", NEVER) <= 1 and str(r.get("single", "-exact")).endswith("exact"):
+        exact_everywhere = (all(paths[0].endswith("exact") for _, paths in r["table"]) if r.get("table") else
+                            r.get("exact_from", NEVER) <= 1 and str(r.get("single", "-exact")).endswith("exact"))
+        if kind == "auto" and exact_everywhere:
             had_graph = self._ivf.graph is not None
             self._ivf = self._nprobe = None                      # exact search wins at every batch size measured
             self._routes, self._clustered = {}, (None, None)
@@ -648,8 +652,8 @@ class Index:
                                          rounds=2 if self._gpu == "torch" else 1, exact=exact)
         if self._kind_arg == "graph" and self._ivf.graph is not None:
             self._routes["cpu_ivf_from"] = 10 ** 9         # every batch through the graph, on either device
-            self._routes.pop("single", None)
-            self._routes.pop("exact_from", None)
+            for key in ("single", "exact_from", "table"):  # the thresholds, forced, decide
+                self._routes.pop(key, None)
             if self._ivf.graph.on_gpu:
                 self._routes["graph_from"] = 1
         return f"routing measured in {time.perf_counter() - t:.1f} s: {describe_routes(self._routes, on_gpu)}"
@@ -793,6 +797,17 @@ class Index:
         graph = self._ivf.graph
         gpu_ok = self._gpu is not None and not self._too_big
         on = device or (self._device if self._device != "auto" else None)
+        if r.get("table"):                                   # the measured table: the first path this search may use
+            from ._ivf import table_entry
+            for path in table_entry(r["table"], batch):
+                if (approximate and path.endswith("exact")) or (on and not path.startswith(on)):
+                    continue
+                if path.startswith("gpu") and not gpu_ok:
+                    continue
+                if path.endswith("graph") and (graph is None or (path.startswith("gpu") and not graph.on_gpu)):
+                    continue
+                return path
+            r = {k: v for k, v in r.items() if k not in ("table", "single", "exact_from")}   # none: the thresholds
         if batch >= r.get("exact_from", NEVER):              # exact search measured faster from here
             dev = on or ("gpu" if gpu_ok and batch >= r["cpu_below"] else "cpu")
             if dev == "cpu" or gpu_ok:

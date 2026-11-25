@@ -238,7 +238,11 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
     query, as the IVF split over 4 threads often does, can lose at every batch from 2 up. With ``exact``
     ({"cpu-exact": search, "gpu-exact": search}, each taking a batch of queries), exact search is timed beside
     them, and routed to (``exact_from``) from the batch size where it beats the approximate path routed there
-    at every larger size measured: it meets any recall target."""
+    at every larger size measured: it meets any recall target. The routes also hold ``table``: at each batch
+    size measured, the paths measured there, fastest first (the default path first unless another is 10%
+    faster); a search takes the entry of the largest measured batch size at or below its own, and in it the first
+    path it may use. The table is what siann routes by; the thresholds remain for profiles and for files saved
+    without a table."""
 
     def time_paths(b, paths):
         """Each path's rate at batch b and its slowest call. Each path is timed by itself, its calls back to
@@ -346,6 +350,7 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
                 ex[b], ap[b] = max(e), a
         if ex:
             routes["exact_from"] = crossover_with_margin(ap, ex, NEVER)
+    routes["table"] = route_table(rates, batches, graph_gpu, graph_cpu)
     one = {p: r for (p, b), r in rates.items() if b == 1}
     given = routed_path({**DEFAULT_ROUTES, **routes}, 1, graph_gpu, graph_cpu)
     best = max(one, key=one.get) if one else None
@@ -370,6 +375,55 @@ def routed_path(r: dict, b: int, graph_gpu: bool, graph_cpu: bool) -> str:
     if b >= r["cpu_list_from"]:
         return "cpu-list"
     return "cpu-query-blas" if b >= r["cpu_blas_from"] else "cpu-query"
+
+
+def route_table(rates: dict, batches, graph_gpu: bool, graph_cpu: bool) -> list:
+    """[[batch, [paths fastest first]], ...] at each batch size measured: the default path (the one routing
+    takes before any measurement) first unless another is ``MARGIN`` times faster, the others by rate."""
+    table = []
+    for b in batches:
+        here = {p: r for (p, bb), r in rates.items() if bb == b}
+        if not here:
+            continue
+        order = sorted(here, key=lambda p: -here[p])
+        default = routed_path(DEFAULT_ROUTES, b, graph_gpu, graph_cpu)
+        if default in here and here[order[0]] < MARGIN * here[default]:
+            order.remove(default)
+            order.insert(0, default)
+        table.append([b, order])
+    return table
+
+
+def table_entry(table: list, batch: int) -> list:
+    """The paths of the largest measured batch size at or below ``batch`` (the first entry below it)."""
+    entry = table[0][1]
+    for b, paths in table:
+        if b > batch:
+            break
+        entry = paths
+    return entry
+
+
+PATH_WORDS = {"cpu-split": "the CPU, split over 4 threads", "cpu-query": "the CPU, query-major",
+              "cpu-query-blas": "the CPU, query-major (coarse step through BLAS)", "cpu-list": "the CPU, list-major",
+              "cpu-graph": "the CPU, through the graph", "cpu-exact": "the CPU, by exact search",
+              "gpu-query": "the GPU, query-major", "gpu-list": "the GPU, list-major",
+              "gpu-graph": "the GPU, through the graph", "gpu-exact": "the GPU, by exact search"}
+
+
+def describe_table(table: list) -> str:
+    """The table's first choices, as ranges of batch sizes."""
+    parts, i = [], 0
+    while i < len(table):
+        j = i
+        while j + 1 < len(table) and table[j + 1][1][0] == table[i][1][0]:
+            j += 1
+        lo = table[i][0]
+        span = (f"{lo:,} and up" if j + 1 == len(table) else
+                f"{lo:,}" if table[j + 1][0] - 1 == lo else f"{lo:,}-{table[j + 1][0] - 1:,}")
+        parts.append(f"{span}: {PATH_WORDS.get(table[i][1][0], table[i][1][0])}")
+        i = j + 1
+    return "queries per search " + "; ".join(parts)
 
 
 def single_path(r: dict, graph_gpu: bool, graph_cpu: bool) -> str:
@@ -408,6 +462,8 @@ def describe_routes(routes: dict, gpu: bool) -> str:
         notes.insert(0, "through the graph" + ("" if ci >= min(c, NEVER) else f" below {ci:,} queries"))
     cpu_list = f" ({'; '.join(notes)})" if notes else ""
     single = "through the graph" if ci > 1 else "split over 4 threads"
+    if routes.get("table"):
+        return describe_table(routes["table"])
     measured = routes.get("single")
     ef = routes.get("exact_from", NEVER)
     if ef < NEVER:                                      # exact search from some batch size on: said last
