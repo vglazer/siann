@@ -34,6 +34,8 @@ L1_CHUNK = 16_384               # base vectors per step of the built-in L1 scan
 KP = 128                        # the kept best-k, padded to the TPU's 128 lanes
 BIG = 3.0e38                    # "no candidate" (finite: inf - inf would be NaN in a padded row)
 PAD = 1.0e30                    # padding rows of the base: never nearer than a real row
+SLOW = 20.0                     # seconds: a call slower than this is not repeated, and its row's larger batches skipped
+PALLAS_BLOCKS = ((8, 512), (8, 1024), (16, 512), (32, 256), (8, 2048))
 
 
 def exact_numpy(xb, xq, k, metric):
@@ -207,14 +209,25 @@ def bench(n: int, d: int, batches, l1_batch: int, check_queries: int) -> None:
     print(f"  NumPy's exact neighbors for the check: {time.perf_counter() - t:.1f} s", flush=True)
     x, q = jnp.asarray(xb), jnp.asarray(xq)
 
+    start = time.perf_counter()
+
+    def elapsed():
+        return f"{(time.perf_counter() - start) / 60:.1f} min so far"
+
     def timed(call, qb):
+        """Queries per second, best of two after a warm-up; a call past SLOW s is timed by its warm-up alone and
+        flagged slow (its row's larger batches are skipped)."""
+        t = time.perf_counter()
         call(qb).block_until_ready()                                   # compiles, warms up
-        best = float("inf")
-        for _ in range(3):
+        warm = time.perf_counter() - t
+        if warm > SLOW:
+            return qb.shape[0] / warm, True
+        best = warm
+        for _ in range(2):
             t = time.perf_counter()
             call(qb).block_until_ready()
             best = min(best, time.perf_counter() - t)
-        return qb.shape[0] / best
+        return qb.shape[0] / best, False
 
     def agreement(found, ref):
         found = np.asarray(found)[:len(ref)]
@@ -225,45 +238,58 @@ def bench(n: int, d: int, batches, l1_batch: int, check_queries: int) -> None:
         used, peak = memory()
         return f"{'?' if used is None else f'{used:,.0f}'} / {'?' if peak is None else f'{peak:,.0f}'}"
 
-    print("  queries per second; then the device's memory after the row, MB: in use / peak so far; then recall@10 "
-          "and exact matches against NumPy", flush=True)
-    print(f"  {'':44s}" + "".join(f"{f'batch {b:,}':>14s}" for b in batches), flush=True)
-    for (metric, how), fn in builtin_searches(x, k).items():
+    searches = builtin_searches(x, k)
+    rows = len(searches) + 1 + len(PALLAS_BLOCKS)
+    print(f"  queries per second; then the device's memory after the row, MB: in use / peak so far; then recall@10 "
+          f"and exact matches against NumPy. {rows} rows; '-' where a batch was skipped (a call past {SLOW:.0f} s "
+          f"skips its row's larger batches)", flush=True)
+    print(f"  {'':50s}" + "".join(f"{f'batch {b:,}':>14s}" for b in batches), flush=True)
+    row = 0
+    for (metric, how), fn in searches.items():
         def call(qb, fn=fn):
             return run_chunks(fn, qb, CHUNK)
-        print(f"  {f'{metric}, {how}':44s}", end="", flush=True)
+        row += 1
+        print(f"  {f'[{row}/{rows}] {metric}, {how}':50s}", end="", flush=True)
         try:
+            slow = False
             for b in batches:
-                print(f"{timed(call, q[:b]):14,.0f}", end="", flush=True)
+                if slow:
+                    print(f"{'-':>14s}", end="", flush=True)
+                    continue
+                qps, slow = timed(call, q[:b])
+                print(f"{qps:14,.0f}", end="", flush=True)
             recall, same = agreement(call(q[:check_queries]), truth[metric])
-            print(f"\n      memory {mem()}; recall@10 {recall:.4f}, exact matches {same:.4f}", flush=True)
+            print(f"   ({elapsed()})\n      memory {mem()}; recall@10 {recall:.4f}, exact matches {same:.4f}",
+                  flush=True)
         except Exception as e:  # noqa: BLE001 (report and go on: one failure should not hide the rest)
             print(f"\n      failed: {type(e).__name__}: {str(e)[:300]}", flush=True)
 
     qb = q[:l1_batch]
     print(f"\n  L1, batch {l1_batch} (queries per second)", flush=True)
     search = builtin_l1(x, k)
+    row += 1
     try:
         def call_builtin(qq):
             return run_chunks(search, qq, 16)
-        qps = timed(call_builtin, qb)
+        qps, _ = timed(call_builtin, qb)
         recall, same = agreement(call_builtin(qb), truth["l1"])
-        print(f"    built-in tiles (lax.scan){qps:18,.0f}   memory {mem()}; recall@10 {recall:.4f}, exact matches "
-              f"{same:.4f}", flush=True)
+        print(f"    [{row}/{rows}] built-in tiles (lax.scan){qps:18,.0f}   memory {mem()}; recall@10 {recall:.4f}, "
+              f"exact matches {same:.4f}; {elapsed()}", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"    built-in tiles failed: {type(e).__name__}: {str(e)[:300]}", flush=True)
-    for bq, bn in ((8, 512), (8, 1024), (16, 512), (32, 256), (8, 2048)):
+    for bq, bn in PALLAS_BLOCKS:
+        row += 1
         try:
             xp = pad_base(x, bn)
 
             def call_pallas(qq, xp=xp, bq=bq, bn=bn):
                 return pallas_l1(xp, qq, k, bq, bn)
-            qps = timed(call_pallas, qb)
+            qps, _ = timed(call_pallas, qb)
             recall, same = agreement(call_pallas(qb), truth["l1"])
-            print(f"    Pallas, blocks {bq:>2} x {bn:<5}{qps:18,.0f}   memory {mem()}; recall@10 {recall:.4f}, "
-                  f"exact matches {same:.4f}", flush=True)
+            print(f"    [{row}/{rows}] Pallas, blocks {bq:>2} x {bn:<5}{qps:18,.0f}   memory {mem()}; recall@10 "
+                  f"{recall:.4f}, exact matches {same:.4f}; {elapsed()}", flush=True)
         except Exception as e:  # noqa: BLE001
-            print(f"    Pallas, blocks {bq} x {bn} failed: {type(e).__name__}: {str(e)[:300]}", flush=True)
+            print(f"    [{row}/{rows}] Pallas, blocks {bq} x {bn} failed: {type(e).__name__}: {str(e)[:300]}", flush=True)
 
 
 def main() -> None:

@@ -26,6 +26,7 @@ import torch
 CHUNK = 256          # queries per matrix multiply: 256 x 1,000,000 float32 scores is 1 GB
 BLOCK = 1000         # the first stage's block of the base (n must be a multiple)
 L1_Q, L1_N = 8, 31_250   # L1's tile: 8 queries x 31,250 vectors x 128 coordinates is 128 MB
+SLOW = 20.0               # seconds: a call slower than this is not repeated, and its row's larger batches skipped
 
 
 class Backend:
@@ -237,11 +238,22 @@ def main() -> None:
         recall = np.mean([len(set(f) & set(r)) / len(r) for f, r in zip(found, ref, strict=True)])
         return recall, np.mean([np.array_equal(f, r) for f, r in zip(found, ref, strict=True)])
 
+    start = time.perf_counter()
+
+    def elapsed():
+        return f"{(time.perf_counter() - start) / 60:.1f} min so far"
+
     def measure(call, qb):
+        """Queries per second (best of two after a warm-up), the accelerator's peak and the host's; a call past
+        SLOW s is timed by its warm-up alone and flagged slow (no memory run, no larger batches)."""
+        t = time.perf_counter()
         call(qb)                                                      # compiles, warms up
         be.sync()
-        best = float("inf")
-        for _ in range(3):
+        warm = time.perf_counter() - t
+        if warm > SLOW:
+            return len(qb) / warm, None, None, True
+        best = warm
+        for _ in range(2):
             t = time.perf_counter()
             call(qb)
             be.sync()
@@ -250,18 +262,22 @@ def main() -> None:
         with HostPeak() as h:
             call(qb)
             be.sync()
-        return len(qb) / best, be.peak_mb(), h.mb
+        return len(qb) / best, be.peak_mb(), h.mb, False
 
     def fmt_mem(dev, host):
         return f"{'?' if dev is None else f'{dev:,.0f}'} / {'?' if host is None else f'{host:,.0f}'}"
 
-    print("  queries per second, then memory per call, MB: the accelerator's peak / the host's peak; "
-          "recall@10 and exact matches against NumPy", flush=True)
+    modes = [(p, c) for p in ("medium", "highest") for c in (False, True) if not (c and be.name == "cpu")]
+    rows = len(modes) * 4 + sum(1 for p, _ in modes if p == "medium")
+    print(f"  queries per second, then memory per call, MB: the accelerator's peak / the host's peak; recall@10 and "
+          f"exact matches against NumPy. {rows} rows; '-' where a batch was skipped (a call past {SLOW:.0f} s "
+          f"skips its row's larger batches)", flush=True)
+    row = 0
     for precision in ("medium", "highest"):
         torch.set_float32_matmul_precision(precision)
         searches, l1_tile = make_searches(x, k)
         for compiled in (False, True):
-            if compiled and be.name == "cpu":
+            if (precision, compiled) not in modes:
                 continue
             if compiled:
                 torch._dynamo.reset()
@@ -272,30 +288,37 @@ def main() -> None:
 
                 def call(qb, fn=fn):
                     return run_chunks(fn, qb, CHUNK)
-                label = f"{metric}, {how}"
+                row += 1
+                label = f"[{row}/{rows}] {metric}, {how}"
                 print(f"    {label:30s}", end="", flush=True)
-                mems = []
+                mems, slow = [], False
                 try:
                     found = call(q[:a.check_queries]).cpu().numpy()
                     for b in batches:
-                        qps, dev, host = measure(call, q[:b])
+                        if slow:
+                            print(f"{'-':>22s}", end="", flush=True)
+                            mems.append("")
+                            continue
+                        qps, dev, host, slow = measure(call, q[:b])
                         print(f"{qps:22,.0f}", end="", flush=True)
                         mems.append(fmt_mem(dev, host))
                     recall, same = agreement(found, truth[metric])
-                    print(f"\n    {'  memory':30s}" + "".join(f"{m:>22s}" for m in mems), flush=True)
+                    print(f"   ({elapsed()})", flush=True)
+                    print(f"    {'  memory':30s}" + "".join(f"{m:>22s}" for m in mems), flush=True)
                     print(f"      against NumPy on {len(truth[metric])} queries: recall@10 {recall:.4f}, "
                           f"exact matches {same:.4f}", flush=True)
                 except Exception as e:  # noqa: BLE001 (report and go on: one failure should not hide the rest)
                     print(f"\n      failed: {type(e).__name__}: {str(e)[:300]}", flush=True)
             if precision == "medium":                                 # L1 has no matrix multiply: once per mode
                 tile = torch.compile(l1_tile, backend=be.compile_backend) if compiled else l1_tile
-                print(f"    {'l1, tiles':30s}", end="", flush=True)
+                row += 1
+                print(f"    {f'[{row}/{rows}] l1, tiles':30s}", end="", flush=True)
                 try:
                     qb = q[:a.l1_batch]
-                    qps, dev, host = measure(lambda qq: run_l1(tile, x, qq, k), qb)
+                    qps, dev, host, _ = measure(lambda qq: run_l1(tile, x, qq, k), qb)
                     recall, same = agreement(run_l1(tile, x, qb, k).cpu().numpy(), truth["l1"])
                     print(f"{qps:22,.0f}  (batch {a.l1_batch}; memory {fmt_mem(dev, host)}; recall@10 {recall:.4f}, "
-                          f"exact matches {same:.4f})", flush=True)
+                          f"exact matches {same:.4f}; {elapsed()})", flush=True)
                 except Exception as e:  # noqa: BLE001
                     print(f"\n      failed: {type(e).__name__}: {str(e)[:300]}", flush=True)
 

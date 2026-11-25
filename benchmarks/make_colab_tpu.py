@@ -9,6 +9,8 @@ the scripts cannot drift apart.
 import json
 from pathlib import Path
 
+from colab_cells import notebook, numbered
+
 HERE = Path(__file__).parent
 
 
@@ -95,8 +97,9 @@ if not ok:
         code("%%writefile tpu_probe.py\n" + probe),
         code("!python -u tpu_probe.py"),
     ]
-    nb = {"cells": cells, "metadata": {"accelerator": "TPU", "kernelspec": {"name": "python3", "display_name": "Python 3"},
-                                       "language_info": {"name": "python"}}, "nbformat": 4, "nbformat_minor": 5}
+    nb = notebook(numbered(cells, [("Which TPU", 0), ("JAX for the TPU", 3), ("Write jax_probe.py", 0),
+                           ("Check the Pallas kernel against exact search", 3), ("JAX benchmark", 15),
+                           ("TorchTPU or PyTorch/XLA", 5), ("Write tpu_probe.py", 0), ("PyTorch benchmark", 20)]), "TPU")
     out = HERE / "colab" / "tpu_probe.ipynb"
     out.write_text(json.dumps(nb, indent=1) + "\n", encoding="utf-8")
     print(out)

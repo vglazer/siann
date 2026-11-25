@@ -212,7 +212,10 @@ def _mb(v):
     return "?" if v is None else f"{v:,.0f}"
 
 
-def bench(n: int, d: int, batches) -> None:
+SLOW = 20.0      # seconds: a call slower than this is not repeated, and that contender's larger batches skipped
+
+
+def bench(n: int, d: int, batches, config_2d: dict | None = None) -> None:
     dev = torch.device("cuda")
     rng = np.random.default_rng(0)
     xb = rng.standard_normal((n, d), dtype=np.float32)
@@ -221,16 +224,27 @@ def bench(n: int, d: int, batches) -> None:
     k = 10
     print(f"{torch.cuda.get_device_name()}: {n:,} Gaussian vectors, {d} dimensions, L1, k = {k}; queries per second", flush=True)
 
+    start = time.perf_counter()
+
+    def elapsed():
+        return f"{(time.perf_counter() - start) / 60:.1f} min so far"
+
     def timed(fn, qb):
+        """Queries per second, best of two calls after a warm-up; a slow contender (a warm-up past SLOW s) is
+        timed by its warm-up alone, and flagged so that its larger batches are skipped."""
+        t = time.perf_counter()
         fn(qb)
         torch.cuda.synchronize()
-        best = float("inf")
-        for _ in range(3):
+        warm = time.perf_counter() - t
+        if warm > SLOW:
+            return len(qb) / warm, True
+        best = warm
+        for _ in range(2):
             t = time.perf_counter()
             fn(qb)
             torch.cuda.synchronize()
             best = min(best, time.perf_counter() - t)
-        return len(qb) / best
+        return len(qb) / best, False
 
     def cdist(qb):
         out = []
@@ -241,29 +255,38 @@ def bench(n: int, d: int, batches) -> None:
     # the 2D kernel's configurations timed one by one, each printed as it is measured (Triton's auto-tuner says
     # nothing until all are done); the 3D kernel at the configuration its auto-tuner chose on the T4
     best_cfg, best_t = None, float("inf")
-    print("  tuning the 2D-tile kernel on 1,000 queries (seconds per call):", flush=True)
-    for c in CONFIGS_2D:
-        cfg = {**c.kwargs, "num_warps": c.num_warps}
+    configs = [{**c.kwargs, "num_warps": c.num_warps} for c in CONFIGS_2D]
+    if config_2d is not None:
+        configs = [config_2d]                                       # tuning skipped: a configuration given
+    print(f"  tuning the 2D-tile kernel on 1,000 queries: {len(configs)} configurations, each compiled, run once "
+          f"and timed once (seconds per call; a configuration past {SLOW} s on its first call is not timed)",
+          flush=True)
+    for i, cfg in enumerate(configs, 1):
         try:
+            t = time.perf_counter()
             l1_knn(x, q[:1000], k, cfg, xt=xt)                     # compiles
             torch.cuda.synchronize()
+            first = time.perf_counter() - t
+            if first > SLOW:
+                print(f"    [{i}/{len(configs)}] {cfg}: too slow ({first:.1f} s with compiling); {elapsed()}",
+                      flush=True)
+                continue
             t = time.perf_counter()
             l1_knn(x, q[:1000], k, cfg, xt=xt)
             torch.cuda.synchronize()
             t = time.perf_counter() - t
         except Exception as e:  # noqa: BLE001 (a configuration the GPU cannot run: skip it)
-            print(f"    {cfg}: failed ({type(e).__name__})", flush=True)
+            print(f"    [{i}/{len(configs)}] {cfg}: failed ({type(e).__name__}); {elapsed()}", flush=True)
             continue
-        print(f"    {cfg}: {t:.3f}", flush=True)
+        print(f"    [{i}/{len(configs)}] {cfg}: {t:.3f}; {elapsed()}", flush=True)
         if t < best_t:
             best_cfg, best_t = cfg, t
     print(f"  fastest 2D-tile configuration: {best_cfg}", flush=True)
     best_3d = {"BLOCK_Q": 64, "BLOCK_N": 128, "BLOCK_D": 2, "SORT": True, "num_warps": 4}
     contenders = {"siann, 2D tiles, tuned": lambda qb: l1_knn(x, qb, k, best_cfg, xt=xt),
                   "siann, 3D tiles, tuned": lambda qb: l1_knn(x, qb, k, best_3d),
-                  "siann, 3D tiles, untuned": lambda qb: l1_knn(x, qb, k, {"BLOCK_Q": 16, "BLOCK_N": 128,
-                                                                            "BLOCK_D": 8, "SORT": True}),
                   "torch.cdist + topk": cdist}
+    only_small = {"torch.cdist + topk"}                             # ~90 queries/s on a T4: batch 100 only
     try:
         import faiss
         import faiss.contrib.torch_utils  # lets FAISS take PyTorch tensors
@@ -308,26 +331,33 @@ def bench(n: int, d: int, batches) -> None:
 
     print("  queries per second; then memory per call, MB: PyTorch's peak / the device's peak / the host's peak",
           flush=True)
-    print(f"  {'':26s}" + "".join(f"{f'batch {b:,}':>20s}" for b in batches), flush=True)
-    for name, fn in contenders.items():
+    print(f"  {len(contenders)} contenders x {len(batches)} batch sizes; '-' where a batch was skipped",
+          flush=True)
+    print(f"  {'':32s}" + "".join(f"{f'batch {b:,}':>20s}" for b in batches), flush=True)
+    for row, (name, fn) in enumerate(contenders.items(), 1):
         settle()
         before = peaks.device_used()
-        print(f"  {name:26s}", end="", flush=True)
-        mems = []
+        print(f"  [{row}/{len(contenders)}] {name:26s}", end="", flush=True)
+        mems, slow = [], False
         for b in batches:
+            if slow or (name in only_small and b > batches[0]):
+                print(f"{'-':>20s}", end="", flush=True)
+                mems.append(None)
+                continue
             try:
-                print(f"{timed(fn, q[:b]):20,.0f}", end="", flush=True)
-                mems.append(memory(fn, q[:b]))
+                qps, slow = timed(fn, q[:b])
+                print(f"{qps:20,.0f}", end="", flush=True)
+                mems.append(None if slow else memory(fn, q[:b]))
             except Exception as e:  # noqa: BLE001 (report and go on: one failure should not hide the rest)
                 print(f"\n    batch {b:,} failed: {type(e).__name__}: {str(e)[:200]}", end="")
                 mems.append(None)
-        print(flush=True)
+        print(f"   ({elapsed()})", flush=True)
         cells = ["" if m is None else f"{_mb(m[0])} / {_mb(m[1])} / {_mb(m[2])}" for m in mems]
-        print(f"  {'  memory':26s}" + "".join(f"{c:>20s}" for c in cells), flush=True)
+        print(f"  {'      memory':32s}" + "".join(f"{c:>20s}" for c in cells), flush=True)
         settle()
         after = peaks.device_used()
         kept = None if before is None else after - before
-        print(f"  {'  kept on the device':26s}{_mb(kept):>20s} MB", flush=True)
+        print(f"  {'      kept on the device':32s}{_mb(kept):>20s} MB", flush=True)
 
 
 def main() -> None:
@@ -338,11 +368,16 @@ def main() -> None:
     p.add_argument("--n", type=int, default=1_000_000)
     p.add_argument("--d", type=int, default=128)
     p.add_argument("--batches", default="100,1000,10000")
+    p.add_argument("--config", help="the 2D kernel's configuration, skipping its tuning: BLOCK_Q,BLOCK_N,sort|min,warps")
     a = p.parse_args()
     if a.check:
         check(a.all)
     if a.bench:
-        bench(a.n, a.d, tuple(map(int, a.batches.split(","))))
+        cfg = None
+        if a.config:
+            bq, bn, sel, w = a.config.split(",")
+            cfg = {"BLOCK_Q": int(bq), "BLOCK_N": int(bn), "SORT": sel == "sort", "num_warps": int(w)}
+        bench(a.n, a.d, tuple(map(int, a.batches.split(","))), cfg)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ reads cuVS's file format.
 import json
 from pathlib import Path
 
+from colab_cells import notebook, numbered
+
 HERE = Path(__file__).parent
 
 
@@ -71,6 +73,14 @@ print("cuVS", "works" if cuvs_works() else "still missing its library: the bench
 '''),
         code("%%writefile triton_probe.py\n" + probe),
         code("!python -u triton_probe.py --check"),
+        md("""
+The benchmark, with the 2D-tile kernel at the configuration the T4's tuning found fastest (32 x 128, sort, 4
+warps): about 5-10 minutes (compiling included). Every row shows its number out of the total and the minutes so far.
+"""),
+        code("!python -u triton_probe.py --bench --config 32,128,sort,4"),
+        md("""
+Optional, long (30 minutes or more on a T4): the same benchmark after tuning all 24 configurations.
+"""),
         code("!python -u triton_probe.py --bench"),
         code('''
 import os
@@ -89,8 +99,11 @@ except Exception as e:  # noqa: BLE001 (report whatever went wrong, for the user
     print(type(e).__name__, e)
 '''),
     ]
-    nb = {"cells": cells, "metadata": {"accelerator": "GPU", "kernelspec": {"name": "python3", "display_name": "Python 3"},
-                                       "language_info": {"name": "python"}}, "nbformat": 4, "nbformat_minor": 5}
+    nb = notebook(numbered(cells, [("Which GPU", 0), ("Install FAISS and cuVS", 5), ("Write triton_probe.py", 0),
+                           ("Check the kernels against exact search", 15, "optional"),
+                           ("Benchmark at the tuned configuration", 10),
+                           ("Benchmark after tuning all 24 configurations", 45, "optional"),
+                           ("Save a cuVS IVF-Flat file", 2, "optional")]), "GPU")
     out = HERE / "colab" / "triton_probe.ipynb"
     out.write_text(json.dumps(nb, indent=1) + "\n", encoding="utf-8")
     print(out)
