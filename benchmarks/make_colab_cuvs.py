@@ -1,7 +1,7 @@
-"""Writes benchmarks/colab/cuvs_probe.ipynb, a notebook to run on Colab or Kaggle with an NVIDIA GPU (a T4 or
-newer): it installs cuVS, writes out cuvs_probe.py (embedded here, so the two cannot drift apart), checks which
-metrics and data types cuVS's brute force, IVF-Flat and CAGRA accept, and builds a CAGRA graph on SIFT1M,
-saving it for siann to read.
+"""Writes two notebooks to run on Colab or Kaggle with an NVIDIA GPU (a T4 or newer), each installing cuVS and
+writing out cuvs_probe.py (embedded here, so the notebooks and the script cannot drift apart):
+benchmarks/colab/cuvs_capabilities.ipynb checks which metrics and data types cuVS's brute force, IVF-Flat and
+CAGRA accept; benchmarks/colab/cuvs_cagra.ipynb builds a CAGRA graph on SIFT1M and saves it for siann to read.
 
     python make_colab_cuvs.py
 """
@@ -22,26 +22,9 @@ def code(text):
             "source": text.strip().splitlines(keepends=True)}
 
 
-def main() -> None:
+def shared():
     probe = (HERE / "cuvs_probe.py").read_text(encoding="utf-8")
-    cells = [
-        md("""
-# What cuVS offers siann
-
-Run with an NVIDIA GPU, a T4 or newer (Colab: Runtime, Change runtime type, T4 GPU; Kaggle: Accelerator, GPU T4,
-not the P100; Internet on). Every cell runs; nothing needs skipping, and every line prints its number out of the
-total and the minutes so far.
-
-1. **Capabilities** (about 2-5 minutes): which metrics cuVS's brute force accepts (L1 and L-infinity in
-   particular), and which data types (float32, float16, int8, uint8) and metrics its IVF-Flat and CAGRA accept,
-   each checked against NumPy.
-2. **CAGRA on SIFT1M** (about 10-20 minutes, most of it downloading SIFT1M, about 500 MB): cuVS builds a graph
-   (32 links per vector), measures its own search's recall, and saves the graph in cuVS's format and as a NumPy
-   file. Download `cagra_sift.cuvs` and `cagra_sift_links.npy` at the end (Colab: the file browser on the left;
-   Kaggle: the Output panel).
-
-In all, about 15-30 minutes with the installs. Copy the outputs of the two probe cells back.
-"""),
+    return [
         code("!nvidia-smi --query-gpu=name,memory.total --format=csv"),
         code('''
 # cuVS (and CuPy) for the CUDA version this machine's PyTorch was built with, only where missing: Colab comes with
@@ -77,21 +60,51 @@ if not works("from cuvs.neighbors import brute_force, cagra, ivf_flat"):
 print("cuVS", "works" if works("from cuvs.neighbors import brute_force, cagra, ivf_flat") else "still does not work")
 '''),
         code("%%writefile cuvs_probe.py\n" + probe),
-        md("## 1. Capabilities (about 2-5 minutes)"),
+    ]
+
+
+def write(name, intro, cells, plan):
+    nb = notebook(numbered([md(intro)] + shared() + cells, [("Which GPU", 0), ("Install cuVS", 5),
+                                                             ("Write cuvs_probe.py", 0)] + plan), "GPU")
+    out = HERE / "colab" / name
+    out.write_text(json.dumps(nb, indent=1) + "\n", encoding="utf-8")
+    print(out)
+
+
+SETUP = """Run with an NVIDIA GPU, a T4 or newer (Colab: Runtime, Change runtime type, T4 GPU; Kaggle: Accelerator, GPU
+T4, not the P100; Internet on). Every step runs; none needs skipping, and each says when it starts, when it ends
+and what comes next."""
+
+
+def main() -> None:
+    write("cuvs_capabilities.ipynb", f"""
+# What cuVS accepts
+
+{SETUP}
+
+Which metrics cuVS's brute force accepts (L1 and L-infinity in particular), and which data types (float32,
+float16, int8, uint8) and metrics its IVF-Flat and CAGRA accept, each checked against NumPy on small data. About
+5-10 minutes in all, most of it the install. Copy the output of the last step back.
+""", [
         code("!python -u cuvs_probe.py --capabilities"),
-        md("## 2. CAGRA on SIFT1M (about 10-20 minutes)"),
+    ], [("Capabilities", 3)])
+    write("cuvs_cagra.ipynb", f"""
+# A CAGRA graph built by cuVS, for siann
+
+{SETUP}
+
+cuVS builds a CAGRA graph on SIFT1M (32 links per vector, pruned from 64, as siann's graphs), measures its own
+search's recall, and saves the graph in cuVS's format and as a NumPy file. About 15-25 minutes in all, most of
+it downloading SIFT1M (about 500 MB) and the install. Copy the output of the last step back, and download
+`cagra_sift.cuvs` and `cagra_sift_links.npy` (Colab: the file browser on the left; Kaggle: the Output panel).
+""", [
         code('''
 import os
 
 out = "/kaggle/working" if os.path.isdir("/kaggle/working") else "."     # Kaggle keeps only /kaggle/working
 !python -u cuvs_probe.py --cagra --out {out}
 '''),
-    ]
-    nb = notebook(numbered(cells, [("Which GPU", 0), ("Install cuVS", 5), ("Write cuvs_probe.py", 0),
-                           ("Capabilities", 5), ("CAGRA on SIFT1M", 20)]), "GPU")
-    out = HERE / "colab" / "cuvs_probe.ipynb"
-    out.write_text(json.dumps(nb, indent=1) + "\n", encoding="utf-8")
-    print(out)
+    ], [("CAGRA on SIFT1M", 15)])
 
 
 if __name__ == "__main__":
