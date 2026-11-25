@@ -100,6 +100,74 @@ def _keep_best(acc, rq, rn, pn, out_ptr, nq, n, stride, BLOCK_N: tl.constexpr, K
             key = tl.where(key == m[:, None], 0x7FFFFFFFFFFFFFFF, key)
 
 
+@triton.jit
+def _l1_merge_topk(qt_ptr, xt_ptr, out_ptr, nq, n, d, per_split,
+                   BLOCK_Q: tl.constexpr, BLOCK_N: tl.constexpr, K: tl.constexpr, KP: tl.constexpr):
+    """The in-kernel merge: each program takes BLOCK_Q queries and one stretch of the base (per_split vectors),
+    scans it BLOCK_N vectors at a time as the 2D-tile kernel does, and keeps its queries' best K in registers
+    (KP lanes, K of them used), merging a block only where some query has a candidate nearer than its current
+    K-th; it writes only those K keys, so stage 2 sorts K per stretch, not K per block."""
+    pq = tl.program_id(0)
+    ps = tl.program_id(1)
+    nsplit = tl.num_programs(1)
+    rq = pq * BLOCK_Q + tl.arange(0, BLOCK_Q)
+    lane = tl.arange(0, KP)
+    run = tl.full((BLOCK_Q, KP), 0x7FFFFFFFFFFFFFFF, tl.int64)        # the best K so far, ascending; MAX unused
+    start = ps * per_split
+    stop = tl.minimum(start + per_split, n)
+    for s0 in range(start, stop, BLOCK_N):
+        rn = s0 + tl.arange(0, BLOCK_N)
+        acc = tl.zeros((BLOCK_Q, BLOCK_N), dtype=tl.float32)
+        for j in range(d):
+            qj = tl.load(qt_ptr + j * nq + rq, mask=rq < nq, other=0.0)
+            xj = tl.load(xt_ptr + j * n + rn, mask=rn < stop, other=0.0)
+            acc += tl.abs(qj[:, None] - xj[None, :])
+        bits = acc.to(tl.int32, bitcast=True).to(tl.int64)
+        key = (bits << 32) | rn[None, :].to(tl.int64)
+        key = tl.where(rn[None, :] < stop, key, 0x7FFFFFFFFFFFFFFF)
+        kth = tl.sum(tl.where(lane[None, :] == K - 1, run, 0), axis=1)   # each query's K-th best so far
+        if tl.max((tl.min(key, axis=1) < kth).to(tl.int32), axis=0) > 0:  # some query improves: merge
+            new = tl.full((BLOCK_Q, KP), 0x7FFFFFFFFFFFFFFF, tl.int64)
+            for p in tl.static_range(K):                               # K passes of a minimum (keys unique)
+                m = tl.minimum(tl.min(run, axis=1), tl.min(key, axis=1))
+                new = tl.where(lane[None, :] == p, m[:, None], new)
+                run = tl.where(run == m[:, None], 0x7FFFFFFFFFFFFFFF, run)
+                key = tl.where(key == m[:, None], 0x7FFFFFFFFFFFFFFF, key)
+            run = new
+    out = out_ptr + rq[:, None] * (nsplit * K) + ps * K + lane[None, :]
+    tl.store(out, run, mask=(rq[:, None] < nq) & (lane[None, :] < K))
+
+
+MERGE_DEFAULT = {"BLOCK_Q": 32, "BLOCK_N": 128, "num_warps": 4}
+CONFIGS_MERGE = [{"BLOCK_Q": bq, "BLOCK_N": bn, "num_warps": w}
+                 for bq, bn in ((32, 128), (64, 128), (16, 128), (32, 64)) for w in (4, 8)]
+
+
+def l1_knn_merge(xt: torch.Tensor, q: torch.Tensor, k: int, config: dict | None = None,
+                 programs: int | None = None) -> torch.Tensor:
+    """Each query's k nearest by L1 through the in-kernel merge (xt: the base transposed, d x n, contiguous),
+    int64 indices, nearest first, ties by index. The base is split into stretches so that about ``programs``
+    programs run (by default four per streaming multiprocessor): many for small batches, few for large ones."""
+    d, n = xt.shape
+    nq = q.shape[0]
+    cfg = dict(config or MERGE_DEFAULT)
+    warps = cfg.pop("num_warps", 4)
+    bq, bn = cfg["BLOCK_Q"], cfg["BLOCK_N"]
+    if programs is None:
+        programs = 4 * (torch.cuda.get_device_properties(xt.device).multi_processor_count
+                        if xt.device.type == "cuda" else 16)
+    qblocks = triton.cdiv(nq, bq)
+    nblocks = triton.cdiv(n, bn)
+    split = max(1, min(nblocks, triton.cdiv(programs, qblocks)))
+    per = triton.cdiv(nblocks, split) * bn                    # whole blocks per stretch
+    split = triton.cdiv(n, per)
+    kp = 1 << (k - 1).bit_length()
+    out = torch.empty((nq, split * k), dtype=torch.int64, device=xt.device)
+    _l1_merge_topk[(qblocks, split)](q.T.contiguous(), xt, out, nq, n, d, per, BLOCK_Q=bq, BLOCK_N=bn, K=k, KP=kp,
+                                     num_warps=warps)
+    return torch.topk(out, k, dim=1, largest=False, sorted=True).values & 0xFFFFFFFF
+
+
 # Tiles of about 16,000 values (BLOCK_Q x BLOCK_N x BLOCK_D), larger ones spilling out of the registers; both
 # selections; 4 or 8 warps. Triton's auto-tuner times each once per shape and keeps the fastest.
 TILES = ((16, 128, 8), (32, 128, 4), (64, 64, 4), (32, 64, 8), (16, 256, 4), (64, 128, 2))
@@ -162,17 +230,21 @@ def check(both: bool = False) -> None:
         xd, qd = torch.from_numpy(x).to(dev), torch.from_numpy(q).to(dev)
         xtd = xd.T.contiguous()
         same = []
-        for c in CONFIGS_2D:                                       # every configuration the auto-tuner may pick
-            cfg = {**c.kwargs, "num_warps": c.num_warps}
-            same.append(np.array_equal(l1_knn(xd, qd, k, cfg, xt=xtd).cpu().numpy(), truth))
-            print("." if same[-1] else "x", end="", flush=True)            # one mark per configuration
+        for cfg in CONFIGS_MERGE:                                  # the in-kernel merge, few and many stretches
+            for programs in (1, 7, 64):
+                same.append(np.array_equal(l1_knn_merge(xtd, qd, k, cfg, programs).cpu().numpy(), truth))
+                print("." if same[-1] else "x", end="", flush=True)            # one mark per case
         if both:
+            for c in CONFIGS_2D:
+                cfg = {**c.kwargs, "num_warps": c.num_warps}
+                same.append(np.array_equal(l1_knn(xd, qd, k, cfg, xt=xtd).cpu().numpy(), truth))
+                print("." if same[-1] else "x", end="", flush=True)
             for c in CONFIGS:
                 cfg = {**c.kwargs, "num_warps": c.num_warps}
                 same.append(np.array_equal(l1_knn(xd, qd, k, cfg).cpu().numpy(), truth))
                 print("." if same[-1] else "x", end="", flush=True)
         print(f"\n  n {n}, d {d}, {nq} queries, k {k}: identical to exact search, ties included, in "
-              f"{sum(same)} of {len(same)} configurations")
+              f"{sum(same)} of {len(same)} cases")
         assert all(same)
 
 
@@ -233,7 +305,8 @@ def _mb(v):
 SLOW = 20.0      # seconds: a call slower than this is not repeated, and that contender's larger batches skipped
 
 
-def bench(n: int, d: int, batches, config_2d: dict | None = None, full: bool = False, tune: bool = False) -> None:
+def bench(n: int, d: int, batches, config_2d: dict | None = None, full: bool = False, tune: bool = False,
+          lean: bool = False) -> None:
     dev = torch.device("cuda")
     rng = np.random.default_rng(0)
     xb = rng.standard_normal((n, d), dtype=np.float32)
@@ -274,9 +347,12 @@ def bench(n: int, d: int, batches, config_2d: dict | None = None, full: bool = F
     # nothing until all are done); the 3D kernel at the configuration its auto-tuner chose on the T4
     best_cfg, best_t = None, float("inf")
     configs = [{**c.kwargs, "num_warps": c.num_warps} for c in CONFIGS_2D] if tune else [config_2d or BEST_2D]
-    print(f"  the 2D-tile kernel on 1,000 queries: {len(configs)} configuration(s), each compiled (about 30 s on a "
-          f"T4) and then timed once (seconds per call; a configuration past {SLOW:.0f} s per call is dropped)",
-          flush=True)
+    if lean:
+        configs, best_cfg = [], BEST_2D                             # the 2D-tile kernel is not run
+    if configs:
+        print(f"  the 2D-tile kernel on 1,000 queries: {len(configs)} configuration(s), each compiled (about 30 s "
+              f"on a T4) and then timed once (seconds per call; a configuration past {SLOW:.0f} s per call is "
+              f"dropped)", flush=True)
     for i, cfg in enumerate(configs, 1):
         if best_cfg is not None and DEADLINE.over(f"configurations {i}-{len(configs)}"):
             break
@@ -296,16 +372,24 @@ def bench(n: int, d: int, batches, config_2d: dict | None = None, full: bool = F
         print(f"    [{i}/{len(configs)}] {cfg}: {t:.3f}; {elapsed()}", flush=True)
         if t < best_t:
             best_cfg, best_t = cfg, t
-    if best_cfg is None:                                           # never fall back to Triton's silent auto-tuner
+    if not lean and best_cfg is None:                              # never fall back to Triton's silent auto-tuner
         raise SystemExit("  no 2D-tile configuration ran: nothing to benchmark")
-    print(f"  fastest 2D-tile configuration: {best_cfg}", flush=True)
+    if configs:
+        print(f"  fastest 2D-tile configuration: {best_cfg}", flush=True)
+    print("  compiling and timing each contender (the merge kernel about 30 s to compile on a T4)", flush=True)
     best_3d = {"BLOCK_Q": 64, "BLOCK_N": 128, "BLOCK_D": 2, "SORT": True, "num_warps": 4}
-    contenders = {"siann, 2D tiles, tuned": lambda qb: l1_knn(x, qb, k, best_cfg, xt=xt),
+    merge_alt = {"BLOCK_Q": 64, "BLOCK_N": 128, "num_warps": 8}
+    contenders = {"siann, in-kernel merge": lambda qb: l1_knn_merge(xt, qb, k),
+                  "siann, merge, 64 x 128, 8w": lambda qb: l1_knn_merge(xt, qb, k, merge_alt),
+                  "siann, 2D tiles, tuned": lambda qb: l1_knn(x, qb, k, best_cfg, xt=xt),
                   "siann, 3D tiles, tuned": lambda qb: l1_knn(x, qb, k, best_3d),
                   "torch.cdist + topk": cdist}
     only_small = {"torch.cdist + topk"}                             # ~90 queries/s on a T4: batch 100 only
     if not full:                                                    # the short default: siann's kernel, FAISS, cuVS
         for name in ("siann, 3D tiles, tuned", "torch.cdist + topk"):
+            del contenders[name]
+    if lean:                                                        # one kernel to compile
+        for name in ("siann, merge, 64 x 128, 8w", "siann, 2D tiles, tuned"):
             del contenders[name]
     try:
         import faiss
@@ -328,8 +412,11 @@ def bench(n: int, d: int, batches, config_2d: dict | None = None, full: bool = F
     if "FAISS GPU brute force" in contenders:
         _, fi = contenders["FAISS GPU brute force"](q[:100])
         fi = torch.as_tensor(fi).cpu().numpy()
-        for name, ours in (("2D tiles", l1_knn(x, q[:100], k, best_cfg, xt=xt)),
-                           ("3D tiles", l1_knn(x, q[:100], k, best_3d))):
+        mine = [("in-kernel merge", lambda: l1_knn_merge(xt, q[:100], k))]
+        if not lean:
+            mine.append(("2D tiles", lambda: l1_knn(x, q[:100], k, best_cfg, xt=xt)))
+        for name, run in mine:
+            ours = run()
             same = (np.sort(fi, 1) == np.sort(ours.cpu().numpy(), 1)).mean()
             print(f"  {name}: the same neighbors as FAISS's on 100 queries: {same:.4f}")
     peaks = Peaks()
@@ -390,6 +477,7 @@ def main() -> None:
     p.add_argument("--batches", default="100,1000")
     p.add_argument("--full", action="store_true", help="also round two's kernel and torch.cdist")
     p.add_argument("--config", help="the 2D kernel's configuration (default: the T4's fastest): BLOCK_Q,BLOCK_N,sort|min,warps")
+    p.add_argument("--lean", action="store_true", help="the merge kernel only (fewer compiles), with FAISS and cuVS")
     p.add_argument("--tune", action="store_true", help="time all 24 configurations of the 2D kernel first (long)")
     p.add_argument("--budget", type=float, default=180, help="seconds for the whole run; past it, the rest is skipped")
     a = p.parse_args()
@@ -402,7 +490,7 @@ def main() -> None:
         if a.config:
             bq, bn, sel, w = a.config.split(",")
             cfg = {"BLOCK_Q": int(bq), "BLOCK_N": int(bn), "SORT": sel == "sort", "num_warps": int(w)}
-        bench(a.n, a.d, tuple(map(int, a.batches.split(","))), cfg, a.full, a.tune)
+        bench(a.n, a.d, tuple(map(int, a.batches.split(","))), cfg, a.full, a.tune, a.lean)
 
 
 if __name__ == "__main__":

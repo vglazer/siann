@@ -32,6 +32,9 @@ class Deadline:
     def __init__(self, seconds: float):
         self.seconds, self.end = seconds, time.perf_counter() + seconds
 
+    def left(self) -> float:
+        return self.end - time.perf_counter()
+
     def over(self, what: str) -> bool:
         if time.perf_counter() < self.end:
             return False
@@ -133,7 +136,18 @@ def load_sift(path: str):
     if not os.path.exists(path):
         print(f"  downloading {SIFT_URL} (about 500 MB)", flush=True)
         t = time.perf_counter()
-        urllib.request.urlretrieve(SIFT_URL, path)
+        got, shown = 0, 0
+        with urllib.request.urlopen(SIFT_URL) as r, open(path + ".part", "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            while chunk := r.read(8 << 20):
+                f.write(chunk)
+                got += len(chunk)
+                if got - shown >= 100 << 20:
+                    shown = got
+                    print(f"    {got >> 20:,} of {total >> 20:,} MB ({elapsed()})", flush=True)
+                if DEADLINE.over("the rest of the download, and the build"):
+                    raise SystemExit(f"  stopped: {got >> 20:,} of {total >> 20:,} MB downloaded within the budget")
+        os.replace(path + ".part", path)
         print(f"  downloaded in {time.perf_counter() - t:.0f} s ({elapsed()})", flush=True)
     with h5py.File(path, "r") as f:
         return (np.asarray(f["train"], dtype=np.float32), np.asarray(f["test"], dtype=np.float32),
@@ -147,6 +161,8 @@ def cagra_export(path: str, out: str) -> None:
     steps = 5
     print(f"cuVS {getattr(cuvs, '__version__', '?')}: CAGRA on SIFT1M, {steps} steps", flush=True)
     xb, xq, gt = load_sift(path)
+    if DEADLINE.left() < 90:                                   # the build cannot be cut short: about a minute on a T4
+        raise SystemExit(f"  stopped: {DEADLINE.left():.0f} s left of the budget, too little to build the graph")
     print(f"  [1/{steps}] SIFT1M loaded: {xb.shape[0]:,} x {xb.shape[1]}, {len(xq):,} queries ({elapsed()})", flush=True)
     b, q = cp.asarray(xb), cp.asarray(xq)
     params = cagra.IndexParams(metric="sqeuclidean", graph_degree=32, intermediate_graph_degree=64)

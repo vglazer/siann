@@ -8,7 +8,7 @@ CAGRA accept; benchmarks/colab/cuvs_cagra.ipynb builds a CAGRA graph on SIFT1M a
 import json
 from pathlib import Path
 
-from colab_cells import notebook, numbered
+from colab_cells import BUDGET, notebook, numbered
 
 HERE = Path(__file__).parent
 
@@ -86,7 +86,7 @@ Which metrics cuVS's brute force accepts (L1 and L-infinity in particular), and 
 float16, int8, uint8) and metrics its IVF-Flat and CAGRA accept, each checked against NumPy on small data. About
 3-5 minutes in all. Copy the output of the last step back.
 """, [
-        code("!python -u cuvs_probe.py --capabilities"),
+        code("!python -u cuvs_probe.py --capabilities --budget " + BUDGET),
     ], [("Capabilities", 2)])
     write("cuvs_cagra.ipynb", f"""
 # A CAGRA graph built by cuVS, for siann
@@ -103,7 +103,7 @@ back, and download
 import os
 
 out = "/kaggle/working" if os.path.isdir("/kaggle/working") else "."     # Kaggle keeps only /kaggle/working
-!python -u cuvs_probe.py --cagra --out {out}
+!python -u cuvs_probe.py --cagra --out {out} --budget {max(20, int(270 - (__import__('time').time() - NB_START)))}
 '''),
     ], [("CAGRA on SIFT1M", 4)])
 

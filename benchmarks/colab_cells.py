@@ -9,6 +9,10 @@ starts and when it ends, which step it is out of how many, about how long it tak
 """
 import json
 
+TOTAL = 300          # seconds: every notebook, run with Run All, finishes within this
+# a probe's --budget: what is left of the notebook's TOTAL, less a margin for the steps after it
+BUDGET = "{max(20, int(270 - (__import__('time').time() - NB_START)))}"
+
 
 def md(text):
     return {"cell_type": "markdown", "metadata": {}, "source": text.strip().splitlines(keepends=True)}
@@ -60,7 +64,9 @@ class Steps:
             tag = " (optional)" if optional else ""
             head = (f"# Step {k} of {n}{tag}: {title} ({took})\n"
                     f"_t0 = __import__(\"time\").time()\n"
-                    f"print(\"step {k} of {n}{tag}: {title}, {took}: started\", flush=True)\n")
+                    f"NB_START = globals().get(\"NB_START\", _t0)   # the notebook's clock: {TOTAL} s in all\n"
+                    f"print(f\"step {k} of {n}{tag}: {title}, {took}: started, {{(_t0 - NB_START) / 60:.1f}} min into "
+                    f"the notebook's {TOTAL // 60}\", flush=True)\n")
             tail = (f"\nprint(f\"step {k} of {n}: {title}: done in {{(__import__('time').time() - _t0) / 60:.1f}} min; "
                     f"{after}\", flush=True)")
             out.append(_code(head + body + tail))

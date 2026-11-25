@@ -1,42 +1,24 @@
-"""Writes benchmarks/colab/triton_probe.ipynb, a notebook to run on Colab or Kaggle with an NVIDIA GPU: it installs
-FAISS's and cuVS's GPU packages, writes out triton_probe.py (embedded here, so the two cannot drift apart), checks
-the Triton kernel against exact search on the GPU, benchmarks it against torch.cdist, FAISS and cuVS, and saves a
-cuVS IVF-Flat index of seeded Gaussian vectors (which siann can regenerate) for download, to check that siann
-reads cuVS's file format.
+"""Writes two notebooks for Colab with a T4 GPU, each finishing within 5 minutes when run with Run All, and each
+writing out triton_probe.py (embedded here, so the notebooks and the script cannot drift apart):
+
+benchmarks/colab/triton_probe.ipynb: siann's exact L1 kernels in Triton (the in-kernel merge, and the 2D-tile
+kernel) against cuVS's brute force, with the memory each takes; Colab comes with cuVS, so almost nothing is
+installed. benchmarks/colab/triton_faiss.ipynb: FAISS's GPU package installed, then the merge kernel against FAISS
+and cuVS, and the check that siann's neighbors are FAISS's.
+
+Each probe's budget is what is left of the notebook's 5 minutes when it starts. The kernels' check against exact
+search and the tuning of all 24 configurations stay in the script (--check, --tune), for runs of their own.
 
     python make_colab_probe.py
 """
 import json
 from pathlib import Path
 
-from colab_cells import notebook, numbered
+from colab_cells import BUDGET, Steps, notebook
 
 HERE = Path(__file__).parent
 
-
-def md(text):
-    return {"cell_type": "markdown", "metadata": {}, "source": text.strip().splitlines(keepends=True)}
-
-
-def code(text):
-    return {"cell_type": "code", "metadata": {}, "execution_count": None, "outputs": [],
-            "source": text.strip().splitlines(keepends=True)}
-
-
-def main() -> None:
-    probe = (HERE / "triton_probe.py").read_text(encoding="utf-8")
-    cells = [
-        md("""
-# siann's Triton probe
-
-Run on Colab with a T4 GPU (Runtime, Change runtime type, T4 GPU): Colab comes with PyTorch, Triton and cuVS, so
-the default steps install almost nothing. **Steps 1-4, about 5 minutes in all:** siann's exact L1 kernel, written
-in Triton, timed against cuVS's brute force on 200,000 Gaussian vectors, with the memory each takes; the run
-stops itself at its time budget. Steps 5 and later are optional: FAISS (its install takes a few minutes), the
-kernels' check against exact search, and the long tuning. Copy the output of each step you run back.
-"""),
-        code("!nvidia-smi --query-gpu=name,memory.total --format=csv"),
-        code('''
+SMALL_INSTALLS = '''
 # small packages for the memory figures; cuVS only where missing (Colab comes with it), for this CUDA
 import subprocess
 import sys
@@ -65,35 +47,49 @@ if not works("from cuvs.neighbors import brute_force"):
     install(f"libcuvs-cu{cuda}")
     install(f"cuvs-cu{cuda}")
 print("cuVS", "works" if works("from cuvs.neighbors import brute_force") else "does not work: the benchmark skips it")
-'''),
-        code("%%writefile triton_probe.py\n" + probe),
-        code("!python -u triton_probe.py --bench --budget 180"),
-        code('''
+'''
+
+FAISS_INSTALL = '''
 # FAISS's GPU package for this CUDA (it publishes no CUDA 13 build: its CUDA 12 one brings its own runtime)
-import subprocess  # noqa: F811 (again here, so that this step runs on its own too)
-import sys  # noqa: F811
-
-import torch
-
-cuda = torch.version.cuda.split(".")[0]
 for pkg in (f"faiss-gpu-cu{cuda}", "faiss-gpu-cu12"):
-    r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", pkg], check=False, capture_output=True, text=True)
-    print(pkg, "installed" if r.returncode == 0 else "not installed: " + (r.stderr.strip().splitlines() or ["?"])[-1])
-    if r.returncode == 0:
+    if install(pkg):
         break
-'''),
-        code("!python -u triton_probe.py --bench --budget 180"),
-        code("!python -u triton_probe.py --check"),
-        code("!python -u triton_probe.py --bench --tune --budget 3600"),
-    ]
-    nb = notebook(numbered(cells, [("Which GPU", 0), ("Small installs", 1), ("Write triton_probe.py", 0),
-                                   ("Benchmark against cuVS", 3),
-                                   ("Install FAISS", 4, "optional"), ("Benchmark with FAISS too", 3, "optional"),
-                                   ("Check the kernels against exact search", 15, "optional"),
-                                   ("Benchmark after tuning all 24 configurations", 45, "optional")]), "GPU")
-    out = HERE / "colab" / "triton_probe.ipynb"
-    out.write_text(json.dumps(nb, indent=1) + "\n", encoding="utf-8")
+'''
+
+
+def write(name: str, intro: str, faiss: bool) -> None:
+    s = Steps()
+    s.md(intro)
+    s.shell("Which GPU", 0, "nvidia-smi --query-gpu=name,memory.total --format=csv")
+    s.code("Install FAISS and small packages" if faiss else "Small installs", 2 if faiss else 1,
+           SMALL_INSTALLS + (FAISS_INSTALL if faiss else ""))
+    s.write("triton_probe.py", (HERE / "triton_probe.py").read_text(encoding="utf-8"))
+    s.shell("Benchmark against FAISS and cuVS" if faiss else "Benchmark against cuVS", 3,
+            f"python -u triton_probe.py --bench {'--lean ' if faiss else ''}--budget {BUDGET}")
+    out = HERE / "colab" / name
+    out.write_text(json.dumps(notebook(s.cells(), "GPU"), indent=1) + "\n", encoding="utf-8")
     print(out)
+
+
+def main() -> None:
+    write("triton_probe.ipynb", """
+# siann's Triton probe, against cuVS
+
+Run on Colab with a T4 GPU (Runtime, Change runtime type, T4 GPU), then Runtime, Run all: it finishes within 5
+minutes. Colab comes with PyTorch, Triton and cuVS, so almost nothing is installed. siann's exact L1 kernels in
+Triton (the selection merged inside the kernel, and the earlier 2D-tile kernel) are timed against cuVS's brute
+force on 200,000 Gaussian vectors, with the memory each takes; the benchmark stops itself at what is left of the
+5 minutes. Copy the output of the last step back.
+""", faiss=False)
+    write("triton_faiss.ipynb", """
+# siann's Triton probe, against FAISS
+
+Run on Colab with a T4 GPU (Runtime, Change runtime type, T4 GPU), then Runtime, Run all: it finishes within 5
+minutes. It installs FAISS's GPU package, then times siann's L1 kernel with the selection merged inside it against
+FAISS's and cuVS's brute force on 200,000 Gaussian vectors, and checks that its neighbors are FAISS's; the
+benchmark stops itself at what is left of the 5 minutes, so a slow install shortens it. Copy the output of the
+last step back.
+""", faiss=True)
 
 
 if __name__ == "__main__":
