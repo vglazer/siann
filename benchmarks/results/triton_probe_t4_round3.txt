@@ -29,3 +29,24 @@ configurations before the session stopped; seconds per call):
     {'BLOCK_Q': 128, 'BLOCK_N': 128, 'SORT': True, 'num_warps': 8}: 0.595
 The check (python triton_probe.py --check) passed on the T4: the 2D-tile kernel identical to exact search, ties
 included, in 24 of 24 configurations on each of three shapes.
+
+The same session after installing FAISS's GPU package (faiss-gpu-cu12 beside Colab's CUDA 13 PyTorch):
+python triton_probe.py --bench --budget 180
+Tesla T4: 200,000 Gaussian vectors, 128 dimensions, L1, k = 10; queries per second
+  the 2D-tile kernel on 1,000 queries: 1 configuration(s), each compiled (about 30 s on a T4) and then timed once (seconds per call; a configuration past 20 s per call is dropped)
+    [1/1] {'BLOCK_Q': 32, 'BLOCK_N': 128, 'SORT': True, 'num_warps': 4}: 0.147; 0.0 min so far
+  fastest 2D-tile configuration: {'BLOCK_Q': 32, 'BLOCK_N': 128, 'SORT': True, 'num_warps': 4}
+  2D tiles: the same neighbors as FAISS's on 100 queries: 1.0000
+  3D tiles: the same neighbors as FAISS's on 100 queries: 1.0000
+  queries per second; then memory per call, MB: PyTorch's peak / the device's peak / the host's peak
+  3 contenders x 2 batch sizes; '-' where a batch was skipped
+                                             batch 100         batch 1,000
+  [1/3] siann, 2D tiles, tuned                   5,225              12,440   (1.1 min so far)
+        memory                             24 / 24 / 0       241 / 242 / 0
+        kept on the device                           0 MB
+  [2/3] FAISS GPU brute force                   10,426              11,619   (1.1 min so far)
+        memory                               0 / 0 / 0           0 / 0 / 0
+        kept on the device                           0 MB
+  [3/3] cuVS brute force                        27,850              48,452   (1.1 min so far)
+        memory                               0 / 0 / 0           0 / 0 / 0
+        kept on the device                           0 MB
