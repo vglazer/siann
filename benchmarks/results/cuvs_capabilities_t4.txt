@@ -1,0 +1,35 @@
+Kaggle, Tesla T4, cuVS 26.06.00, CuPy 14.0.1: benchmarks/colab/cuvs_capabilities.ipynb, Run All
+python cuvs_probe.py --capabilities --budget 270
+  37 cases; recall@10 up to ties against NumPy on 50 queries, 5,000 x 32 (integer data for int8 and uint8); IVF-Flat probes every list, so it should be exact
+  [1/37] brute force, l2             'sqeuclidean': recall 1.0000
+  [2/37] brute force, ip             'inner_product': recall 1.0000
+  [3/37] brute force, cosine         'cosine': recall 1.0000
+  [4/37] brute force, l1             'l1': recall 1.0000
+  [5/37] brute force, linf           'chebyshev': recall 1.0000
+  [6/37] IVF-Flat, l2, float32       'sqeuclidean': recall 1.0000
+  [7/37] IVF-Flat, l2, float16       'sqeuclidean': recall 0.9980
+  [8/37] IVF-Flat, l2, int8          'sqeuclidean': recall 1.0000
+  [9/37] IVF-Flat, l2, uint8         'sqeuclidean': recall 1.0000
+  [10/37] IVF-Flat, ip, float32      'inner_product': recall 1.0000
+  [11/37] IVF-Flat, ip, float16      'inner_product': recall 0.9980
+  [12/37] IVF-Flat, ip, int8         'inner_product': recall 1.0000
+  [13/37] IVF-Flat, ip, uint8        'inner_product': recall 1.0000
+  [14/37] IVF-Flat, cosine, float32  'cosine': recall 1.0000
+  [15/37] IVF-Flat, cosine, float16  'cosine': recall 0.9980
+  [16/37] IVF-Flat, cosine, int8     'cosine': recall 1.0000
+  [17/37] IVF-Flat, cosine, uint8    'cosine': recall 1.0000
+  [18-21/37] IVF-Flat, l1, every type: 'l1' and 'cityblock': CuvsException: RAFT failure at file=cpp/src/cluster/detail/kmeans_balanced.cuh line=153; 'manhattan': KeyError
+  [22-25/37] IVF-Flat, linf, every type: 'chebyshev': CuvsException: RAFT failure at file=cpp/src/cluster/detail/kmeans_balanced.cuh line=153; 'linf': KeyError
+  [26/37] CAGRA, l2, float32         'sqeuclidean': recall 1.0000
+  [27/37] CAGRA, l2, float16         'sqeuclidean': recall 1.0000
+  [28/37] CAGRA, l2, int8            'sqeuclidean': recall 1.0000
+  [29/37] CAGRA, l2, uint8           'sqeuclidean': recall 1.0000
+  [30/37] CAGRA, ip, float32         'inner_product': recall 1.0000
+  [31/37] CAGRA, ip, float16         'inner_product': recall 0.9980
+  [32/37] CAGRA, ip, int8            'inner_product': recall 1.0000
+  [33/37] CAGRA, ip, uint8           'inner_product': recall 1.0000
+  [34/37] CAGRA, cosine, float32     'cosine': recall 1.0000
+  [35/37] CAGRA, cosine, float16     'cosine': recall 1.0000
+  [36/37] CAGRA, cosine, int8        'cosine': recall 1.0000
+  [37/37] CAGRA, cosine, uint8       'cosine': recall 1.0000
+  (0.7 min in all)
