@@ -14,8 +14,9 @@ beside it, each calibrated to the target on its own; kind="ivf" where no graph c
 a separate kind="auto" index from the same vectors, as a user would build it. Both calibrate on the first CAL
 queries; the others are the test queries.
 
-Recall: each path's recall@10 on the first 1,000 test queries against exact search. A path counts if it is
-within TOLERANCE of the target. Timing: siann's choice and every path that counts, at each batch size, in ROUNDS
+Recall: each path's recall@10 on all the test queries (about 9,000: a standard error near 0.002) against exact
+search. A path counts if it is within TOLERANCE of the target. The target holds on average: calibrated on 1,000
+queries, recall on new ones lands a few thousandths either side of it (graph_calibration.py). Timing: siann's choice and every path that counts, at each batch size, in ROUNDS
 rounds, in a rotated order each round (the GPU runs slower right after the CPU), each call back to back for at
 least 0.1 s and 3 calls after a warm-up; the median over rounds. A path past SLOW s per call is not timed at
 larger batches.
@@ -46,6 +47,7 @@ METRIC = {"sift": "l2", "glove": "cosine", "music100": "ip", "dbpedia": "cosine"
 K = 10
 CAL = 1000
 TOLERANCE = 0.01
+RECALL_ON = "all test queries"      # in the checkpoint: results measured with recall on 1,000 queries are not reused
 MARGIN = 1.10
 ROUNDS = 3
 SLOW = 5.0
@@ -127,9 +129,9 @@ def run_target(xb, metric, cal, test, truth, exact, target, batches, say) -> lis
             continue
         view = forced(every, p)
         paths[p] = lambda q, view=view: view.search(q, K)
-    rec = {p: recall(call(test[:1000]).indices, truth) for p, call in paths.items()}
+    rec = {p: recall(call(test).indices, truth) for p, call in paths.items()}
     counts = {p for p, r in rec.items() if r >= target - TOLERANCE}
-    say("    recall@10, 1,000 test queries: " + ", ".join(f"{p} {r:.3f}" for p, r in rec.items()))
+    say(f"    recall@10, {len(test):,} test queries: " + ", ".join(f"{p} {r:.3f}" for p, r in rec.items()))
 
     def chosen(b):
         return auto._ivf_path(b, None) if auto._ivf is not None else f"exact, {auto.route(b)}"
@@ -140,8 +142,8 @@ def run_target(xb, metric, cal, test, truth, exact, target, batches, say) -> lis
         if c not in choice_recall:
             call = (lambda q: auto.search(q, K, device=c.split(", ")[1])) if c.startswith("exact") else \
                 forced(auto, c).search
-            choice_recall[c] = recall(call(test[:1000]).indices if c.startswith("exact") else
-                                      call(test[:1000], K).indices, truth)
+            choice_recall[c] = recall(call(test).indices if c.startswith("exact") else
+                                      call(test, K).indices, truth)
 
     say(f"    {'batch':>6} {'siann chose':>16} {'recall':>7} {'q/s':>10}   {'best path':>16} {'q/s':>10}  "
         f"{'regret':>6}  lever")
@@ -175,9 +177,9 @@ def run(name: str, n: int | None, targets, batches, fresh: bool = False) -> None
     saved and runs only the missing ones (--fresh: all)."""
     ckpt = RESULTS / f"choice_bench_{name}.json"
     done = {} if fresh or not ckpt.exists() else json.loads(ckpt.read_text(encoding="utf-8"))
-    if done.get("setup") != [n, list(batches)]:
+    if done.get("setup") != [n, list(batches), RECALL_ON]:
         done = {}                                        # another size or other batches: start over
-    done["setup"] = [n, list(batches)]
+    done["setup"] = [n, list(batches), RECALL_ON]
     left = [t for t in targets if str(t) not in done]
     if not left:
         print(f"{name}: every target already measured ({ckpt.name}); --fresh to measure again", flush=True)
@@ -199,7 +201,7 @@ def run(name: str, n: int | None, targets, batches, fresh: bool = False) -> None
         print(f"  resumed from {ckpt.name}: targets {', '.join(map(str, resumed))} already measured; "
               f"left: {', '.join(map(str, left))}", flush=True)
     exact = siann.Index(xb, metric)
-    truth = exact.search(test[:1000], K, device="gpu").indices
+    truth = exact.search(test, K, device="gpu").indices
     for target in left:
         say = Out()
         rows = run_target(xb, metric, cal, test, truth, exact, target, batches, say)

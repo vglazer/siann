@@ -1,0 +1,34 @@
+music100: 1,000,000 x 100, ip, target 0.95; calibrated: nprobe 25, ef 57, itopk 63. recall@10 (id overlap) on the 1,000 calibration queries and 9,000 others, each +- its standard error
+
+  IVF, nprobe (calibrated 25)
+       18: calibration 0.9312 +- 0.0047   others 0.9292 +- 0.0015   gap +0.0020
+       22: calibration 0.9430 +- 0.0042   others 0.9403 +- 0.0014   gap +0.0027
+       25: calibration 0.9501 +- 0.0038   others 0.9465 +- 0.0013   gap +0.0036   <- calibrated
+       27: calibration 0.9536 +- 0.0036   others 0.9499 +- 0.0012   gap +0.0037
+       31: calibration 0.9585 +- 0.0033   others 0.9551 +- 0.0012   gap +0.0034
+       37: calibration 0.9648 +- 0.0030   others 0.9610 +- 0.0011   gap +0.0038
+       50: calibration 0.9703 +- 0.0027   others 0.9705 +- 0.0009   gap -0.0002
+
+  graph on the CPU, ef (calibrated 57)
+       42: calibration 0.9368 +- 0.0066   others 0.9445 +- 0.0019   gap -0.0077
+       51: calibration 0.9474 +- 0.0060   others 0.9523 +- 0.0018   gap -0.0049
+       57: calibration 0.9502 +- 0.0059   others 0.9569 +- 0.0017   gap -0.0067   <- calibrated
+       62: calibration 0.9562 +- 0.0054   others 0.9595 +- 0.0016   gap -0.0033
+       71: calibration 0.9623 +- 0.0051   others 0.9641 +- 0.0015   gap -0.0018
+       85: calibration 0.9659 +- 0.0049   others 0.9698 +- 0.0014   gap -0.0039
+      114: calibration 0.9739 +- 0.0043   others 0.9784 +- 0.0012   gap -0.0045
+
+  graph on the GPU, itopk (calibrated 63)
+       47: calibration 0.9333 +- 0.0068   others 0.9343 +- 0.0021   gap -0.0010
+       56: calibration 0.9430 +- 0.0063   others 0.9439 +- 0.0020   gap -0.0009
+       63: calibration 0.9505 +- 0.0058   others 0.9505 +- 0.0019   gap -0.0000   <- calibrated
+       69: calibration 0.9551 +- 0.0056   others 0.9551 +- 0.0018   gap -0.0000
+       78: calibration 0.9597 +- 0.0053   others 0.9603 +- 0.0016   gap -0.0006
+       94: calibration 0.9663 +- 0.0049   others 0.9673 +- 0.0015   gap -0.0010
+      126: calibration 0.9708 +- 0.0045   others 0.9762 +- 0.0012   gap -0.0054
+
+  remedies for the graph on the CPU (ef picked; recall on the others)
+    as siann does (all 1,000)          ef   57: others 0.9569 +- 0.0017
+    half, checked on the other half    ef   62: others 0.9595 +- 0.0016
+    target + 0.005                     ef   62: others 0.9595 +- 0.0016
+    target + 0.01                      ef   70: others 0.9636 +- 0.0015
