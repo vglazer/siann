@@ -1,33 +1,33 @@
 music100: 1,000,000 x 100, ip, recall@10 targets 0.9, 0.95, 0.99; 9,000 test queries (calibration on 1,000 others); 3 timing rounds
 
-  target 0.9: siann's choice built in 8.8 s, kind 'ivf', nprobe 12
-    every path's index (kind=graph): built in 8.6 s
-    recall@10, 1,000 test queries: exact, cpu 1.000, exact, gpu 1.000, cpu-split 0.905, cpu-query 0.905, cpu-query-blas 0.905, cpu-list 0.905, gpu-query 0.904, gpu-list 0.904, cpu-graph 0.896, gpu-graph 0.899
+  target 0.9: siann's choice built in 25.8 s, kind 'ivf', nprobe 12
+    every path's index (kind=graph): built in 19.7 s
+    recall@10, 9,000 test queries: exact, cpu 1.000, exact, gpu 1.000, cpu-split 0.902, cpu-query 0.902, cpu-query-blas 0.902, cpu-list 0.902, gpu-query 0.901, gpu-list 0.901, cpu-graph 0.900, gpu-graph 0.904
      batch      siann chose  recall        q/s          best path        q/s  regret  lever
-         1        cpu-graph   0.902     40,404          cpu-graph     41,237    1.02  -   (fastest: cpu-graph 41,237, cpu-query-blas 24,845, cpu-query 22,748, cpu-split 22,430)
-        10        cpu-graph   0.902     94,711          cpu-graph     92,060    0.97  -   (fastest: cpu-graph 92,060, cpu-query 76,239, cpu-query-blas 31,725, cpu-split 31,710)
-       100        gpu-query   0.904    193,392          cpu-graph    219,861    1.14  index (2)   (fastest: cpu-graph 219,861, gpu-graph 193,986, gpu-query 192,239, cpu-query 170,473)
-     1,000        gpu-graph   0.893    529,299          gpu-graph    526,316    0.99  -   (fastest: gpu-graph 526,316, gpu-query 489,067, gpu-list 428,311, cpu-graph 264,284)
-     5,000        gpu-graph   0.893    786,359          gpu-graph    768,511    0.98  -   (fastest: gpu-graph 768,511, gpu-query 690,960, gpu-list 651,883, cpu-graph 345,150)
+         1        cpu-graph   0.901     40,404          cpu-graph     41,026    1.02  -   (fastest: cpu-graph 41,026, cpu-query-blas 24,565, cpu-split 22,620, cpu-query 22,161)
+        10        cpu-graph   0.901     83,189          cpu-graph     69,818    0.84  -   (fastest: cpu-graph 69,818, cpu-query 44,142, cpu-split 29,190, gpu-query 17,388)
+       100        cpu-graph   0.901    141,460          gpu-graph    152,333    1.08  -   (fastest: gpu-graph 152,333, cpu-graph 142,323, gpu-query 114,025, gpu-list 96,204)
+     1,000        gpu-graph   0.900    345,796          gpu-graph    311,343    0.90  -   (fastest: gpu-graph 311,343, gpu-query 233,030, gpu-list 217,437, cpu-graph 163,284)
+     5,000        gpu-graph   0.900    377,729          gpu-graph    381,577    1.01  -   (fastest: gpu-graph 381,577, gpu-query 348,736, gpu-list 317,829, cpu-graph 191,424)
 
-  target 0.95: siann's choice built in 9.0 s, kind 'ivf', nprobe 25
-    every path's index (kind=graph): built in 8.9 s
-    recall@10, 1,000 test queries: exact, cpu 1.000, exact, gpu 1.000, cpu-split 0.948, cpu-query 0.948, cpu-query-blas 0.948, cpu-list 0.948, gpu-query 0.948, gpu-list 0.948, cpu-graph 0.941, gpu-graph 0.950
+  target 0.95: siann's choice built in 28.9 s, kind 'ivf', nprobe 25
+    every path's index (kind=graph): built in 20.0 s
+    recall@10, 9,000 test queries: exact, cpu 1.000, exact, gpu 1.000, cpu-split 0.947, cpu-query 0.947, cpu-query-blas 0.947, cpu-list 0.947, gpu-query 0.946, gpu-list 0.946, cpu-graph 0.951, gpu-graph 0.954
      batch      siann chose  recall        q/s          best path        q/s  regret  lever
-         1        cpu-graph   0.938     27,618          cpu-graph     28,470    1.03  recall (1)   (fastest: cpu-graph 28,470, cpu-split 21,573, cpu-query-blas 21,239, cpu-query 19,608)
-        10        cpu-graph   0.938     78,252          cpu-graph     80,133    1.02  recall (1)   (fastest: cpu-graph 80,133, cpu-query 66,908, cpu-split 33,287, cpu-query-blas 29,151)
-       100        gpu-query   0.948    169,127          gpu-query    167,633    0.99  -   (fastest: gpu-query 167,633, cpu-graph 144,544, cpu-query 134,661, cpu-query-blas 123,673)
-     1,000        gpu-query   0.948    407,170          gpu-query    413,483    1.02  -   (fastest: gpu-query 413,483, gpu-graph 333,199, gpu-list 283,229, cpu-graph 174,475)
-     5,000        gpu-graph   0.938    513,710          gpu-query    571,195    1.11  recall (1)   (fastest: gpu-query 571,195, gpu-graph 454,606, gpu-list 393,625, cpu-graph 220,217)
+         1        cpu-graph   0.948     27,617          cpu-graph     25,751    0.93  -   (fastest: cpu-graph 25,751, cpu-split 21,918, cpu-query-blas 21,016, cpu-query 19,481)
+        10        cpu-graph   0.948     72,749          cpu-graph     56,738    0.78  -   (fastest: cpu-graph 56,738, cpu-query 36,866, cpu-split 28,612, gpu-graph 17,472)
+       100        cpu-graph   0.948     95,314          gpu-query    105,927    1.11  index (2)   (fastest: gpu-query 105,927, gpu-graph 96,942, cpu-graph 94,997, gpu-list 83,250)
+     1,000        gpu-query   0.946    214,399          gpu-graph    189,617    0.88  -   (fastest: gpu-graph 189,617, gpu-query 160,920, gpu-list 135,234, cpu-query 97,831)
+     5,000        gpu-graph   0.953    168,710          gpu-query    297,198    1.76  index (2)   (fastest: gpu-query 297,198, gpu-list 209,402, gpu-graph 184,917, cpu-graph 106,568)
 
-  target 0.99: siann's choice built in 10.7 s, kind 'ivf', nprobe 231
-    every path's index (kind=graph): built in 10.7 s
-    recall@10, 1,000 test queries: exact, cpu 1.000, exact, gpu 1.000, cpu-split 0.992, cpu-query 0.992, cpu-query-blas 0.992, cpu-list 0.992, gpu-query 0.992, gpu-list 0.992, cpu-graph 0.990, gpu-graph 0.990
+  target 0.99: siann's choice built in 30.1 s, kind 'ivf', nprobe 231
+    every path's index (kind=graph): built in 24.6 s
+    recall@10, 9,000 test queries: exact, cpu 1.000, exact, gpu 1.000, cpu-split 0.992, cpu-query 0.992, cpu-query-blas 0.992, cpu-list 0.992, gpu-query 0.991, gpu-list 0.991, cpu-graph 0.992, gpu-graph 0.991
      batch      siann chose  recall        q/s          best path        q/s  regret  lever
-         1        cpu-graph   0.992      7,782          cpu-split     10,503    1.35  index (2)   (fastest: cpu-split 10,503, cpu-graph 7,663, cpu-query-blas 6,346, cpu-query 6,263)
-        10        gpu-graph   0.992     19,779          cpu-graph     33,694    1.70  device or scan (3)   (fastest: cpu-graph 33,694, gpu-graph 19,680, cpu-query 12,224, gpu-list 9,432)
-       100        gpu-graph   0.992     92,237          gpu-graph     89,572    0.97  -   (fastest: gpu-graph 89,572, gpu-query 49,040, cpu-graph 44,366, gpu-list 40,319)
-     1,000        gpu-graph   0.992    138,728          gpu-graph    129,249    0.93  -   (fastest: gpu-graph 129,249, gpu-query 92,414, gpu-list 89,946, cpu-graph 50,416)
-     5,000        gpu-graph   0.992    147,640          gpu-graph    147,548    1.00  -   (fastest: gpu-graph 147,548, gpu-list 114,127, gpu-query 112,525, cpu-graph 55,001)
+         1        cpu-split   0.992      9,537          cpu-split      8,655    0.91  -   (fastest: cpu-split 8,655, cpu-graph 7,042, cpu-query-blas 5,086, cpu-query 4,533)
+        10        gpu-graph   0.991     15,424          cpu-graph     14,993    0.97  -   (fastest: cpu-graph 14,993, gpu-graph 14,342, cpu-query 8,708, cpu-split 7,669)
+       100        gpu-graph   0.991     48,710          gpu-graph     47,816    0.98  -   (fastest: gpu-graph 47,816, gpu-query 24,745, cpu-graph 21,190, gpu-list 16,998)
+     1,000        gpu-graph   0.991     28,860          gpu-query     65,991    2.29  index (2)   (fastest: gpu-query 65,991, gpu-list 44,641, gpu-graph 33,132, cpu-graph 23,086)
+     5,000        gpu-graph   0.991     63,331          gpu-graph     54,440    0.86  -   (fastest: gpu-graph 54,440, gpu-query 35,673, gpu-list 33,961, cpu-list 13,684)
 
-  music100: 9 of 15 choices within 1.10x of the best and on target; misses: target 0.9, batch 100: index (2), gpu-query, regret 1.14; target 0.95, batch 1: recall (1), cpu-graph, regret 1.03; target 0.95, batch 10: recall (1), cpu-graph, regret 1.02; target 0.95, batch 5,000: recall (1), gpu-graph, regret 1.11; target 0.99, batch 1: index (2), cpu-graph, regret 1.35; target 0.99, batch 10: device or scan (3), gpu-graph, regret 1.70
+  music100: 12 of 15 choices within 1.10x of the best and on target; misses: target 0.95, batch 100: index (2), cpu-graph, regret 1.11; target 0.95, batch 5,000: index (2), gpu-graph, regret 1.76; target 0.99, batch 1,000: index (2), gpu-graph, regret 2.29

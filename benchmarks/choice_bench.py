@@ -10,8 +10,10 @@ scores, the ranking, the ids): exact search on the CPU and on the GPU; every IVF
 over 4 threads; "cpu-query"; "cpu-query-blas"; "cpu-list"; "gpu-query"; "gpu-list") at the IVF's calibrated
 nprobe; the graph on the CPU and on the GPU (where mlxvs is installed and the metric is L2, cosine or inner
 product) at its calibrated search widths. They come from one index built with kind="graph" (an IVF with a graph
-beside it, each calibrated to the target on its own; kind="ivf" where no graph can be built); siann's choice is
-a separate kind="auto" index from the same vectors, as a user would build it. Both calibrate on the first CAL
+beside it, each calibrated to the target on its own): siann's own kind="auto" index, as a user would build it,
+which keeps its IVF and graph beside exact search; only where siann kept exact search alone are the alternatives
+built apart (kind="graph", or kind="ivf" where no graph can be built). The same index for both keeps two builds'
+different graphs (each build's graph differs, and with it its calibrated width) out of the comparison. Both calibrate on the first CAL
 queries; the others are the test queries.
 
 Recall: each path's recall@10 on all the test queries (about 9,000: a standard error near 0.002) against exact
@@ -47,7 +49,7 @@ METRIC = {"sift": "l2", "glove": "cosine", "music100": "ip", "dbpedia": "cosine"
 K = 10
 CAL = 1000
 TOLERANCE = 0.01
-RECALL_ON = "all test queries"      # in the checkpoint: results measured with recall on 1,000 queries are not reused
+RECALL_ON = "all test queries, one index"   # in the checkpoint: results measured otherwise are not reused
 MARGIN = 1.10
 ROUNDS = 3
 SLOW = 5.0
@@ -89,7 +91,7 @@ def timed_rounds(calls: dict, q) -> dict:
 def forced(index: siann.Index, path: str):
     """A view of ``index`` that sends every search down ``path``."""
     view = index._snapshot()
-    view._ivf_path = lambda batch, device, path=path: path
+    view._ivf_path = lambda batch, device, approximate=False, path=path: path
     return view
 
 
@@ -114,13 +116,18 @@ def run_target(xb, metric, cal, test, truth, exact, target, batches, say) -> lis
     say(f"\n  target {target}: siann's choice built in {time.perf_counter() - t:.1f} s, kind {auto.kind!r}"
           + (f", nprobe {auto.nprobe}" if auto.nprobe else ""))
     t = time.perf_counter()
-    try:
-        every = siann.Index(xb, metric, recall=target, calibration_queries=cal, kind="graph")
-        has_graph = every._ivf is not None and every._ivf.graph is not None
-    except (RuntimeError, ValueError) as e:              # no graph for this metric or target, or no mlxvs
-        say(f"    no graph index ({str(e)[:120]})")
-        every, has_graph = siann.Index(xb, metric, recall=target, calibration_queries=cal, kind="ivf"), False
-    say(f"    every path's index (kind={'graph' if has_graph else 'ivf'}): built in {time.perf_counter() - t:.1f} s")
+    if auto._ivf is not None:                            # its own IVF and graph: the same lists, graph and widths
+        every = auto
+        has_graph = every._ivf.graph is not None
+        say(f"    every path from siann's own index (an IVF{' and a graph' if has_graph else ''})")
+    else:                                                # exact search kept: the alternatives built apart
+        try:
+            every = siann.Index(xb, metric, recall=target, calibration_queries=cal, kind="graph")
+            has_graph = every._ivf is not None and every._ivf.graph is not None
+        except (RuntimeError, ValueError) as e:          # no graph for this metric or target, or no mlxvs
+            say(f"    no graph index ({str(e)[:120]})")
+            every, has_graph = siann.Index(xb, metric, recall=target, calibration_queries=cal, kind="ivf"), False
+        say(f"    every path's index (kind={'graph' if has_graph else 'ivf'}): built in {time.perf_counter() - t:.1f} s")
 
     paths = {"exact, cpu": lambda q: exact.search(q, K, device="cpu"),
              "exact, gpu": lambda q: exact.search(q, K, device="gpu")}

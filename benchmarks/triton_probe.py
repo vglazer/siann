@@ -14,6 +14,12 @@ each keeps between calls (FAISS's scratch memory, cuVS's index), and the host pr
     TRITON_INTERPRET=1 python triton_probe.py --check          # anywhere, on the CPU
     python triton_probe.py --bench                              # on a CUDA GPU (Colab, Kaggle)
 """
+import os
+
+# FAISS's OpenMP threads, once FAISS has run, spin while idle and slowed siann's small batches on 2-4 core
+# machines (Colab, Kaggle): idle threads sleep instead. FAISS is also first called after siann is timed.
+os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+
 import argparse
 import gc
 import threading
@@ -413,16 +419,6 @@ def bench(n: int, d: int, batches, config_2d: dict | None = None, full: bool = F
         contenders["cuVS brute force"] = cuvs_search
     except Exception as e:  # noqa: BLE001 (cuVS missing: skip it)
         print(f"  (cuVS skipped: {type(e).__name__}: {e})")
-    if "FAISS GPU brute force" in contenders:
-        _, fi = contenders["FAISS GPU brute force"](q[:100])
-        fi = torch.as_tensor(fi).cpu().numpy()
-        mine = [("in-kernel merge", lambda: l1_knn_merge(xt, q[:100], k))]
-        if not lean:
-            mine.append(("2D tiles", lambda: l1_knn(x, q[:100], k, best_cfg, xt=xt)))
-        for name, run in mine:
-            ours = run()
-            same = (np.sort(fi, 1) == np.sort(ours.cpu().numpy(), 1)).mean()
-            print(f"  {name}: the same neighbors as FAISS's on 100 queries: {same:.4f}")
     peaks = Peaks()
 
     def settle():
@@ -469,6 +465,16 @@ def bench(n: int, d: int, batches, config_2d: dict | None = None, full: bool = F
         after = peaks.device_used()
         kept = None if before is None else after - before
         print(f"  {'      kept on the device':32s}{_mb(kept):>20s} MB", flush=True)
+    if "FAISS GPU brute force" in contenders:
+        _, fi = contenders["FAISS GPU brute force"](q[:100])
+        fi = torch.as_tensor(fi).cpu().numpy()
+        mine = [("in-kernel merge", lambda: l1_knn_merge(xt, q[:100], k))]
+        if not lean:
+            mine.append(("2D tiles", lambda: l1_knn(x, q[:100], k, best_cfg, xt=xt)))
+        for name, run in mine:
+            ours = run()
+            same = (np.sort(fi, 1) == np.sort(ours.cpu().numpy(), 1)).mean()
+            print(f"  {name}: the same neighbors as FAISS's on 100 queries: {same:.4f}")
 
 
 def main() -> None:

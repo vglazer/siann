@@ -60,3 +60,23 @@ python triton_probe.py --bench --lean --budget 269
         memory                               0 / 0 / 0           1 / 0 / 0
   [2/3] FAISS GPU brute force                   10,366              11,568   (0.6 min so far)
   [3/3] cuVS brute force                        27,804              48,489   (0.6 min so far)
+
+The in-kernel merge, second version (candidates no nearer than the K-th dropped first, then as many passes as
+the busiest query needs; eight programs per streaming multiprocessor). Kaggle, Tesla T4, two sessions.
+triton_probe.ipynb, Run All (no FAISS installed):
+                                             batch 100         batch 1,000
+  [1/4] siann, in-kernel merge                  11,004              16,940
+        memory                               1 / 0 / 0           1 / 0 / 0
+  [2/4] siann, merge, 64 x 128, 8w              10,760              16,802
+        memory                              1 / 20 / 0          2 / 20 / 0
+  [3/4] siann, 2D tiles, tuned                   7,789               9,222
+        memory                             24 / 24 / 0       241 / 242 / 0
+  [4/4] cuVS brute force                        23,081              44,225
+triton_faiss.ipynb, Run All (FAISS's GPU package installed):
+  in-kernel merge: the same neighbors as FAISS's on 100 queries: 1.0000
+                                             batch 100         batch 1,000
+  [1/3] siann, in-kernel merge                   5,192              15,471
+  [2/3] FAISS GPU brute force                   10,339              13,262
+  [3/3] cuVS brute force                        30,155              46,348
+With FAISS loaded, siann's batch-100 rate halves (also the 2D kernel on Colab: 8,909 without, 5,225 with) and
+its batch-1,000 rate barely moves; FAISS is called once, for the neighbor check, before siann is timed.

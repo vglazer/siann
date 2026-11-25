@@ -7,71 +7,72 @@
    100,
    1000,
    5000
-  ]
+  ],
+  "all test queries"
  ],
  "header": "glove: 1,183,514 x 100, cosine, recall@10 targets 0.9, 0.95, 0.99; 9,000 test queries (calibration on 1,000 others); 3 timing rounds",
  "0.9": {
   "lines": [
-   "\n  target 0.9: siann's choice built in 13.2 s, kind 'ivf', nprobe 152",
+   "\n  target 0.9: siann's choice built in 16.1 s, kind 'ivf', nprobe 152",
    "    every path's index (kind=graph): built in 13.5 s",
-   "    recall@10, 1,000 test queries: exact, cpu 1.000, exact, gpu 1.000, cpu-split 0.891, cpu-query 0.891, cpu-query-blas 0.891, cpu-list 0.891, gpu-query 0.891, gpu-list 0.891, cpu-graph 0.882, gpu-graph 0.889",
+   "    recall@10, 9,000 test queries: exact, cpu 1.000, exact, gpu 1.000, cpu-split 0.898, cpu-query 0.898, cpu-query-blas 0.898, cpu-list 0.898, gpu-query 0.898, gpu-list 0.898, cpu-graph 0.897, gpu-graph 0.901",
    "     batch      siann chose  recall        q/s          best path        q/s  regret  lever",
-   "         1        cpu-graph   0.891      3,151          cpu-split      8,325    2.64  index (2)   (fastest: cpu-split 8,325, cpu-query-blas 3,909, cpu-query 3,790, cpu-list 2,706)",
-   "        10        gpu-query   0.891      4,771          cpu-query      5,977    1.25  device or scan (3)   (fastest: cpu-query 5,977, gpu-list 5,805, cpu-query-blas 5,321, gpu-query 4,792)",
-   "       100        gpu-query   0.891     32,430          gpu-query     30,954    0.95  -   (fastest: gpu-query 30,954, gpu-list 25,791, exact, gpu 16,403, cpu-list 13,648)",
-   "     1,000         gpu-list   0.891     80,966           gpu-list     81,024    1.00  -   (fastest: gpu-list 81,024, gpu-query 46,122, cpu-list 22,143, exact, gpu 19,838)",
-   "     5,000         gpu-list   0.891     95,921           gpu-list     96,516    1.01  -   (fastest: gpu-list 96,516, gpu-query 50,277, cpu-list 22,823, exact, gpu 20,620)"
+   "         1        cpu-split   0.898      8,223          cpu-split      8,533    1.04  -   (fastest: cpu-split 8,533, cpu-query-blas 3,885, cpu-query 3,766, cpu-graph 3,049)",
+   "        10        gpu-query   0.898      4,778          gpu-graph     14,333    3.00  index (2)   (fastest: gpu-graph 14,333, cpu-graph 12,747, cpu-query 6,012, gpu-list 5,808)",
+   "       100        gpu-query   0.898     32,913          gpu-graph     43,303    1.32  index (2)   (fastest: gpu-graph 43,303, gpu-query 31,317, gpu-list 25,863, cpu-graph 19,007)",
+   "     1,000         gpu-list   0.898     82,216           gpu-list     80,918    0.98  -   (fastest: gpu-list 80,918, gpu-graph 53,731, gpu-query 46,256, cpu-graph 22,077)",
+   "     5,000         gpu-list   0.898     97,661           gpu-list     96,498    0.99  -   (fastest: gpu-list 96,498, gpu-graph 55,068, gpu-query 50,292, cpu-graph 23,257)"
   ],
   "rows": [
    [
     0.9,
     1,
-    "cpu-graph",
-    "index (2)",
-    2.642039916529839
+    "cpu-split",
+    "-",
+    1.0376873945122007
    ],
    [
     0.9,
     10,
     "gpu-query",
-    "device or scan (3)",
-    1.2528611332948443
+    "index (2)",
+    2.9998473080180417
    ],
    [
     0.9,
     100,
     "gpu-query",
-    "-",
-    0.9544789072698909
+    "index (2)",
+    1.3156573748389975
    ],
    [
     0.9,
     1000,
     "gpu-list",
     "-",
-    1.0007139859130645
+    0.9842109520710222
    ],
    [
     0.9,
     5000,
     "gpu-list",
     "-",
-    1.0062051931729
+    0.9880913352630614
    ]
   ]
  },
  "0.95": {
   "lines": [
-   "\n  target 0.95: siann's choice built in 15.8 s, kind 'ivf', nprobe 364",
-   "    no graph index (kind='graph', but the graph's widest search reached recall 0.927, below the target 0.95)",
-   "    every path's index (kind=ivf): built in 18.7 s",
-   "    recall@10, 1,000 test queries: exact, cpu 1.000, exact, gpu 1.000, cpu-split 0.944, cpu-query 0.944, cpu-query-blas 0.944, cpu-list 0.944, gpu-query 0.943, gpu-list 0.943",
+   "\n  target 0.95: siann's choice built in 18.1 s, kind 'ivf', nprobe 364",
+   "    no graph index (kind='graph', but the graph's widest search reached recall 0.930, below the target 0.95)",
+   "    every path's index (kind=ivf): built in 18.1 s",
+   "    recall@10, 9,000 test queries: exact, cpu 1.000, exact, gpu 1.000, cpu-split 0.947, cpu-query 0.947, cpu-query-blas 0.947, cpu-list 0.947, gpu-query 0.947, gpu-list 0.947",
    "     batch      siann chose  recall        q/s          best path        q/s  regret  lever",
-   "         1        cpu-split   0.944      3,217          cpu-split      3,179    0.99  -   (fastest: cpu-split 3,179, cpu-list 1,679, cpu-query 1,626, cpu-query-blas 1,587)",
-   "        10         gpu-list   0.943      3,810           gpu-list      3,790    0.99  -   (fastest: gpu-list 3,790, exact, gpu 3,190, cpu-query 2,996, cpu-query-blas 2,722)",
-   "       100         gpu-list   0.943     20,791           gpu-list     20,741    1.00  -   (fastest: gpu-list 20,741, exact, gpu 16,513, gpu-query 16,454, cpu-list 7,931)",
-   "     1,000         gpu-list   0.943     42,785           gpu-list     43,733    1.02  -   (fastest: gpu-list 43,733, gpu-query 21,851, exact, gpu 20,022, cpu-list 9,932)",
-   "     5,000         gpu-list   0.943     47,636           gpu-list     47,169    0.99  -   (fastest: gpu-list 47,169, gpu-query 23,422, exact, gpu 20,511, cpu-list 9,781)"
+   "         1        cpu-split   0.947      3,212          cpu-split      3,274    1.02  -   (fastest: cpu-split 3,274, cpu-list 1,713, cpu-query 1,628, cpu-query-blas 1,627)",
+   "        10         gpu-list   0.947      3,781           gpu-list      3,767    1.00  -   (fastest: gpu-list 3,767, exact, gpu 3,207, cpu-query 2,969, cpu-query-blas 2,801)",
+   "       100         gpu-list   0.947     20,871           gpu-list     20,806    1.00  -   (fastest: gpu-list 20,806, exact, gpu 16,501, gpu-query 16,356, cpu-list 7,987)",
+   "     1,000         gpu-list   0.947     43,897           gpu-list     43,696    1.00  -   (fastest: gpu-list 43,696, gpu-query 22,043, exact, gpu 20,110, cpu-list 10,094)",
+   "     5,000         gpu-list   0.947     30,879           gpu-list     35,061    1.14  device or scan (3)   (fastest: gpu-list 35,061, exact, gpu 20,564, gpu-query 15,723, cpu-list 9,889)"
   ],
   "rows": [
    [
@@ -79,86 +80,86 @@
     1,
     "cpu-split",
     "-",
-    0.9880778782617191
+    1.019442322070468
    ],
    [
     0.95,
     10,
     "gpu-list",
     "-",
-    0.9948202337843591
+    0.9963897283348234
    ],
    [
     0.95,
     100,
     "gpu-list",
     "-",
-    0.9975716666318971
+    0.9968965069345685
    ],
    [
     0.95,
     1000,
     "gpu-list",
     "-",
-    1.022171862921218
+    0.9954364893782086
    ],
    [
     0.95,
     5000,
     "gpu-list",
-    "-",
-    0.9901861772860213
+    "device or scan (3)",
+    1.135432460062057
    ]
   ]
  },
  "0.99": {
   "lines": [
-   "\n  target 0.99: siann's choice built in 4.3 s, kind 'exact'",
-   "    no graph index (kind='graph', but the graph's widest search reached recall 0.931, below the target 0.99)",
-   "    every path's index (kind=ivf): built in 28.2 s",
-   "    recall@10, 1,000 test queries: exact, cpu 1.000, exact, gpu 1.000, cpu-split 0.989, cpu-query 0.989, cpu-query-blas 0.989, cpu-list 0.989, gpu-query 0.988, gpu-list 0.988",
+   "\n  target 0.99: siann's choice built in 59.7 s, kind 'ivf', nprobe 1235",
+   "    no graph index (kind='graph', but the graph's widest search reached recall 0.930, below the target 0.99)",
+   "    every path's index (kind=ivf): built in 45.1 s",
+   "    recall@10, 9,000 test queries: exact, cpu 1.000, exact, gpu 1.000, cpu-split 0.990, cpu-query 0.990, cpu-query-blas 0.990, cpu-list 0.990, gpu-query 0.989, gpu-list 0.989",
    "     batch      siann chose  recall        q/s          best path        q/s  regret  lever",
-   "         1       exact, gpu   1.000        441          cpu-split        891    2.02  index (2)   (fastest: cpu-split 891, cpu-list 635, cpu-query 442, cpu-query-blas 439)",
-   "        10       exact, gpu   1.000      3,181         exact, gpu      3,186    1.00  -   (fastest: exact, gpu 3,186, gpu-list 2,307, cpu-list 1,538, cpu-query 1,019)",
-   "       100       exact, gpu   1.000     16,284         exact, gpu     16,304    1.00  -   (fastest: exact, gpu 16,304, gpu-list 10,615, gpu-query 5,723, cpu-list 2,961)",
-   "     1,000       exact, gpu   1.000     20,132         exact, gpu     20,176    1.00  -   (fastest: exact, gpu 20,176, gpu-list 14,900, gpu-query 6,993, cpu-list 3,025)",
-   "     5,000       exact, gpu   1.000     20,543         exact, gpu     20,571    1.00  -   (fastest: exact, gpu 20,571, gpu-list 15,382, gpu-query 7,087, cpu-list 2,888)"
+   "         1        cpu-split   0.990        710          cpu-split        349    0.49  -   (fastest: cpu-split 349, cpu-list 301, cpu-query 217, cpu-query-blas 212)",
+   "        10        gpu-exact   1.000      1,551         exact, gpu      1,369    0.88  -   (fastest: exact, gpu 1,369, gpu-list 1,167, cpu-list 528, exact, cpu 486)",
+   "       100        gpu-exact   1.000      6,030         exact, gpu      6,642    1.10  device or scan (3)   (fastest: exact, gpu 6,642, gpu-list 3,533, gpu-query 3,365, exact, cpu 1,470)",
+   "     1,000        gpu-exact   1.000      5,658           gpu-list      5,328    0.94  -   (fastest: gpu-list 5,328, exact, gpu 5,278, gpu-query 2,023, exact, cpu 1,799)",
+   "     5,000        gpu-exact   1.000      6,057         exact, gpu      6,357    1.05  -   (fastest: exact, gpu 6,357, gpu-list 5,729, gpu-query 2,124, exact, cpu 1,891)"
   ],
   "rows": [
    [
     0.99,
     1,
-    "exact, gpu",
-    "index (2)",
-    2.018803949798944
+    "cpu-split",
+    "-",
+    0.49103911622739477
    ],
    [
     0.99,
     10,
-    "exact, gpu",
+    "gpu-exact",
     "-",
-    1.0014733964797753
+    0.8823884178297262
    ],
    [
     0.99,
     100,
-    "exact, gpu",
-    "-",
-    1.0012296445491553
+    "gpu-exact",
+    "device or scan (3)",
+    1.1014679698222793
    ],
    [
     0.99,
     1000,
-    "exact, gpu",
+    "gpu-exact",
     "-",
-    1.0021983898508784
+    0.9417147525052847
    ],
    [
     0.99,
     5000,
-    "exact, gpu",
+    "gpu-exact",
     "-",
-    1.0013794868823878
+    1.0495900868870751
    ]
   ]
  }
