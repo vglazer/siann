@@ -198,6 +198,7 @@ def calibrate(search, scores, truth_kth: np.ndarray, sample_ids: np.ndarray, tar
 ROUTE_BATCHES = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096)
 NEVER = 10 ** 9          # a threshold no batch reaches
 CPU_GIVE_UP = 0.3        # seconds: a CPU call this slow at one batch size is not timed at larger ones
+DIP = 0.8                # a rate below this share of what its neighbors imply is timed again
 
 
 DEFAULT_ROUTES = {"cpu_below": 2, "gpu_list_from": 1000, "cpu_list_from": NEVER, "cpu_blas_from": NEVER,
@@ -221,7 +222,7 @@ def crossover_with_margin(a: dict[int, float], b: dict[int, float], default: int
 
 
 def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CALIBRATION_K,
-                   rounds: int = 1) -> tuple[dict, dict]:
+                   rounds: int = 1, exact: dict | None = None) -> tuple[dict, dict]:
     """Where this IVF's searches should run, measured: each path timed by itself (the median call after a
     warm-up) at batch sizes doubling from 1 to 4,096 queries of ``q``. The CPU is no
     longer timed once the GPU has beaten it at two sizes in a row, or once one of its calls takes 0.3 s.
@@ -234,7 +235,10 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
     and its CPU search with the CPU's (``cpu_ivf_from``: from which the CPU's IVF beats it). Single queries are
     decided on their own (``single``: the path measured fastest at one query, where it is at least 10% faster
     than the one the thresholds give it): the crossovers are one threshold each, and a path that wins at one
-    query, as the IVF split over 4 threads often does, can lose at every batch from 2 up."""
+    query, as the IVF split over 4 threads often does, can lose at every batch from 2 up. With ``exact``
+    ({"cpu-exact": search, "gpu-exact": search}, each taking a batch of queries), exact search is timed beside
+    them, and routed to (``exact_from``) from the batch size where it beats the approximate path routed there
+    at every larger size measured: it meets any recall target."""
 
     def time_paths(b, paths):
         """Each path's rate at batch b and its slowest call. Each path is timed by itself, its calls back to
@@ -244,11 +248,14 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
         qq = q[:b]
         rates, slowest = {}, {}
         for path in paths:
-            ivf.search(qq, k, nprobe, path)
+            run = exact[path] if exact and path in exact else (lambda x, path=path: ivf.search(x, k, nprobe, path))
+            if path.startswith("gpu"):
+                clear_gpu_cache(ivf.gpu_backend)   # each GPU path from the same state: another's buffers slow it
+            run(qq)
             times = []
             while len(times) < (5 if b < 64 else 3) or (sum(times) < 0.02 and len(times) < 25):
                 start = time.perf_counter()
-                ivf.search(qq, k, nprobe, path)
+                run(qq)
                 times.append(time.perf_counter() - start)
             rates[path], slowest[path] = b / sorted(times)[len(times) // 2], max(times)
         return rates, slowest
@@ -257,20 +264,28 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
     gpu_paths = ("gpu-query", "gpu-list") + (("gpu-graph",) if gpu and ivf.graph is not None and ivf.graph.on_gpu
                                              else ())
     cpu_graph = ("cpu-graph",) if ivf.graph is not None else ()
+    gpu_exact = ("gpu-exact",) if exact and gpu and "gpu-exact" in exact else ()
     if gpu:
         # a warm-up pass over every batch size: a fresh index's first GPU calls at a size run up to 30% slower
         # than later ones even after a call at that size
         for b in batches:
             for path in gpu_paths:
                 ivf.search(q[:b], k, nprobe, path)
+            if gpu_exact:
+                exact["gpu-exact"](q[:b])
     rates = {}
     blas = ("cpu-query-blas",) if ivf.metric in ("l2", "ip") else ()
     for _ in range(rounds):
-        cpu_on, gpu_wins = True, 0
+        cpu_on, gpu_wins, cpu_exact = True, 0, ("cpu-exact",) if exact and "cpu-exact" in exact else ()
+        exact_gpu_wins = 0
         for b in batches:
             paths = ((("cpu-split",) if b == 1 else ("cpu-query",) + blas + ("cpu-list",)) + cpu_graph) if cpu_on else ()
             # the GPU's paths first: after the CPU's, a GPU left idle runs its next calls slower
-            measured, slowest = time_paths(b, (gpu_paths if gpu else ()) + paths)
+            measured, slowest = time_paths(b, (gpu_paths if gpu else ()) + gpu_exact + paths + cpu_exact)
+            if cpu_exact:                     # as the CPU's IVF: no longer timed once the GPU has clearly won
+                exact_gpu_wins = exact_gpu_wins + 1 if gpu_exact and measured["gpu-exact"] > measured["cpu-exact"] else 0
+                if slowest["cpu-exact"] > CPU_GIVE_UP or exact_gpu_wins >= 2:
+                    cpu_exact = ()
             for path, r in measured.items():                      # over rounds, each path's best rate
                 rates[(path, b)] = max(r, rates.get((path, b), 0.0))
             if cpu_on:
@@ -279,7 +294,17 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
                     gpu_best = max(measured[p] for p in gpu_paths)
                     gpu_wins = gpu_wins + 1 if gpu_best > cpu_best else 0
                 cpu_on = gpu_wins < 2 and max(slowest[p] for p in paths) < CPU_GIVE_UP
-    cpu_batches = sorted({b for (p, b) in rates if p.startswith("cpu")})
+    # a second look at dips: a rate well below the one its neighbors (half and double the batch) imply is
+    # retimed, the better reading kept (a transient slowdown can only understate a path); GPU paths first
+    dips = []
+    for (path, b), r in rates.items():
+        lo, hi = rates.get((path, b // 2)), rates.get((path, b * 2))
+        if lo and hi and r < DIP * (lo * hi) ** 0.5:
+            dips.append((not path.startswith("gpu"), b, path))
+    for _, b, path in sorted(dips):
+        again, _ = time_paths(b, (path,))
+        rates[(path, b)] = max(rates[(path, b)], again[path])
+    cpu_batches = sorted({b for (p, b) in rates if p.startswith("cpu") and p != "cpu-exact"})   # the CPU's IVF
     many = [b for b in cpu_batches if b > 1]
     cq = {b: rates[("cpu-query", b)] for b in many}
     cl = {b: rates[("cpu-list", b)] for b in many}
@@ -309,26 +334,66 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
         routes["cpu_below"] = crossover_with_margin(cpu, best_gpu, DEFAULT_ROUTES["cpu_below"])
     else:
         routes["cpu_below"], routes["gpu_list_from"], routes["graph_from"] = NEVER, NEVER, NEVER
+    graph_gpu, graph_cpu = ivf.graph is not None and "gpu-graph" in gpu_paths, ivf.graph is not None
+    routes["exact_from"] = NEVER
+    if exact:
+        r = {**DEFAULT_ROUTES, **routes}
+        ex, ap = {}, {}
+        for b in batches:
+            e = [rates[(p, b)] for p in ("gpu-exact", "cpu-exact") if (p, b) in rates]
+            a = rates.get((routed_path(r, b, graph_gpu, graph_cpu), b))
+            if e and a:
+                ex[b], ap[b] = max(e), a
+        if ex:
+            routes["exact_from"] = crossover_with_margin(ap, ex, NEVER)
     one = {p: r for (p, b), r in rates.items() if b == 1}
-    given = single_path({**DEFAULT_ROUTES, **routes}, ivf.graph is not None and gpu, ivf.graph is not None)
+    given = routed_path({**DEFAULT_ROUTES, **routes}, 1, graph_gpu, graph_cpu)
     best = max(one, key=one.get) if one else None
     if best and given in one and best != given and one[best] >= MARGIN * one[given]:
         routes["single"] = best
     return routes, rates
 
 
+def routed_path(r: dict, b: int, graph_gpu: bool, graph_cpu: bool) -> str:
+    """The path the thresholds give a batch of ``b`` (no device given; the single-query route aside), as
+    Index._ivf_path takes it: exact search from ``exact_from``, else by device, graph and scan."""
+    if b >= r.get("exact_from", NEVER):
+        return "gpu-exact" if b >= r["cpu_below"] else "cpu-exact"
+    if b >= r["cpu_below"]:
+        if graph_gpu and b >= r["graph_from"]:
+            return "gpu-graph"
+        return "gpu-list" if b >= r["gpu_list_from"] else "gpu-query"
+    if graph_cpu and b < r["cpu_ivf_from"]:
+        return "cpu-graph"
+    if b == 1:
+        return "cpu-split"
+    if b >= r["cpu_list_from"]:
+        return "cpu-list"
+    return "cpu-query-blas" if b >= r["cpu_blas_from"] else "cpu-query"
+
+
 def single_path(r: dict, graph_gpu: bool, graph_cpu: bool) -> str:
     """The path the thresholds alone give a single query (no device given)."""
-    if 1 >= r["cpu_below"]:
-        if graph_gpu and 1 >= r["graph_from"]:
-            return "gpu-graph"
-        return "gpu-list" if 1 >= r["gpu_list_from"] else "gpu-query"
-    return "cpu-graph" if graph_cpu and 1 < r["cpu_ivf_from"] else "cpu-split"
+    return routed_path(r, 1, graph_gpu, graph_cpu)
 
 
 SINGLE_WORDS = {"cpu-split": "on the CPU, split over 4 threads", "cpu-graph": "on the CPU, through the graph",
+                "cpu-exact": "on the CPU, by exact search", "gpu-exact": "on the GPU, by exact search",
                 "gpu-query": "on the GPU, query-major", "gpu-list": "on the GPU, list-major",
                 "gpu-graph": "on the GPU, through the graph"}
+
+
+def clear_gpu_cache(backend: str | None) -> None:
+    """Empties the GPU backend's buffer cache. Timing a GPU path just after another left the cache full of
+    other sizes ran up to 2x slower at some batch sizes (exact search after the IVF's scans, on GloVe-100)."""
+    import contextlib
+    with contextlib.suppress(Exception):                # no GPU backend loaded: nothing to clear
+        if backend == "torch":
+            import torch
+            torch.mps.empty_cache()
+        else:
+            import mlx.core as mx
+            mx.clear_cache()
 
 
 def describe_routes(routes: dict, gpu: bool) -> str:
@@ -344,6 +409,10 @@ def describe_routes(routes: dict, gpu: bool) -> str:
     cpu_list = f" ({'; '.join(notes)})" if notes else ""
     single = "through the graph" if ci > 1 else "split over 4 threads"
     measured = routes.get("single")
+    ef = routes.get("exact_from", NEVER)
+    if ef < NEVER:                                      # exact search from some batch size on: said last
+        rest = describe_routes({k: v for k, v in routes.items() if k != "exact_from"}, gpu)
+        return f"{rest}; exact search from {ef:,} queries (faster there, recall 1.0)"
     if measured:                                        # decided on its own: said last, as the exception
         rest = describe_routes({k: v for k, v in routes.items() if k != "single"}, gpu)
         for said in (f"single queries on the CPU, {single}; ", f"; single queries {single}"):

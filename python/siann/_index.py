@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ._ivf import DEFAULT_ROUTES
+from ._ivf import DEFAULT_ROUTES, NEVER
 
 METRICS = ("l2", "l1", "linf", "cosine", "ip")
 DISTANCES = ("l2", "l1", "linf")          # smaller is nearer; cosine and ip are similarities
@@ -493,10 +493,6 @@ class Index:
         lines.append(f"calibrated: nprobe {nprobe} reaches recall@{CALIBRATION_K} {reached:.3f} (target {recall}) "
                      f"on {source}")
         sample = f"{len(q):,} calibration queries on the {dev.upper()}"
-        if kind == "auto" and ivf_seconds >= exact_seconds:
-            lines.append(f"kept exact search: the IVF took {ivf_seconds * 1e3:.1f} ms for {sample}, exact search "
-                         f"{exact_seconds * 1e3:.1f} ms, with recall 1.0")
-            return lines
         lines.append(f"IVF chosen: {ivf_seconds * 1e3:.1f} ms for {sample}, against {exact_seconds * 1e3:.1f} ms "
                      "for exact search" + (f" (kind={kind!r} given)" if kind in ("ivf", "graph") else ""))
         self._ivf, self._nprobe = ivf, nprobe
@@ -505,6 +501,13 @@ class Index:
         self._clustered = (len(self._x), float(sizes.max() / sizes.mean()))
         lines += self._build_graph(kind, k1, dev)
         lines.append(self._route())
+        r = self._routes
+        if kind == "auto" and r.get("exact_from", NEVER) <= 1 and str(r.get("single", "-exact")).endswith("exact"):
+            had_graph = self._ivf.graph is not None
+            self._ivf = self._nprobe = None                      # exact search wins at every batch size measured
+            self._routes, self._clustered = {}, (None, None)
+            lines.append("kept exact search: faster than the IVF" + (" and the graph" if had_graph else "")
+                         + " at every batch size measured, with recall 1.0")
         return lines
 
     def _graph_line(self, g, reached_gpu, reached_cpu: float, built_by: str | None = None) -> str:
@@ -635,11 +638,18 @@ class Index:
         t = time.perf_counter()
         # on PyTorch, two rounds, each path's best rate kept: its GPU was measured slow in the first round of some
         # builds, and a transient slowdown can only understate a path
+        exact = None
+        if self._kind_arg == "auto":                        # exact search as one more route, per batch size
+            from ._ivf import CALIBRATION_K
+            exact = {"cpu-exact": lambda qq: self._search_cpu(qq, CALIBRATION_K)}
+            if on_gpu and not self._too_big:
+                exact["gpu-exact"] = lambda qq: self._search_gpu(qq, CALIBRATION_K)
         self._routes, _ = measure_routes(self._ivf, np.concatenate([q, extra])[:want], self._nprobe, on_gpu,
-                                         rounds=2 if self._gpu == "torch" else 1)
+                                         rounds=2 if self._gpu == "torch" else 1, exact=exact)
         if self._kind_arg == "graph" and self._ivf.graph is not None:
             self._routes["cpu_ivf_from"] = 10 ** 9         # every batch through the graph, on either device
             self._routes.pop("single", None)
+            self._routes.pop("exact_from", None)
             if self._ivf.graph.on_gpu:
                 self._routes["graph_from"] = 1
         return f"routing measured in {time.perf_counter() - t:.1f} s: {describe_routes(self._routes, on_gpu)}"
@@ -772,16 +782,25 @@ class Index:
         self._finish_plan(reasons, device, gpu)
         return self
 
-    def _ivf_path(self, batch: int, device: str | None) -> str:
-        """The IVF path a batch takes: by the device (given, or chosen by the profile) and the batch size."""
+    def _ivf_path(self, batch: int, device: str | None, approximate: bool = False) -> str:
+        """The path a batch takes: by the device (given, or chosen by the profile) and the batch size; exact
+        search where measured faster ("cpu-exact", "gpu-exact"), unless ``approximate``."""
         r = {**DEFAULT_ROUTES, **self._routes}
+        if approximate:
+            r.pop("exact_from", None)
+            if str(r.get("single", "")).endswith("exact"):
+                r.pop("single")
         graph = self._ivf.graph
+        gpu_ok = self._gpu is not None and not self._too_big
+        on = device or (self._device if self._device != "auto" else None)
+        if batch >= r.get("exact_from", NEVER):              # exact search measured faster from here
+            dev = on or ("gpu" if gpu_ok and batch >= r["cpu_below"] else "cpu")
+            if dev == "cpu" or gpu_ok:
+                return f"{dev}-exact"
         single = r.get("single") if batch == 1 else None
         if single:                                           # single queries: the path measured fastest
-            on = device or (self._device if self._device != "auto" else None)
             usable = (not single.endswith("graph") or graph is not None) and (
-                single.startswith("cpu") or (self._gpu is not None and not self._too_big
-                                             and (not single.endswith("graph") or graph.on_gpu)))
+                single.startswith("cpu") or (gpu_ok and (not single.endswith("graph") or graph.on_gpu)))
             if usable and (on is None or single.startswith(on)):
                 return single
         dev = device or (self._device if self._device != "auto" else
@@ -864,7 +883,7 @@ class Index:
             raise ValueError(f"nprobe must be a positive integer, not {nprobe!r}")
         if device not in (None, "gpu", "cpu"):
             raise ValueError(f"device must be 'gpu' or 'cpu', not {device!r}")
-        path = self._ivf_path(len(q), device) if self._ivf is not None else None
+        path = self._ivf_path(len(q), device, approximate=nprobe is not None) if self._ivf is not None else None
         dev = device or (path.split("-")[0] if path else self.route(len(q)))
         if dev not in ("gpu", "cpu"):
             raise ValueError(f"device must be 'gpu' or 'cpu', not {dev!r}")
@@ -880,7 +899,7 @@ class Index:
         elif self._buf is not None or self._dead is not None:
             idx, sc = self._search_changed(q, kk, path, dev, nprobe)
         else:
-            if self._ivf is not None:
+            if self._ivf is not None and not path.endswith("exact"):
                 idx = self._ivf.search(q, kk, int(nprobe or self._nprobe), path)
             else:
                 idx = (self._search_gpu if dev == "gpu" else self._search_cpu)(q, kk)
@@ -910,7 +929,7 @@ class Index:
         def main_rows(qq, fetch):
             if nm - nd <= 0:
                 return np.full((len(qq), 0), -1, dtype=np.int64)
-            if self._ivf is not None:
+            if self._ivf is not None and not path.endswith("exact"):
                 return self._ivf.search(qq, fetch, int(nprobe or self._nprobe), path)
             return (self._search_gpu if dev == "gpu" else self._search_cpu)(qq, fetch)
 

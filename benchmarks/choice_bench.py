@@ -59,7 +59,7 @@ GRAPH_PATHS = ("cpu-graph", "gpu-graph")
 
 
 def kind_of(path: str) -> str:
-    return "exact" if path.startswith("exact") else ("graph" if path.endswith("graph") else "IVF")
+    return "exact" if "exact" in path else ("graph" if path.endswith("graph") else "IVF")   # "gpu-exact" too
 
 
 def calls_of(call, q) -> float:

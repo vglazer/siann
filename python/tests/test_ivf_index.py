@@ -181,3 +181,32 @@ def test_single_path_is_what_the_thresholds_give():
     assert single_path({**r, "cpu_below": 1, "graph_from": 1}, graph_gpu=True, graph_cpu=True) == "gpu-graph"
     assert single_path({**r, "cpu_below": 1, "gpu_list_from": 1, "graph_from": NEVER}, graph_gpu=True,
                        graph_cpu=True) == "gpu-list"
+
+
+def test_exact_search_is_routed_from_where_it_is_faster():
+    x = clustered(30_000, 16, 3)
+    q = x[:300] + 0.01
+    index = siann.Index(x, "l2", recall=0.9, kind="auto")
+    if index.kind != "ivf":
+        pytest.skip("exact search won at every batch size on this machine")
+    index._routes = {**index._routes, "exact_from": 100}
+    index._routes.pop("single", None)
+    assert index._ivf_path(100, None).endswith("exact") and not index._ivf_path(99, None).endswith("exact")
+    assert index._ivf_path(100, "cpu") == "cpu-exact"
+    truth = siann.Index(x, "l2").search(q, 10)
+    got = index.search(q, 10)                                     # 300 queries: exact search, the true neighbors
+    np.testing.assert_array_equal(got.indices, truth.indices)
+    approx = index.search(q, 10, nprobe=1)                        # nprobe given: the IVF, whatever the batch
+    assert recall(approx.indices, truth.indices) < 1.0
+
+
+def test_routed_path_follows_the_thresholds():
+    from siann._ivf import DEFAULT_ROUTES, NEVER, routed_path
+    r = {**DEFAULT_ROUTES, "cpu_below": 64, "gpu_list_from": 1000, "exact_from": 4096}
+    assert routed_path(r, 1, False, False) == "cpu-split"
+    assert routed_path(r, 10, False, False) == "cpu-query"
+    assert routed_path(r, 100, False, False) == "gpu-query"
+    assert routed_path(r, 2000, False, False) == "gpu-list"
+    assert routed_path(r, 5000, False, False) == "gpu-exact"
+    assert routed_path({**r, "exact_from": NEVER, "graph_from": 128}, 200, True, True) == "gpu-graph"
+    assert routed_path({**r, "cpu_ivf_from": 32}, 10, True, True) == "cpu-graph"
