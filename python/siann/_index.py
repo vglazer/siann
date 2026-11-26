@@ -515,8 +515,8 @@ class Index:
         return lines
 
     def _graph_line(self, g, reached_gpu, reached_cpu: float, built_by: str | None = None) -> str:
-        from ._graph import DEGREE, mlxvs_version
-        made = built_by or f"built in {g.build_seconds:.1f} s by mlxvs {mlxvs_version()}"
+        from ._graph import DEGREE
+        made = built_by or f"built in {g.build_seconds:.1f} s by {g.builder}"
         gpu = (f"on the GPU, search width {g.itopk} reaches recall@10 {reached_gpu:.3f}; "
                if reached_gpu is not None else "")
         return (f"graph index: CAGRA ({DEGREE} links per vector), {made}; {gpu}on the CPU, ef {g.ef} reaches "
@@ -540,12 +540,12 @@ class Index:
         if kind not in ("auto", "graph"):
             return []
         on_gpu = self._gpu if not self._too_big and self._device != "cpu" else None
-        reason = why_not(self._ivf.metric, on_gpu)
+        reason = why_not(self._ivf.metric)
         if reason:
             if kind == "graph":
                 raise RuntimeError(f"kind='graph', but {reason.removeprefix('no graph index: ')}")
             return [reason] if self._ivf.metric in ("l2", "ip") else []
-        g = Graph(self._x, self._ivf.metric, self._storage)
+        g = Graph(self._x, self._ivf.metric, self._storage, ivf=self._ivf, gpu=on_gpu)
         self._ivf.graph = g
         reached_gpu, reached_cpu = self._calibrate_graph(g, k1, dev)
         worst = min(r for r in (reached_gpu, reached_cpu) if r is not None)
@@ -681,7 +681,7 @@ class Index:
         if graph is not None:
             from ._graph import DEGREE, mlxvs_version
             meta["graph"] = {"itopk": graph.itopk, "ef": graph.ef, "degree": DEGREE,
-                             "builder": f"mlxvs {mlxvs_version()}"}
+                             "builder": graph.builder or f"mlxvs {mlxvs_version()}"}
         bytes_ok = self._storage == "uint8"                 # every coordinate an integer 0-255: stored as bytes
         arrays = {"meta": np.frombuffer(json.dumps(meta).encode("utf-8"), dtype=np.uint8),
                   "x": self._x.astype(np.uint8) if bytes_ok else self._x}
@@ -760,18 +760,19 @@ class Index:
                 sizes = built.sizes()
                 self._clustered = (len(self._x), float(sizes.max() / sizes.mean()))
             if meta.get("graph"):
-                from ._graph import Graph, why_not
+                from ._graph import Graph, gpu_search_reason
                 g = Graph(self._x, meta["ivf_metric"], self._storage, links=data["graph"])
                 g.itopk, g.ef = meta["graph"].get("itopk"), meta["graph"].get("ef")
+                g.builder = meta["graph"].get("builder")
                 self._ivf.graph = g
                 if g.ef is None:                            # a file from before the CPU graph search
                     from ._ivf import CALIBRATION_K
                     k1 = (CALIBRATION_K + 1) if self._cal_ids is not None else min(CALIBRATION_K, len(self._x))
                     g.ef, _, _, _ = self._calibrate(self._ivf, self._cal_q, self._cal_ids, k1, self.recall,
                                                     "gpu" if gpu and self._device != "cpu" else "cpu", graph="cpu")
-                reason = why_not(meta["ivf_metric"], self._gpu if gpu and self._device != "cpu" else None)
+                reason = gpu_search_reason(self._gpu if gpu and self._device != "cpu" else None)
                 if reason:
-                    reasons.append(f"the graph index searched on the CPU only: {reason.removeprefix('no graph index: ')}")
+                    reasons.append(f"the graph index searched on the CPU only: {reason}")
             if redo:
                 reasons.append(self._route().replace("routing measured", "routing re-measured on this machine", 1))
             else:
@@ -1136,19 +1137,17 @@ class Index:
         else:
             k1 = min(10, len(self._x))
         self._nprobe, reached, _, _ = self._calibrate(self._ivf, self._cal_q, self._cal_ids, k1, self.recall, dev)
-        graph_reached = graph_dropped = None
+        graph_reached = None
         if old_graph is not None:
-            from ._graph import Graph, why_not
-            cannot = why_not(self._ivf.metric, self._gpu if dev == "gpu" else None)
-            if cannot:
-                graph_dropped = f"the graph index dropped at a merge: {cannot.removeprefix('no graph index: ')}"
+            from ._graph import Graph
+            on_gpu = self._gpu if dev == "gpu" else None
+            if reason or had_dead or bytes_lost or b is None or not old_graph.extendable:
+                # rows gone or moved, or no mlxvs to link new ones in: a new graph (siann's builder without mlxvs)
+                g = Graph(self._x, self._ivf.metric, self._storage, ivf=self._ivf, gpu=on_gpu)
             else:
-                if reason or had_dead or bytes_lost or b is None:
-                    g = Graph(self._x, self._ivf.metric, self._storage)   # rows gone or moved: a new graph
-                else:
-                    g = old_graph.extended(self._x, b["x"])                # new rows linked in, after the others
-                self._ivf.graph = g
-                graph_reached = self._calibrate_graph(g, k1, dev)
+                g = old_graph.extended(self._x, b["x"])                # new rows linked in, after the others
+            self._ivf.graph = g
+            graph_reached = self._calibrate_graph(g, k1, dev)
         self._last_merge = f"{why}; nprobe recalibrated"
         routing = self._route() if reason else None
 
@@ -1164,11 +1163,8 @@ class Index:
                 return self._storage_line("float", build_dev) + " (added vectors are not all bytes)"
             if routing and line.startswith("routing "):
                 return routing
-            if line.startswith("graph index: CAGRA"):
-                if graph_dropped:
-                    return graph_dropped
-                if graph_reached is not None:
-                    return self._graph_line(self._ivf.graph, *graph_reached)
+            if line.startswith("graph index: CAGRA") and graph_reached is not None:
+                return self._graph_line(self._ivf.graph, *graph_reached)
             return line
         self._build_reasons = tuple(now(r) for r in self._build_reasons)
 

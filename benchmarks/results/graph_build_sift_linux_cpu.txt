@@ -1,0 +1,9 @@
+sift: 1,000,000 x 128, l2; graphs of 32 links per vector searched by siann's CPU search on 2,000 test queries
+  rough graph (64 per vector by siann's IVF, nprobe 16): 92.4 s (IVF 20.3 s, search 71.0 s); holds 0.781 of each vector's true 64 nearest
+  (mlxvs skipped: RuntimeError: --only-siann)
+
+  graph     built   recall@10 / queries per second at ef    16    24    32    48    64    96   128   192   256
+  siann    103.1s   0.858/120k  0.910/106k  0.937/83k  0.965/60k  0.979/50k  0.991/35k  0.994/28k  0.997/19k  0.998/15k   (IVF 20.2 s, search 76.2 s, optimize 6.6 s)
+
+  at recall 0.95:
+    siann  ef  39.4, 71,307 queries/s

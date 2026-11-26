@@ -75,14 +75,14 @@ def main() -> None:
     stored = xb.astype(np.uint8) if a.dataset == "sift" else None
     print(f"{a.dataset}: {n:,} x {xb.shape[1]}, {metric}; graphs of 32 links per vector searched by siann's CPU "
           f"search on {len(q):,} test queries", flush=True)
-    truth = siann.Index(xb, metric).search(q, K, device="gpu").indices
+    truth = siann.Index(xb, metric).search(q, K).indices
 
     # the rough graph's quality on a sample: the share of each vector's true 64 nearest it holds
     t = time.perf_counter()
     kw = {"nprobe": a.knn_nprobe} if a.knn_nprobe else {}
     knn, times = knn_graph(xb, metric, **kw)
     sample = np.random.default_rng(0).choice(n, 1000, replace=False)
-    true64 = siann.Index(xb, metric).search(xb[sample], KNN_K + 1, device="gpu").indices[:, 1:]
+    true64 = siann.Index(xb, metric).search(xb[sample], KNN_K + 1).indices[:, 1:]
     print(f"  rough graph ({KNN_K} per vector by siann's IVF, nprobe {kw.get('nprobe', KNN_NPROBE)}): {time.perf_counter() - t:.1f} s "
           f"(IVF {times['IVF']:.1f} s, search {times['search']:.1f} s); holds {recall(knn[sample], true64):.3f} of "
           f"each vector's true {KNN_K} nearest", flush=True)

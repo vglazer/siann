@@ -71,7 +71,6 @@ def test_a_file_with_a_graph_searches_it_on_the_cpu_without_mlxvs(built, tmp_pat
     own CPU code at the CPU width calibrated when it was built."""
     _, q, index, truth = built
     index.save(tmp_path / "g.siann")
-    monkeypatch.setattr(_graph, "why_not", lambda metric, gpu: "no graph index: mlxvs is not installed")
     monkeypatch.setattr(_graph, "mlxvs_version", lambda: None)
     again = siann.Index.load(tmp_path / "g.siann", device="cpu")
     assert again._ivf.graph is not None and again._ivf.graph.ef == index._ivf.graph.ef
@@ -80,18 +79,35 @@ def test_a_file_with_a_graph_searches_it_on_the_cpu_without_mlxvs(built, tmp_pat
     assert recall(again.search(q, 10).indices, truth) >= 0.85
 
 
-@needs_mlxvs
-def test_a_merge_without_mlxvs_drops_the_graph(tmp_path, monkeypatch):
+def test_a_merge_without_mlxvs_rebuilds_the_graph(tmp_path, monkeypatch):
     monkeypatch.setattr(_index, "BUFFER_MIN", 300)
     monkeypatch.setattr(_index, "BUFFER_SHARE", 0.0)
+    monkeypatch.setattr(_graph, "mlxvs_version", lambda: None)        # as on a Linux machine
     x, q = clustered(6_000, 16, 8), clustered(200, 16, 9)
     siann.Index(x[:5_000], "l2", recall=0.9, kind="graph", calibration_queries=q).save(tmp_path / "m.siann")
-    monkeypatch.setattr(_graph, "why_not", lambda metric, gpu: "no graph index: mlxvs is not installed")
-    monkeypatch.setattr(_graph, "mlxvs_version", lambda: None)
     again = siann.Index.load(tmp_path / "m.siann", device="cpu")
-    again.add(x[5_000:])                                              # merged: the graph cannot be extended here
-    assert again._ivf.graph is None and "graph index dropped at a merge" in str(again.plan)
-    assert again._ivf_path(1, None) == "cpu-split"
+    again.add(x[5_000:])                                              # merged: no mlxvs to extend it, so rebuilt
+    g = again._ivf.graph
+    assert g is not None and g.builder == "siann" and g.links().shape == (6_000, 32)
+    truth = siann.Index(x, "l2").search(q, 10, device="cpu").indices
+    assert recall(again.search(q, 10).indices, truth) >= 0.85
+
+
+@pytest.mark.parametrize("metric", ["l2", "cosine", "ip"])
+def test_siann_builds_its_own_graph_without_mlxvs(metric, tmp_path, monkeypatch):
+    monkeypatch.setattr(_graph, "mlxvs_version", lambda: None)        # no mlxvs: siann's own builder, anywhere
+    x, q = clustered(20_000, 16, 5), clustered(400, 16, 6)
+    index = siann.Index(x, metric, recall=0.9, kind="graph", calibration_queries=q[:200])
+    g = index._ivf.graph
+    assert g is not None and g.builder == "siann" and "by siann" in str(index.plan)
+    assert "searched on the CPU" in str(index.plan) or not siann.gpu_available() or all(
+        not index._ivf_path(b, None).startswith("gpu-graph") for b in (1, 100, 5000))
+    truth = siann.Index(x, metric).search(q[200:], 10, device="cpu").indices
+    assert recall(index.search(q[200:], 10).indices, truth) >= 0.85
+    index.save(tmp_path / "s.siann")
+    again = siann.Index.load(tmp_path / "s.siann", device="cpu")
+    assert again._ivf.graph.builder == "siann"
+    np.testing.assert_array_equal(again._ivf.graph.links(), g.links())
 
 
 @needs_mlxvs
@@ -127,10 +143,8 @@ def test_kind_graph_refused_where_it_cannot_run(monkeypatch):
     x = clustered(3_000, 8, 7)
     with pytest.raises(RuntimeError, match="CAGRA has no L1"):
         siann.Index(x, "l1", recall=0.9, kind="graph", device="gpu" if siann.gpu_available() else "cpu")
-    monkeypatch.setattr(_graph, "mlxvs_version", lambda: None)
-    if siann.gpu_available():
-        with pytest.raises(RuntimeError, match="mlxvs is not installed"):
-            siann.Index(x, "l2", recall=0.9, kind="graph")
+    monkeypatch.setattr(_graph, "mlxvs_version", lambda: None)        # without mlxvs: siann's own graph instead
+    assert siann.Index(x, "l2", recall=0.9, kind="graph")._ivf.graph.builder == "siann"
     index = siann.Index(x, "l2", recall=0.9, kind="ivf")              # kind="ivf" never builds one
     assert index._ivf.graph is None
     with pytest.raises(ValueError, match="needs a recall target"):

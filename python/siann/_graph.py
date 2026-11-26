@@ -1,10 +1,9 @@
-"""A graph index: NVIDIA cuVS's CAGRA graph, built on the Apple GPU through mlxvs (cuVS's methods on MLX), and
-searched on the GPU through mlxvs for batches and on the CPU by siann's own graph search (siann._cpu.GraphIndex)
-anywhere, Linux included. An IVF index keeps one alongside its lists where mlxvs is installed and the metric is
-L2, cosine or inner product, and routes to it the batch sizes it measured faster. The search widths
-(``itopk_size`` on the GPU, ``ef`` on the CPU) are calibrated to the recall target as nprobe is. A saved
-index keeps the graph, so a machine without mlxvs or a GPU still searches it on the CPU; building or
-extending a graph needs mlxvs."""
+"""A graph index: a CAGRA graph (NVIDIA cuVS's graph, 32 links per vector), built by mlxvs (cuVS's methods on
+MLX) where it is installed and by siann's own builder elsewhere (siann._graph_build: on any machine), searched on
+the GPU through mlxvs for batches and on the CPU by siann's own graph search (siann._cpu.GraphIndex) anywhere,
+Linux included. An IVF index keeps one alongside its lists where the metric is L2, cosine or inner product, and
+routes to it the batch sizes it measured faster. The search widths (``itopk_size`` on the GPU, ``ef`` on the
+CPU) are calibrated to the recall target as nprobe is. A saved index keeps the graph."""
 from __future__ import annotations
 
 import functools
@@ -33,23 +32,31 @@ def mlxvs_version() -> str | None:
         return None
 
 
-def why_not(metric: str, gpu_backend: str | None) -> str | None:
-    """Why this index cannot build a graph, or None where it can."""
+def why_not(metric: str, gpu_backend: str | None = None) -> str | None:
+    """Why this index cannot have a graph, or None where it can (any machine can build one)."""
     if metric not in METRICS:
         return "no graph index: CAGRA has no L1 or L-infinity"
+    return None
+
+
+def gpu_search_reason(gpu_backend: str | None) -> str | None:
+    """Why the GPU cannot search (or build) a graph here, or None where it can: that needs mlxvs, on MLX."""
     if gpu_backend != "mlx":
-        return "no graph index: mlxvs runs on MLX" + ("" if gpu_backend is None else ", not on PyTorch")
+        return "mlxvs runs on MLX" + ("" if gpu_backend is None else ", not on PyTorch")
     if mlxvs_version() is None:
-        return "no graph index: mlxvs is not installed (pip install siann[graph])"
+        return "mlxvs is not installed (pip install siann[graph])"
     return None
 
 
 class Graph:
     """A CAGRA graph over ``x`` (the IVF's vectors), searched by ``metric`` ("l2" or "ip"), its rows stored as
-    bytes where the IVF's lists are, else as float16 on the GPU and float32 on the CPU. Built by mlxvs unless
-    ``links`` (n, DEGREE) are given, as when loading; ``cagra``: an mlxvs index already built."""
+    bytes where the IVF's lists are, else as float16 on the GPU and float32 on the CPU. Built (unless ``links``
+    (n, DEGREE) are given, as when loading, or ``cagra``, an mlxvs index already built) by mlxvs where ``gpu`` is
+    "mlx" and mlxvs is installed, otherwise by siann's own builder, which reuses ``ivf`` (the index's IVF over
+    ``x``) for each vector's nearest, on ``gpu`` where given, else on the CPU. ``builder`` says which."""
 
-    def __init__(self, x: np.ndarray, metric: str, storage: str, links: np.ndarray | None = None, cagra=None):
+    def __init__(self, x: np.ndarray, metric: str, storage: str, links: np.ndarray | None = None, cagra=None,
+                 ivf=None, gpu: str | None = None):
         self.x, self.metric, self.storage = x, metric, storage
         self.dtype = "uint8" if storage == "uint8" else "float16"
         self.itopk = self.ef = None                    # the GPU's and the CPU's calibrated search widths
@@ -57,17 +64,30 @@ class Graph:
         self._cagra, self._cpu = cagra, None
         self._lock = threading.Lock()
         self.build_seconds = 0.0
+        self.builder = f"mlxvs {mlxvs_version()}" if cagra is not None else None
         if cagra is None and links is None:
-            import mlxvs
             t = time.perf_counter()
-            self._cagra = mlxvs.CagraIndex.build(x, graph_degree=DEGREE, metric=METRICS[metric],
-                                                 intermediate_graph_degree=INTERMEDIATE, dtype=self.dtype)
+            if gpu_search_reason(gpu) is None:
+                import mlxvs
+                self._cagra = mlxvs.CagraIndex.build(x, graph_degree=DEGREE, metric=METRICS[metric],
+                                                     intermediate_graph_degree=INTERMEDIATE, dtype=self.dtype)
+                self.builder = f"mlxvs {mlxvs_version()}"
+            else:
+                from ._graph_build import build_links
+                self._links, _ = build_links(x, metric, DEGREE, INTERMEDIATE, device="gpu" if gpu else "cpu",
+                                             gpu=gpu, ivf=ivf)
+                self.builder = "siann"
             self.build_seconds = time.perf_counter() - t
 
     @property
     def on_gpu(self) -> bool:
         """Whether the GPU can search it: mlxvs is installed."""
         return self._cagra is not None or mlxvs_version() is not None
+
+    @property
+    def extendable(self) -> bool:
+        """Whether new rows can be linked in without a rebuild: through mlxvs."""
+        return mlxvs_version() is not None
 
     def links(self) -> np.ndarray:
         """The graph's links, (n, DEGREE) int32: what a saved index keeps."""
