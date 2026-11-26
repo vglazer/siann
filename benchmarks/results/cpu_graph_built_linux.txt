@@ -1,0 +1,16 @@
+sift: the index built here in 67.8 s (4 CPUs); recall@10 on 2,000 queries; queries per second
+siann.Index: 1,000,000 vectors, 128 dimensions, metric l2
+  NumPy's OpenBLAS was loaded before siann, so its threads spin after each call and slow siann's CPU searches: import siann before NumPy, or set OPENBLAS_THREAD_TIMEOUT=4 before starting Python (TUNING.md)
+
+   batch    siann: path  recall       q/s   FAISS HNSW float32: ef, recall, q/s     FAISS HNSW uint8: ef, recall, q/s
+       1      cpu-graph   0.960    17,836                  43   0.961     9,478                  43   0.961    14,838
+      10      cpu-graph   0.960    35,996                  43   0.961    21,412                  43   0.961    41,096
+     100      cpu-graph   0.960    56,057                  43   0.961    29,606                  43   0.961    54,864
+music100: the index built here in 59.1 s (4 CPUs); recall@10 on 2,000 queries; queries per second
+siann.Index: 1,000,000 vectors, 100 dimensions, metric ip
+  NumPy's OpenBLAS was loaded before siann, so its threads spin after each call and slow siann's CPU searches: import siann before NumPy, or set OPENBLAS_THREAD_TIMEOUT=4 before starting Python (TUNING.md)
+
+   batch    siann: path  recall       q/s   FAISS HNSW float32: ef, recall, q/s
+       1      cpu-graph   0.943    13,440                  50   0.943    16,266
+      10 cpu-query-blas   0.941    33,228                  49   0.942    39,653
+     100 cpu-query-blas   0.941    39,597                  49   0.942    59,389
