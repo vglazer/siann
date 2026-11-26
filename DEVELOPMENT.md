@@ -155,6 +155,9 @@ cover three more (`f32::max`, the global thread pool, timing devices in alternat
   recall 0.72 takes re-ranking a tenth of the database, which exact search on the GPU does faster. Real
   data has too little contrast: a neighbor and a point twice as far collide with nearly the same
   probability (0.28 and 0.26).
+- **The graph optimization's reverse links in parallel** (atomic counters, the same links to the bit;
+  timed by `graph_optimize_time.py`): 2.36 against 2.40 s on SIFT1M on an M3 Max, 6.62 against 6.70 s on 4
+  Linux CPUs. The time is in counting detours, already parallel, not in the reverse links.
 - **A fused L1 kernel** (distance and selection in one pass): it reads the whole base once per query, a
   third of the tiled kernel's speed.
 - **Inner-product IVF lists assigned by inner product** (`ip_lists.py`), as FAISS's IVF does: the lists

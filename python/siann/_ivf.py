@@ -199,6 +199,8 @@ ROUTE_BATCHES = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096)
 NEVER = 10 ** 9          # a threshold no batch reaches
 CPU_GIVE_UP = 0.3        # seconds: a CPU call this slow at one batch size is not timed at larger ones
 DIP = 0.8                # a rate below this share of what its neighbors imply is timed again
+MIN_TIMED = 0.02         # seconds each path is timed for at each batch size (at most MAX_CALLS calls)
+MAX_CALLS = 100          # distinct batches each path is timed on: a graph's cost varies from query to query
 
 
 DEFAULT_ROUTES = {"cpu_below": 2, "gpu_list_from": 1000, "cpu_list_from": NEVER, "cpu_blas_from": NEVER,
@@ -247,21 +249,27 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
     def time_paths(b, paths):
         """Each path's rate at batch b and its slowest call. Each path is timed by itself, its calls back to
         back as in a stream of searches (between calls on the other device, a GPU call can run 40% slower):
-        a warm-up call, then calls until there are at least 5 (3 from 64 queries) taking 20 ms in all (at
-        most 25 calls); the rate is from the median call."""
-        qq = q[:b]
+        a warm-up call, then calls until there are at least 5 (3 from 64 queries) taking MIN_TIMED in all (at
+        most MAX_CALLS calls); the rate is from their mean, what a stream of searches gets (the median ignored the
+        few slow queries of a graph search, whose cost varies by query: Music-100's graph timed at 27,000/s on 4
+        Linux CPUs against 13,600/s searched, though not wholly for that reason; dips are retimed instead, below).
+        Each call takes the next ``b`` queries (the same
+        sequence for every path): repeating one batch keeps its rows in the caches, which flattered the graph at
+        one query (Music-100 on 4 Linux CPUs: the graph routed at 12,600/s against the IVF's 15,700)."""
+        span = max(1, len(q) - b + 1)
+        batches = [q[(i * b) % span:(i * b) % span + b] for i in range(MAX_CALLS + 1)]
         rates, slowest = {}, {}
         for path in paths:
             run = exact[path] if exact and path in exact else (lambda x, path=path: ivf.search(x, k, nprobe, path))
             if path.startswith("gpu"):
                 clear_gpu_cache(ivf.gpu_backend)   # each GPU path from the same state: another's buffers slow it
-            run(qq)
+            run(batches[-1])
             times = []
-            while len(times) < (5 if b < 64 else 3) or (sum(times) < 0.02 and len(times) < 25):
+            while len(times) < (5 if b < 64 else 3) or (sum(times) < MIN_TIMED and len(times) < MAX_CALLS):
                 start = time.perf_counter()
-                run(qq)
+                run(batches[len(times)])
                 times.append(time.perf_counter() - start)
-            rates[path], slowest[path] = b / sorted(times)[len(times) // 2], max(times)
+            rates[path], slowest[path] = b * len(times) / sum(times), max(times)
         return rates, slowest
 
     batches = [b for b in ROUTE_BATCHES if b <= len(q)]
