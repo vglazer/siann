@@ -244,3 +244,50 @@ fn graph_search_on_a_nearest_neighbor_graph_is_exact() {
     }
     assert!(Graph::new(&x, d, Kind::L2, Rows::F32(x.clone()), &[0; 3], 2).is_err());
 }
+
+#[test]
+fn an_optimized_graph_keeps_its_rows_valid_and_finds_the_neighbors() {
+    // a 32-nearest graph pruned to 16 links: no vector linked to itself or twice, every vector reachable (linked
+    // from some other), and best-first search on it finds nearly every true neighbor of new queries
+    let (n, d, k, kin, deg) = (3000, 8, 10, 32, 16);
+    let x = data(n, d, 11);
+    let q = data(200, d, 12);
+    for kind in [Kind::L2, Kind::L1, Kind::Ip] {
+        let nn = Flat::new(&x, d, kind)
+            .search(&x, kin + 1, 32, true)
+            .unwrap();
+        let knn: Vec<i64> = nn.iter().map(|&i| i as i64).collect(); // each row's own first: skipped
+        let links = super::graph_build::optimize(&knn, n, kin + 1, deg).unwrap();
+        let mut into = vec![0usize; n];
+        for (u, row) in links.chunks(deg).enumerate() {
+            let valid: Vec<i64> = row.iter().copied().filter(|&v| v >= 0).collect();
+            assert!(
+                valid.iter().all(|&v| v as usize != u),
+                "a vector linked to itself"
+            );
+            let mut s = valid.clone();
+            s.sort_unstable();
+            s.dedup();
+            assert_eq!(s.len(), valid.len(), "a link repeated");
+            for &v in &valid {
+                into[v as usize] += 1;
+            }
+        }
+        assert!(
+            into.iter().filter(|&&c| c == 0).count() < n / 100,
+            "vectors no link reaches"
+        );
+        let g = Graph::new(&x, d, kind, Rows::F32(x.clone()), &links, deg).unwrap();
+        let found = g.search(&q, k, 48).unwrap();
+        let truth = brute(&x, &q, d, k, kind);
+        let hits: usize = found
+            .chunks(k)
+            .zip(truth.chunks(k))
+            .map(|(f, t)| f.iter().filter(|v| t.contains(v)).count())
+            .sum();
+        let r = hits as f64 / truth.len() as f64;
+        assert!(r > 0.95, "recall {r}");
+    }
+    assert!(super::graph_build::optimize(&[0, 1, 2], 2, 2, 1).is_err()); // 3 values for 2 x 2
+    assert!(super::graph_build::optimize(&[0, 5], 2, 1, 1).is_err()); // 5 is not a row
+}

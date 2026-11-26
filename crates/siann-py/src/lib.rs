@@ -372,6 +372,23 @@ impl L2TopK {
 /// for "l2", the sum of absolute differences for "l1", the largest for "linf" and the inner product for
 /// "ip" (and cosine, on unit vectors); infinity (minus infinity for "ip") where an id is -1. Large batches
 /// are spread over threads.
+/// A CAGRA graph's links, (n, `degree`) int64, from a k-nearest-neighbor graph `knn` (n, k) int64, each row
+/// a vector's candidates nearest first (-1 for none; its own row and repeats skipped): each vector's `degree / 2`
+/// candidates with the fewest detours, then reverse links and its next-best candidates (siann::graph_build).
+#[pyfunction]
+fn optimize_graph<'py>(
+    py: Python<'py>,
+    knn: PyReadonlyArray2<'_, i64>,
+    degree: usize,
+) -> PyResult<Bound<'py, PyArray2<i64>>> {
+    let m = mat(&knn, "knn must be C-contiguous")?;
+    let (n, k) = (m.rows, m.cols);
+    let out = py
+        .detach(|| siann::graph_build::optimize(m.data, n, k, degree))
+        .map_err(value_error)?;
+    PyArray1::from_vec(py, out).reshape([n, degree])
+}
+
 #[pyfunction]
 fn scores<'py>(
     py: Python<'py>,
@@ -609,6 +626,7 @@ fn _cpu(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(centroid_means, m)?)?;
     m.add_function(wrap_pyfunction!(recall_of, m)?)?;
     m.add_function(wrap_pyfunction!(without_own, m)?)?;
+    m.add_function(wrap_pyfunction!(optimize_graph, m)?)?;
     m.add_class::<GraphIndex>()?;
     m.add_class::<IvfIndex>()
 }

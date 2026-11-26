@@ -15,6 +15,7 @@
 pub mod elem;
 pub mod flat;
 pub mod graph;
+pub mod graph_build;
 pub mod ivf;
 pub mod kernels;
 pub mod metric;
