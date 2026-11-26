@@ -65,11 +65,15 @@ def main() -> None:
     p.add_argument("--queries", type=int, default=2000)
     p.add_argument("--knn-nprobe", type=int, default=None, help="the rough graph's probes (siann's default if not given)")
     p.add_argument("--only-siann", action="store_true", help="siann's graph alone (no mlxvs or cuVS rows)")
+    p.add_argument("--metric", choices=("l1", "l2", "linf", "ip"), help="another metric (siann's graph alone)")
+    p.add_argument("--ivf", action="store_true", help="also siann's IVF on the CPU, at a range of nprobe")
     a = p.parse_args()
     xb, xq = load(a.dataset, 10_000)
     if a.n:
         xb = np.ascontiguousarray(xb[:a.n])
-    metric = METRIC[a.dataset]
+    metric = a.metric or METRIC[a.dataset]
+    if a.metric and a.metric != METRIC[a.dataset]:
+        a.only_siann = True                                             # mlxvs and cuVS: their own metric only
     q = np.ascontiguousarray(xq[-a.queries:], dtype=np.float32)
     n = len(xb)
     stored = xb.astype(np.uint8) if a.dataset == "sift" else None
@@ -111,7 +115,19 @@ def main() -> None:
         print(f"  {name:6s} {built:7.1f}s   " + "  ".join(f"{r:.3f}/{s / 1000:,.0f}k" for _, r, s in pts)
               + f"   ({how})", flush=True)
         summary.append((name, at_target(pts, a.recall)))
-    print(f"\n  at recall {a.recall}:", flush=True)
+    if a.ivf:                                                         # siann's IVF on the CPU, the same queries
+        index = siann.Index(xb, metric, recall=a.recall, kind="ivf")
+        pts = []
+        for nprobe in (2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128):
+            index._ivf.search(q[:100], K, nprobe, "cpu-query")
+            t = time.perf_counter()
+            found = index._ivf.search(q, K, nprobe, "cpu-query")
+            pts.append((nprobe, recall(found, truth), len(q) / (time.perf_counter() - t)))
+        print(f"  {'IVF':6s} {'':8s}   recall@10 / queries per second at nprobe "
+              + "  ".join(f"{e}: {r:.3f}/{v / 1000:,.0f}k" for e, r, v in pts), flush=True)
+        ef, speed = at_target(pts, a.recall)
+        summary.append(("IVF", (ef, speed)))
+    print(f"\n  at recall {a.recall} (ef, or nprobe for the IVF):", flush=True)
     for name, (ef, speed) in summary:
         print(f"    {name:6s} " + (f"ef {ef:5.1f}, {speed:,.0f} queries/s" if ef else "not reached"), flush=True)
 

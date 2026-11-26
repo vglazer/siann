@@ -16,7 +16,8 @@ DEGREE = 32              # links per vector, pruned from INTERMEDIATE, as in mlx
 INTERMEDIATE = 64
 MAX_ITOPK = 1024         # the widest GPU search calibration tries
 MAX_EF = 1024            # the widest CPU search
-METRICS = {"l2": "l2", "ip": "inner_product"}     # the IVF's metric (cosine arrives as L2 on unit vectors)
+METRICS = {"l2": "l2", "ip": "inner_product"}     # mlxvs's (and CAGRA's): cosine arrives as L2 on unit vectors
+ALL_METRICS = ("l1", "l2", "linf", "ip")         # siann's own builder and CPU search: any of siann's metrics
 
 
 @functools.cache
@@ -33,9 +34,9 @@ def mlxvs_version() -> str | None:
 
 
 def why_not(metric: str, gpu_backend: str | None = None) -> str | None:
-    """Why this index cannot have a graph, or None where it can (any machine can build one)."""
-    if metric not in METRICS:
-        return "no graph index: CAGRA has no L1 or L-infinity"
+    """Why this index cannot have a graph, or None where it can (any machine can build one, for any metric)."""
+    if metric not in ALL_METRICS:
+        return f"no graph index for {metric}"
     return None
 
 
@@ -67,7 +68,7 @@ class Graph:
         self.builder = f"mlxvs {mlxvs_version()}" if cagra is not None else None
         if cagra is None and links is None:
             t = time.perf_counter()
-            if gpu_search_reason(gpu) is None:
+            if gpu_search_reason(gpu) is None and metric in METRICS:
                 import mlxvs
                 self._cagra = mlxvs.CagraIndex.build(x, graph_degree=DEGREE, metric=METRICS[metric],
                                                      intermediate_graph_degree=INTERMEDIATE, dtype=self.dtype)
@@ -81,13 +82,13 @@ class Graph:
 
     @property
     def on_gpu(self) -> bool:
-        """Whether the GPU can search it: mlxvs is installed."""
-        return self._cagra is not None or mlxvs_version() is not None
+        """Whether the GPU can search it: mlxvs is installed and has the metric (L2, cosine, inner product)."""
+        return self._cagra is not None or (mlxvs_version() is not None and self.metric in METRICS)
 
     @property
     def extendable(self) -> bool:
-        """Whether new rows can be linked in without a rebuild: through mlxvs."""
-        return mlxvs_version() is not None
+        """Whether new rows can be linked in without a rebuild: through mlxvs, for its metrics."""
+        return mlxvs_version() is not None and self.metric in METRICS
 
     def links(self) -> np.ndarray:
         """The graph's links, (n, DEGREE) int32: what a saved index keeps."""

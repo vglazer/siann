@@ -139,10 +139,20 @@ def test_cosine_and_inner_product(metric):
     assert recall(found, truth) >= 0.8
 
 
+@pytest.mark.parametrize("metric", ["l1", "linf"])
+def test_l1_and_linf_graphs_are_siann_s_own_on_the_cpu(metric):
+    x, q = clustered(20_000, 16, 5), clustered(400, 16, 6)
+    index = siann.Index(x, metric, recall=0.9, kind="graph", calibration_queries=q[:200])
+    g = index._ivf.graph
+    assert g is not None and g.builder == "siann" and not g.on_gpu          # mlxvs has neither metric
+    assert all(not index._ivf_path(b, None).startswith("gpu-graph") for b in (1, 100, 5000))
+    truth = siann.Index(x, metric).search(q[200:], 10, device="cpu").indices
+    found = index._ivf.search(q[200:], 10, index.nprobe, "cpu-graph")
+    assert recall(found, truth) >= 0.85
+
+
 def test_kind_graph_refused_where_it_cannot_run(monkeypatch):
     x = clustered(3_000, 8, 7)
-    with pytest.raises(RuntimeError, match="CAGRA has no L1"):
-        siann.Index(x, "l1", recall=0.9, kind="graph", device="gpu" if siann.gpu_available() else "cpu")
     monkeypatch.setattr(_graph, "mlxvs_version", lambda: None)        # without mlxvs: siann's own graph instead
     assert siann.Index(x, "l2", recall=0.9, kind="graph")._ivf.graph.builder == "siann"
     index = siann.Index(x, "l2", recall=0.9, kind="ivf")              # kind="ivf" never builds one
