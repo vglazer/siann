@@ -55,9 +55,11 @@ def test_routes_are_measured_at_build():
     r = index._routes
     assert {"cpu_below", "gpu_list_from", "cpu_list_from", "cpu_blas_from"} <= set(r)
     assert index._ivf_path(1, None) in ("cpu-split", "cpu-query", "cpu-query-blas", "gpu-query", "gpu-list")
-    for b in (1, 16, 300, 5000):                                   # every batch has a path, on its device
+    from siann._ivf import table_entry
+    for b in (1, 16, 300, 5000):                                   # every batch: a path from its table entry
         path = index._ivf_path(b, None)
-        assert path.split("-")[0] == ("cpu" if b < r["cpu_below"] else "gpu") or not siann.gpu_available()
+        assert path in table_entry(r["table"], b)
+        assert path.startswith("cpu") or siann.gpu_available()
     assert index._ivf_path(10, "cpu") in ("cpu-query", "cpu-query-blas", "cpu-list")
 
 
