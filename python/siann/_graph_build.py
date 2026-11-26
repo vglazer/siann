@@ -31,13 +31,36 @@ def knn_graph(x: np.ndarray, metric: str, k: int = KNN_K, nprobe: int = KNN_NPRO
         ivf = IVF(x, metric, default_nlist(n), storage, "gpu" if on_gpu and gpu == "mlx" else
                   ("torch" if on_gpu else "cpu"), gpu=gpu)
     times["IVF"] = time.perf_counter() - t
+    kk, probes = min(k + 1, n), min(nprobe, ivf.nlist)
+    path = fastest_path(ivf, x, kk, probes, on_gpu)
     t = time.perf_counter()
-    found = ivf.search(x, min(k + 1, n), min(nprobe, ivf.nlist), "gpu-list" if on_gpu else "cpu-list")
-    times["search"] = time.perf_counter() - t
+    found = ivf.search(x, kk, probes, path)
+    times["search"], times["path"] = time.perf_counter() - t, path
     from ._cpu import without_own
     out = np.asarray(without_own(np.ascontiguousarray(found, dtype=np.int64),
                                  np.arange(n, dtype=np.int64), min(k, n - 1)), dtype=np.int64)
     return out, times
+
+
+SAMPLE = 4096             # rows each candidate scan is timed on before the whole search
+
+
+def fastest_path(ivf, x: np.ndarray, k: int, nprobe: int, on_gpu: bool) -> str:
+    """The scan that finds each row's k nearest fastest here, timed on a sample: at k = 64 the query-major scans
+    beat the list-major ones on every machine measured, and which device and coarse step wins differs (SIFT1M:
+    the CPU's query-major scan through BLAS on an M3 Max, 6.2 s against 9.0 s on its GPU; without BLAS on a
+    4-CPU Linux machine, 22 s against 39 s)."""
+    paths = ["cpu-query"] + (["cpu-query-blas"] if ivf.metric in ("l2", "ip") else []) + (["gpu-query"] if on_gpu else [])
+    if len(x) <= 4 * SAMPLE or len(paths) == 1:
+        return paths[-1] if on_gpu else paths[0]
+    q = x[np.random.default_rng(0).choice(len(x), SAMPLE, replace=False)]
+    rates = {}
+    for p in paths:
+        ivf.search(q[:256], k, nprobe, p)                               # warm-up: each device's copy built
+        t = time.perf_counter()
+        ivf.search(q, k, nprobe, p)
+        rates[p] = SAMPLE / (time.perf_counter() - t)
+    return max(rates, key=rates.get)
 
 
 def build_links(x: np.ndarray, metric: str, degree: int = 32, k: int = KNN_K, nprobe: int = KNN_NPROBE,

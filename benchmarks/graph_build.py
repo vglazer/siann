@@ -88,7 +88,7 @@ def main() -> None:
     sample = np.random.default_rng(0).choice(n, 1000, replace=False)
     true64 = siann.Index(xb, metric).search(xb[sample], KNN_K + 1).indices[:, 1:]
     print(f"  rough graph ({KNN_K} per vector by siann's IVF, nprobe {kw.get('nprobe', KNN_NPROBE)}): {time.perf_counter() - t:.1f} s "
-          f"(IVF {times['IVF']:.1f} s, search {times['search']:.1f} s); holds {recall(knn[sample], true64):.3f} of "
+          f"(IVF {times['IVF']:.1f} s, search {times['search']:.1f} s on {times['path']}); holds {recall(knn[sample], true64):.3f} of "
           f"each vector's true {KNN_K} nearest", flush=True)
 
     graphs = {}
