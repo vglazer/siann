@@ -283,7 +283,9 @@ def measure_routes(ivf: IVF, q: np.ndarray, nprobe: int, gpu: bool, k: int = CAL
         cpu_on, gpu_wins, cpu_exact = True, 0, ("cpu-exact",) if exact and "cpu-exact" in exact else ()
         exact_gpu_wins = 0
         for b in batches:
-            paths = ((("cpu-split",) if b == 1 else ("cpu-query",) + blas + ("cpu-list",)) + cpu_graph) if cpu_on else ()
+            # one query: split over 4 threads, or on one thread (faster on 4 CPUs: Music-100, 15.7k against 9.6k/s)
+            paths = ((("cpu-split", "cpu-query") + blas if b == 1 else ("cpu-query",) + blas + ("cpu-list",))
+                     + cpu_graph) if cpu_on else ()
             # the GPU's paths first: after the CPU's, a GPU left idle runs its next calls slower
             measured, slowest = time_paths(b, (gpu_paths if gpu else ()) + gpu_exact + paths + cpu_exact)
             if cpu_exact:                     # as the CPU's IVF: no longer timed once the GPU has clearly won

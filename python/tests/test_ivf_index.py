@@ -54,7 +54,7 @@ def test_routes_are_measured_at_build():
     assert "routing measured" in str(index.plan)
     r = index._routes
     assert {"cpu_below", "gpu_list_from", "cpu_list_from", "cpu_blas_from"} <= set(r)
-    assert index._ivf_path(1, None) in ("cpu-split", "gpu-query", "gpu-list")
+    assert index._ivf_path(1, None) in ("cpu-split", "cpu-query", "cpu-query-blas", "gpu-query", "gpu-list")
     for b in (1, 16, 300, 5000):                                   # every batch has a path, on its device
         path = index._ivf_path(b, None)
         assert path.split("-")[0] == ("cpu" if b < r["cpu_below"] else "gpu") or not siann.gpu_available()

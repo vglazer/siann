@@ -15,11 +15,13 @@ PyTorch's MPS backend in ``siann.torch_kernels`` and ``siann.ivf_torch``), and t
 """
 from importlib.metadata import version as _version
 
-from . import _build  # noqa: F401 (checks the processor before the Rust extension loads)
+from . import _build  # first: checks the processor before the Rust extension loads
 from ._index import METRICS, Index, Plan, SearchResult
 from ._index import _gpu_available as gpu_available
 from ._profile import DEFAULT as DEFAULT_PROFILE
 from ._profile import Profile, tune, use_profile
+
+_build.warn_if_spinning()
 
 __version__ = _version("siann")
 __all__ = [

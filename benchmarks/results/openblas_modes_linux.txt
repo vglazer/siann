@@ -1,0 +1,7 @@
+  import siann
+      spin: OpenBLAS spins True ; Index.search q/s at 1, 10, 100: 12,630 / 21,033 / 39,553; paths ['cpu-graph', 'cpu-query-blas', 'cpu-query-blas']; exact on the CPU, batch of 1,000: 1,199 q/s 
+  import siann
+one-thread: OpenBLAS spins True ; Index.search q/s at 1, 10, 100: 12,375 / 36,345 / 61,805; paths ['cpu-graph', 'cpu-query', 'cpu-query-blas']; exact on the CPU, batch of 1,000: 513 q/s libscipy_openblas64_-1b7162d6.so: scipy_openblas_set_num_threads64_(1)
+  import siann
+   no-blas: OpenBLAS spins True ; Index.search q/s at 1, 10, 100: 12,117 / 30,159 / 16,848; paths ['cpu-graph', 'cpu-graph', 'cpu-list']; exact on the CPU, batch of 1,000: 1,177 q/s 
+     clean: OpenBLAS spins False; Index.search q/s at 1, 10, 100: 12,435 / 40,543 / 91,078; paths ['cpu-graph', 'cpu-query-blas', 'cpu-query-blas']; exact on the CPU, batch of 1,000: 1,576 q/s 

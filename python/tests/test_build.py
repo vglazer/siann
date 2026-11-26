@@ -45,3 +45,20 @@ def test_plan_says_when_openblas_spins(monkeypatch):
     assert "OPENBLAS_THREAD_TIMEOUT" not in str(siann.Index(x, "l1", device="cpu").plan)
     monkeypatch.setattr(_build, "openblas_spins", lambda: False)
     assert "OPENBLAS_THREAD_TIMEOUT" not in str(siann.Index(x, "l2", device="cpu").plan)
+
+
+
+def test_importing_numpy_first_warns_only_where_openblas_spins():
+    import subprocess
+    import sys
+    snippet = ("import warnings; warnings.simplefilter('always'); import numpy; import siann; from siann import _build;"
+               " print('spins' if _build.openblas_spins() else 'quiet')")
+    env = {k: v for k, v in __import__("os").environ.items() if k != "OPENBLAS_THREAD_TIMEOUT"}
+    r = subprocess.run([sys.executable, "-c", snippet], check=False, capture_output=True, text=True,
+                       encoding="utf-8", env=env)
+    assert r.returncode == 0, r.stderr
+    assert ("OPENBLAS_THREAD_TIMEOUT=4" in r.stderr) == (r.stdout.strip() == "spins")
+    env["OPENBLAS_THREAD_TIMEOUT"] = "4"                              # the user's own setting: no warning
+    r = subprocess.run([sys.executable, "-c", snippet], check=False, capture_output=True, text=True,
+                       encoding="utf-8", env=env)
+    assert "OPENBLAS_THREAD_TIMEOUT=4" not in r.stderr and r.stdout.strip() == "quiet"
