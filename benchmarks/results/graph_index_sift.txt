@@ -1,10 +1,10 @@
 sift, l2: 1,000,000 vectors, 128 dimensions; 1,000 calibration queries, recall@10 on 9,000 others; queries per second
-  graph index: CAGRA through mlxvs 0.16.1 (32 links per vector), built in 4.5 s; search width 41 reaches recall@10 0.950 (target 0.95) on the same sample
-  routing measured in 1.5 s: below 17 queries on the CPU (single queries split over 4 threads); larger batches on the GPU through the graph
+  graph index: CAGRA (32 links per vector), built in 4.5 s by mlxvs 0.16.1; on the GPU, search width 40 reaches recall@10 0.950; on the CPU, ef 41 reaches 0.952 (target 0.95, on the same sample)
+  routing measured in 5.0 s: queries per search 1-127: the CPU, through the graph; 128 and up: the GPU, through the graph
 
                              build              batch 1: recall, path, q/s            batch 100: recall, path, q/s          batch 9,000: recall, path, q/s
-  siann, with the graph       8.5s    0.955      cpu-split        12,316    0.956      gpu-graph       139,822    0.956      gpu-graph       725,882
-  siann, IVF only             3.6s    0.955      cpu-split        12,453    0.955      gpu-query        94,388    0.955       gpu-list       149,017
-  FAISS HNSW, float32        10.2s    0.955          ef 41        10,731    0.957          ef 42        79,863    0.957          ef 42        98,508
-  FAISS HNSW, uint8           5.9s    0.955          ef 41        27,709    0.957          ef 42       145,630    0.957          ef 42       211,034
-  mlxvs CAGRA                 4.6s    0.956       itopk 41         1,801    0.956       itopk 41       180,078    0.956       itopk 41       825,865
+  siann, with the graph      12.4s    0.958      cpu-graph        24,959    0.958      cpu-graph       139,212    0.955      gpu-graph       714,371
+  siann, IVF only             4.1s    0.955      cpu-split        11,757    0.955      cpu-query        46,466    0.955       gpu-list       234,458
+  FAISS HNSW, float32        10.1s    0.959          ef 43        10,554    0.959          ef 43        79,346    0.955          ef 41       100,902
+  FAISS HNSW, uint8           5.6s    0.959          ef 43        26,803    0.959          ef 43       145,552    0.955          ef 41       227,608
+  mlxvs CAGRA                 4.5s    0.960       itopk 43         1,830    0.960       itopk 43       178,785    0.956       itopk 41       832,495

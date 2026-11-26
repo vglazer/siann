@@ -262,9 +262,10 @@ search returns, averaged over the queries: at 0.95, 95 of every 100 true neighbo
 approximate search is judged: a faster search at lower recall is not a better one, so methods are compared
 at the same recall, as in siann's benchmarks.
 
-With a recall target, siann builds an IVF, finds the smallest nprobe that reaches the target on a sample of
-queries (*calibration*), keeps the IVF only if it beats exact search on the sample, and times its CPU and GPU
-scans on the sample to route each batch; the plan reports every choice. The sample is 1,000 of the index's
+With a recall target, siann builds an IVF and a graph (next section), finds the smallest nprobe and graph
+search width that reach the target on a sample of queries (*calibration*), and times every path, exact search
+included, on the CPU and the GPU, on the sample, to route each batch size to the fastest; the plan reports
+every choice. The sample is 1,000 of the index's
 own vectors unless you pass queries as `calibration_queries` (more at the end of this section); here, 1,000
 of the queries are passed.
 """),
@@ -351,6 +352,63 @@ on its own vectors misses the target, and on Music-100 it scans five times the l
 a sample of real queries fixes both, and times the routing on them too
 ([TUNING](https://github.com/vglazer/siann/blob/main/TUNING.md#calibration-meeting-the-recall-target-on-your-queries)
 has the numbers).
+"""),
+    md("""
+## Graph search
+
+**A graph index** links each vector to some of its near neighbors (here 32) and searches by walking the
+links from a few entry vectors, keeping the best candidates found: a query touches far fewer vectors than an
+IVF scans. siann's graphs are CAGRA graphs, the graph index of NVIDIA's cuVS. Where
+[mlxvs](https://github.com/mikepapadim/mlxvs) is installed (`pip install siann[graph]`, Apple silicon), it
+builds them on the GPU and searches GPU batches; elsewhere siann builds them itself, on any machine, and
+searches them on the CPU.
+
+A graph links each vector to its near neighbors, so data made of tight clusters far apart from each other,
+as these 1,000 are, leaves each cluster linked only to itself, and a search reaches only the clusters it
+starts in. siann measures that when it builds the graph, and the index above has declined it: its plan says
+why, and it searches with its IVF.
+"""),
+    code("""
+for line in str(approx.plan).splitlines():
+    if "graph" in line or "queries per search" in line:
+        print(line.strip())
+"""),
+    md("""
+On data without such gaps a graph serves well. siann's own builder works for every metric, so L1 and
+L-infinity get graphs too, which CAGRA itself does not offer. `kind="graph"` sends every batch through the
+graph; `nprobe=` on a search sends it through the IVF instead: here the graph and the IVF of one L1 index
+over 100,000 Gaussian vectors in 16 dimensions, on batches of 100.
+"""),
+    code("""
+g_xb = rng.standard_normal((100_000, 16), dtype=np.float32)
+g_xq = rng.standard_normal((2_000, 16), dtype=np.float32)
+l1 = siann.Index(g_xb, "l1", recall=0.95, calibration_queries=g_xq[:1000], kind="graph")
+g_rest = g_xq[1000:]
+l1_truth = siann.Index(g_xb, "l1").search(g_rest, 10).indices
+
+
+def rate_on(fn, q, b=100):
+    fn(q[:b])
+    start = time.perf_counter()
+    for s in range(0, len(q), b):
+        fn(q[s:s + b])
+    return len(q) / (time.perf_counter() - start)
+
+
+print(f"graph: recall@10 {recall(l1.search(g_rest, 10).indices, l1_truth):.3f}, "
+      f"{rate_on(lambda q: l1.search(q, 10), g_rest):,.0f} queries per second")
+print(f"IVF (nprobe {l1.nprobe}): recall@10 {recall(l1.search(g_rest, 10, nprobe=l1.nprobe).indices, l1_truth):.3f}, "
+      f"{rate_on(lambda q: l1.search(q, 10, nprobe=l1.nprobe), g_rest):,.0f} queries per second")
+"""),
+    md("""
+Both meet the target. On random vectors, with no structure for either method to exploit, they run at about
+the same speed (32 to 64 dimensions measured the same); on real data the graph pulls ahead, by L1 on SIFT1M
+6.2 times the IVF at recall 0.95
+([BENCHMARKS](https://github.com/vglazer/siann/blob/main/BENCHMARKS.md#graphs-for-l1-and-l-infinity)),
+which is why siann times both and routes each batch to the faster.
+
+The graph and the IVF find different neighbors, each calibrated to the target on its own, so an index's
+results can depend on the batch size it routes; the plan says so. A saved index keeps its graph.
 """),
     md("""
 ## Saving and loading an index

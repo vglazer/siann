@@ -7,18 +7,18 @@ machine and a few datasets. This page covers what each choice depends on, what i
 default, and what to do when the defaults do not fit your data or your machine.
 
 Two words name the two kinds of measurement. **Calibration** makes an approximate index meet its recall
-target: it finds the fewest lists a query must scan (nprobe) on a sample of queries. **Tuning** measures
-where searches run fastest, on the CPU or the GPU and with which scan; it changes only speed, since every
-route returns the same neighbors, checked against exact search. The two meet in approximate search, where
-the same sample of queries calibrates the index and times its routes.
+target: it finds the fewest lists a query must scan (nprobe), and how wide a graph search must run, on a
+sample of queries. **Tuning** measures where searches run fastest: exact search, the IVF or the graph, on the
+CPU or the GPU, and with which scan. Every scan of the IVF returns the same neighbors, checked against exact
+search; the graph finds neighbors of its own, calibrated to the same target. The two meet in approximate
+search, where the same sample of queries calibrates the index and times its routes.
 
 ## What siann decides, and what you can do
 
 | Decision | Measured on, by default | To improve it |
 | --- | --- | --- |
-| nprobe, for a recall target | 1,000 of the index's own vectors, when it is built | pass `calibration_queries=`, a sample of your queries, or later `index.calibrate(queries)` |
-| Exact search or an IVF | the same sample, both timed | pass `calibration_queries=`; `kind="exact"` or `"ivf"` to choose |
-| Approximate search: CPU or GPU, which scan | the same sample, at 1 to 4,096 queries per batch | pass `calibration_queries=`; a profile's `ivf` thresholds to fix them |
+| nprobe and the graph's search widths, for a recall target | 1,000 of the index's own vectors, when it is built | pass `calibration_queries=`, a sample of your queries, or later `index.calibrate(queries)` |
+| Exact search, the IVF or the graph, CPU or GPU, which scan, by batch size | the same sample, every path timed at 1 to 4,096 queries per batch | pass `calibration_queries=`; `kind="exact"`, `"ivf"` or `"graph"` to choose the method; a profile's `ivf` thresholds to fix the routes |
 | Exact search: CPU or GPU | siann's default profile, from an Apple M3 Max and about a million vectors | `siann.tune(xb)` on your data and machine |
 | When an index that changes re-clusters | its lists' balance and size at each merge of added vectors | `index.recluster()`, when you choose |
 
@@ -38,6 +38,12 @@ calibrating on them pays (a million vectors, target 0.95, recall measured on 9,0
 | SIFT1M, L2 | nprobe 38, recall 0.940: below the target | nprobe 46, recall 0.955 |
 | Music-100, inner product | nprobe 129, recall 0.986: five times the lists needed | nprobe 25, recall 0.946, 2.0-2.8 times faster |
 
+Calibrated on 1,000 queries, the target holds on average: recall on new queries lands within a few
+thousandths of it, on either side, for the IVF and the graph alike (Music-100, target 0.95, on 9,000 other
+queries: the IVF 0.947, the graph 0.951 on the GPU and 0.957 on the CPU;
+[BENCHMARKS](BENCHMARKS.md#calibration-on-new-queries)). For a floor rather than an
+average, ask for a little more, `recall=0.96` for at least 0.95.
+
 Pass queries when you have them, drawn like the ones the index will serve; 1,000 are used. An index built
 before you had them, or grown from empty, takes them later: `index.calibrate(queries)` recalibrates nprobe
 on them at once and keeps them for every later recalibration. To trade recall
@@ -52,16 +58,25 @@ On SIFT1M at nprobe 46 the CPU is faster up to 16 queries per batch and the GPU'
 Music-100 at nprobe 25 the CPU wins up to 64 and the GPU's query-major scan at every size measured, up to
 4,096 (`benchmarks/ivf_routing.py`).
 
-So each index times its scans when it is built, on 1 to 4,096 of its calibration queries, in about one to
-four seconds for a million vectors, and the plan reports the thresholds. A measured route replaces the
-default (single queries on the CPU, the GPU's query-major scan below 1,000 queries, its list-major scan
-from 1,000) only where it was at least 10% faster. Like calibration, the timing is only as representative
-as the queries: on its own vectors, Music-100's index sends batches of 512 to the list-major scan, which
+A graph adds paths of its own, and a band of batch sizes where it wins: on SIFT1M at recall 0.95 the plan
+reads "queries per search 1-127: the CPU, through the graph; 128 and up: the GPU, through the graph", and on
+Music-100 "1: the CPU, split over 4 threads; 2-3: the CPU, query-major; 4-127: the CPU, through the graph;
+128 and up: the GPU, through the graph" (`graph_index_*.txt`). Exact search is a route too, taken at the batch
+sizes where it is fastest.
+
+So each index times every path when it is built, at 1 to 4,096 of its calibration queries, in about 4-5
+seconds for a million vectors of 100-128 dimensions (40 s at 1,536), and the plan reports the resulting table
+as ranges of batch sizes. A measured path replaces the default (single queries on the CPU, the GPU's
+query-major scan below 1,000 queries, its list-major scan from 1,000) only where it was at least 10% faster.
+The timings carry noise of their own, a few tens of percent between runs on the GPU, so a crossover can land
+a size away from where a longer measurement would put it. Like calibration, the timing is only as
+representative as the queries: on its own vectors, Music-100's index sends batches of 512 to the list-major scan, which
 runs at 0.77 times the speed of the default on real queries. Passing `calibration_queries=` fixes both.
 An index loaded on another machine re-measures its routes on the same saved sample
 ([IMPLEMENTATION](IMPLEMENTATION.md#saving-and-loading)).
 
-To fix the thresholds instead, give a profile thresholds of its own: `siann.tune(xb, xq, recall=0.95)`
+To fix the routes instead (the IVF's alone: a profile's thresholds take no graph or exact routes), give a
+profile thresholds of its own: `siann.tune(xb, xq, recall=0.95)`
 measures them on your data, or set them by hand:
 
 ```python
@@ -114,15 +129,25 @@ siann's CPU searches by L2, cosine and inner product run a BLAS multiply and the
 cores, so spinning threads slow the Rust code down: exact search and an IVF batch whose coarse step goes
 through BLAS ([On Linux](BENCHMARKS.md#on-linux)). OpenBLAS's `OPENBLAS_THREAD_TIMEOUT` puts its threads
 to sleep sooner, but it is read only once, when NumPy loads. siann sets it to 4 (the shortest wait) unless
-it is already set, which takes effect when siann is imported before NumPy:
+it is already set, which takes effect only when siann is imported before NumPy:
 
 ```python
 import siann            # first: OpenBLAS loads with the short timeout
 import numpy as np
 ```
 
-Where NumPy came first, `index.plan` says so. Setting the variable before Python starts works whatever
-the order (`export OPENBLAS_THREAD_TIMEOUT=4`). Other code in the same process that calls OpenBLAS many
+Where NumPy came first, importing siann warns (a `RuntimeWarning`) and `index.plan` says so. Setting the
+variable before Python starts works whatever the order (`export OPENBLAS_THREAD_TIMEOUT=4`). It matters:
+on 4 Linux CPUs, Music-100 at recall 0.95 (queries per second; `benchmarks/openblas_modes.py`):
+
+| | Batches of 10 | Batches of 100 | Exact search on the CPU, batches of 1,000 |
+| --- | --- | --- | --- |
+| NumPy imported first: OpenBLAS's threads spin | 21,033 | 39,553 | 1,199 |
+| siann imported first (or the variable set) | 40,543 | 91,078 | 1,576 |
+
+Limiting OpenBLAS to one thread instead (`threadpoolctl`, or the function OpenBLAS exports) leaves no thread to
+spin, and recovers most of the approximate search (36,345 and 61,805), but halves exact search on the CPU (513),
+whose multiply then runs on one core. Other code in the same process that calls OpenBLAS many
 times in a row may run slightly slower with it, as its threads wake for each call. On a Mac, NumPy uses
 Apple's Accelerate, which does not spin, and none of this applies.
 

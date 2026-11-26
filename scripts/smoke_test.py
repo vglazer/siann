@@ -1,5 +1,6 @@
 """Checks an installed siann (a built wheel) on the CPU: exact search by every metric against NumPy, an
-IVF reaching its recall target, and a save and load that return the same neighbors. The release workflow
+IVF reaching its recall target, a graph built by siann's own builder reaching it too, and a save and load that
+return the same neighbors. The release workflow
 runs it on each wheel, on the wheel's own platform; run it from anywhere but the repository's python/
 folder, so that the installed package is the one imported.
 
@@ -49,8 +50,21 @@ def main() -> None:
         loaded = siann.Index.load(path, device="cpu")
         assert (loaded.search(qc, 10).indices == found).all()
 
+    xg = rng.standard_normal((20_000, 16), dtype=np.float32)
+    qg = rng.standard_normal((200, 16), dtype=np.float32)
+    graph = siann.Index(xg, "l1", recall=0.9, kind="graph", device="cpu", calibration_queries=qg[:100])
+    truth = siann.Index(xg, "l1").search(qg[100:], 10, device="cpu").indices
+    got = graph.search(qg[100:], 10).indices
+    graph_recall = np.mean([len(set(a) & set(b)) / 10 for a, b in zip(got, truth)])
+    assert graph._ivf.graph is not None and graph_recall >= 0.85, graph_recall
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "graph.siann"
+        graph.save(path)
+        assert (siann.Index.load(path, device="cpu").search(qg[100:], 10).indices == got).all()
+
     print(f"siann {siann.__version__}: exact search by {', '.join(siann.METRICS)}, IVF recall {recall:.3f}, "
-          f"save and load: ok (GPU {'found' if siann.gpu_available() else 'not found'})")
+          f"graph recall {graph_recall:.3f} (built by {graph._ivf.graph.builder}), save and load: ok "
+          f"(GPU {'found' if siann.gpu_available() else 'not found'})")
 
 
 if __name__ == "__main__":

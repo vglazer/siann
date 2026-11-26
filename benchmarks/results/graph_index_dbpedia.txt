@@ -1,0 +1,9 @@
+dbpedia, l2: 990,000 vectors, 1536 dimensions; 1,000 calibration queries, recall@10 on 9,000 others; queries per second
+  graph index: CAGRA (32 links per vector), built in 25.7 s by mlxvs 0.16.1; on the GPU, search width 76 reaches recall@10 0.950; on the CPU, ef 64 reaches 0.951 (target 0.95, on the same sample)
+  routing measured in 40.0 s: queries per search 1 and up: the GPU, through the graph
+
+                             build              batch 1: recall, path, q/s            batch 100: recall, path, q/s          batch 9,000: recall, path, q/s
+  siann, with the graph      85.2s    0.961      gpu-graph           695    0.956      gpu-graph        24,692    0.956      gpu-graph        59,270
+  siann, IVF only            27.7s    0.948      cpu-split           937    0.948      gpu-query         6,057    0.948       gpu-list        23,362
+  FAISS HNSW, float32        96.5s    0.961          ef 95         1,916    0.957          ef 81         6,251    0.956          ef 80         6,455
+  mlxvs CAGRA                22.0s    0.961       itopk 88           701    0.956       itopk 79        38,598    0.956       itopk 79        62,651

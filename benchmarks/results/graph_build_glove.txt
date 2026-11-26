@@ -1,10 +1,10 @@
 glove: 1,183,514 x 100, l2; graphs of 32 links per vector searched by siann's CPU search on 2,000 test queries
-  rough graph (64 per vector by siann's IVF, nprobe 16): 17.5 s (IVF 1.9 s, search 15.0 s); holds 0.635 of each vector's true 64 nearest
+  rough graph (64 per vector by siann's IVF, nprobe 16): 14.1 s (IVF 1.8 s, search 11.1 s on gpu-query); holds 0.635 of each vector's true 64 nearest
 
   graph     built   recall@10 / queries per second at ef    16    24    32    48    64    96   128   192   256
-  siann     20.1s   0.534/213k  0.608/156k  0.661/120k  0.721/94k  0.765/74k  0.810/55k  0.840/44k  0.874/31k  0.896/24k   (IVF 1.8 s, search 14.9 s, optimize 3.2 s)
-  mlxvs      6.3s   0.541/204k  0.615/158k  0.662/120k  0.724/87k  0.759/77k  0.804/53k  0.831/43k  0.864/30k  0.887/24k   (mlxvs's default build)
+  siann     16.8s   0.534/184k  0.608/164k  0.661/118k  0.721/102k  0.765/81k  0.810/58k  0.840/46k  0.874/32k  0.896/24k   (IVF 1.9 s, search 11.1 s, optimize 3.2 s)
+  mlxvs     30.7s   0.538/195k  0.611/166k  0.657/126k  0.725/93k  0.763/75k  0.809/53k  0.838/39k  0.875/23k  0.899/13k   (mlxvs's default build)
 
-  at recall 0.95:
+  at recall 0.95 (ef, or nprobe for the IVF):
     siann  not reached
     mlxvs  not reached

@@ -44,10 +44,10 @@ GPU) and against mlxvs 0.16.1 on the GPU.
 | Exact, L1 or L-infinity | L1 **18.5-25x**, L-infinity **47-49x** (its CPU; neither GPU library has these metrics) | |
 | Exact, L2, cosine or inner product, batches of 100 | **2.7-2.9x** (its GPU) | **2.6-3.8x** in batches; 1.1-1.2x at 1,536 dimensions |
 | Exact, batches of 10,000 | L2 and cosine **5.6-6.0x** (its GPU), inner product **3.5x** (its CPU) | |
-| Approximate, single queries (HNSW on the CPU) | split over 4 threads, as siann answers them: GloVe **1.5-3.1x**, SIFT 0.45x at recall 0.83 and **1.2-1.6x** from 0.97; on one thread (many concurrent queries): GloVe **1.6x**, Music-100 0.85-1.4x, SIFT 0.64-0.73x | |
-| Approximate, batches of 100 | GloVe **1.2-1.8x**, Music-100 0.77-1.05x, SIFT 0.67-0.84x below recall 0.99 (HNSW) | CAGRA: GloVe and Music-100 level, SIFT 0.67-0.83x |
-| Approximate, batches of 10,000 | GloVe **5.0x**, Music-100 **2.1-2.3x**, SIFT **1.2-1.3x** (HNSW) | CAGRA: GloVe level, Music-100 0.67-0.69x, SIFT 0.38-0.48x |
-| Approximate, 1,536 dimensions (100,000 vectors) | single queries 0.37-0.42x (HNSW) | CAGRA: 0.35-0.53x |
+| Approximate, single queries | SIFT 0.93x, Music-100 0.72x, GloVe **1.5-3.1x** (HNSW, its fastest variant) | CAGRA on the GPU: SIFT and Music-100 **10-14x** |
+| Approximate, batches of 100 | SIFT 0.96x, Music-100 0.90x, GloVe **1.2-1.8x** (HNSW) | CAGRA: SIFT 0.78x, Music-100 0.86x, GloVe level |
+| Approximate, batches of 9,000-10,000 | SIFT **3.1x**, Music-100 **2.8x**, GloVe **5.0x** (HNSW) | CAGRA: SIFT 0.86x, Music-100 0.94x, GloVe level |
+| Approximate, 1,536 dimensions (a million vectors) | single queries 0.36x; batches of 100 **3.9x**, of 9,000 **9.2x** (HNSW) | CAGRA: single queries level, batches 0.64-0.95x |
 
 FAISS's GPU IVF is no faster than its own HNSW at matched recall in any case measured ("FAISS's Metal
 path on the GPU"), so HNSW is FAISS's approximate method on the Mac.
@@ -863,6 +863,130 @@ median microseconds at the nearest recall (`graph_faiss_*.txt`):
 - **hnswlib finds the same recall on the same graph, but searches slowly on Apple silicon** (its SIMD is
   for x86): 1.0-1.4 times FAISS's time at 100-128 dimensions, about 4 times at 1,536 (`graph_cpu_*.txt`).
 
+## The graph index
+
+siann's graph index ([IMPLEMENTATION](IMPLEMENTATION.md#graph-approximate-search)): CAGRA graphs of 32
+links per vector, built by mlxvs or by siann's own builder, searched by siann's Rust code on the CPU and
+through mlxvs on the GPU.
+
+### Building graphs
+
+*Reproduce with `graph_build.py --dataset sift|music100|glove`; on a machine without a GPU,
+`graph_build.py --dataset sift --only-siann`; cuVS's graph with `benchmarks/colab/cuvs_cagra.ipynb`.*
+
+Three builders' graphs over the same vectors, each searched by siann's CPU search on 2,000 queries, against
+exact search: the search width (ef) at which each reaches recall@10 0.95, and the queries per second there,
+on all 16 threads of an M3 Max (`graph_build_*.txt`, `cuvs_cagra_t4.txt`):
+
+| Dataset | Graph | Built in | Width for 0.95 | Queries per second at 0.95 |
+| --- | --- | ---: | ---: | ---: |
+| SIFT1M | siann's | 11.2 s | 39.8 | 300,670 |
+| | mlxvs's | 18.1 s | 39.7 | 312,055 |
+| | cuVS's (a T4) | 7.0 s | 46.5 | 288,331 |
+| Music-100 | siann's | 12.0 s | 58.6 | 183,456 |
+| | mlxvs's | 23.5 s | 61.7 | 169,765 |
+| GloVe-100 | siann's | 16.8 s | recall 0.896 at 256 | |
+| | mlxvs's | 30.7 s | recall 0.899 at 256 | |
+
+- **siann's graphs are as good as mlxvs's:** the same width for the same recall within 6%, the same speed
+  within 10%, and on SIFT a narrower width than cuVS's own graph needs. Build times vary between runs, mlxvs's
+  most: 4.5-5.1 s for SIFT1M and Music-100 when built first in a process (`graph_index_*.txt`), 18-31 s here,
+  after siann's build has kept the machine busy.
+- **The first step can be rough:** each vector's 64 nearest found with 16 lists probed holds 78% of the true
+  ones on SIFT1M (83% on Music-100, 64% on GloVe), and the pruned graph reaches 0.95 at a width of 40, against
+  35 from 64 lists probed (96%), at the same speed, built in 11.2 s against 38.8 s.
+- **On a machine without a GPU,** 4 Linux CPUs, SIFT1M's graph took 49.9 s (k-means 20 s, the nearest
+  neighbors 23 s, the pruning 6.7 s) and needs the same width, 39.4 (`graph_build_sift_linux_cpu.txt`).
+  Inside `siann.Index` the IVF already exists, so the graph adds about 30 s there.
+- **GloVe is hard for graphs at this degree:** neither builder's graph reaches 0.95 by ef 256, and an
+  index over GloVe routes to its IVF instead.
+
+### The graph through siann.Index
+
+*Reproduce with `graph_index.py --dataset sift|music100|dbpedia` (on the Mac); on Linux,
+`OPENBLAS_THREAD_TIMEOUT=4 cpu_graph.py --dataset sift|music100 --build-index`.*
+
+`siann.Index(xb, metric, recall=0.95)` with its graph, calibrated on 1,000 of the dataset's queries and searched
+on 9,000 others at its own routes, against FAISS's HNSW (M = 32, its faster variant: byte vectors on SIFT) at
+the smallest efSearch that reaches siann's recall, and mlxvs's CAGRA at the smallest `itopk_size` that does;
+queries per second on the M3 Max (`graph_index_sift.txt`, `graph_index_music100.txt`, `graph_index_dbpedia.txt`):
+
+| Dataset | Batch | siann's path | siann | FAISS HNSW | mlxvs CAGRA |
+| --- | ---: | --- | ---: | ---: | ---: |
+| SIFT1M | 1 | CPU graph | 24,959 | 26,803 | 1,830 |
+| | 100 | CPU graph | 139,212 | 145,552 | 178,785 |
+| | 9,000 | GPU graph | 714,371 | 227,608 | 832,495 |
+| Music-100 | 1 | CPU IVF, split | 18,548 | 25,814 | 1,817 |
+| | 100 | CPU graph | 118,209 | 131,035 | 138,250 |
+| | 9,000 | GPU graph | 484,408 | 173,039 | 513,000 |
+| DBpedia, 990,000 x 1,536 | 1 | GPU graph | 695 | 1,916 | 701 |
+| | 100 | GPU graph | 24,692 | 6,251 | 38,598 |
+| | 9,000 | GPU graph | 59,270 | 6,455 | 62,651 |
+
+- **Large batches go to the graph on the GPU,** 2.8-9.2 times FAISS's HNSW, within 5-14% of mlxvs's CAGRA
+  searching alone: siann's GPU path is mlxvs's search plus siann's own ranking of the results.
+- **Small batches go to the graph on the CPU,** within 4-10% of FAISS's HNSW on SIFT and Music-100;
+  Music-100's single queries go to the IVF, 0.72 times FAISS's HNSW. Single queries run 10-14 times as fast
+  as mlxvs's GPU search, which pays a GPU call's fixed cost for each.
+- **At batches of 100, mlxvs's CAGRA on the GPU is 1.17-1.28 times siann's CPU graph,** which routing chose
+  there: siann's own GPU path, the same CAGRA search, would probably have been faster, so the build's timing put the
+  CPU-GPU crossover too high at that size on these runs.
+- **At 1,536 dimensions** the graph on the GPU leads FAISS 3.9-9.2 times from 100 queries; single queries
+  run at 0.36 times FAISS's HNSW, on the GPU as mlxvs's do, the CPU's paths being slower there.
+- **Building:** siann's index with its graph took 12.4 s (SIFT1M), 11.6 s (Music-100) and 85.2 s (DBpedia),
+  against FAISS's HNSW in 5.6, 8.6 and 96.5 s.
+
+On 4 Linux CPUs (a Docker machine on the M3 Max, no GPU), with siann's index and graph built there by siann's
+own builder, against FAISS's HNSW there, OpenBLAS's threads set to sleep for both (`cpu_graph_built_linux.txt`):
+
+| Dataset | Batch 1 | 10 | 100 |
+| --- | ---: | ---: | ---: |
+| SIFT1M: siann / FAISS HNSW (bytes) | 17,728 / 15,339 (**1.16x**) | 35,841 / 42,819 (0.84x) | 53,096 / 53,796 (0.99x) |
+| Music-100: siann / FAISS HNSW | 13,751 / 17,642 (0.78x) | 40,953 / 43,756 (0.94x) | 93,370 / 52,392 (**1.78x**) |
+
+On Linux Music-100's batches of 10 and 100 go to the IVF with its coarse step through BLAS, and its single
+queries to the graph, which there the IVF's single-threaded scan beats (15,700 against 12,600 per second
+measured directly, `search_overhead.py`): routing's timing of single queries on that machine does not match
+what a stream of different queries gets, and siann's single queries trail FAISS's by that much.
+
+### Graphs for L1 and L-infinity
+
+*Reproduce with `graph_build.py --dataset sift --metric l1 --ivf` and `--metric linf --ivf`.*
+
+siann's builder and CPU search work by any metric, so an index by L1 or L-infinity gets a graph too, which
+neither mlxvs nor cuVS offers. On SIFT1M, against siann's own IVF on the CPU, both searching 2,000 queries on
+16 threads (`graph_build_sift_l1.txt`, `graph_build_sift_linf.txt`):
+
+- **L1:** at recall 0.95 the graph runs at 242,482 queries per second (ef 61), the IVF at 38,920
+  (nprobe 54): **6.2 times** as fast. The graph was built in 20.1 s.
+- **L-infinity:** neither reaches 0.95 in the widths tried (the graph 0.864 at ef 256, the IVF 0.770 at
+  nprobe 128), and at matched recall the graph is again about 6 times as fast (around 0.77: 124,000
+  against 19,000 queries per second). SIFT's integer coordinates make L-infinity distances tie massively,
+  and recall counted by matching ids misses the ties; siann's calibration counts them as found, so it
+  reaches a target at a smaller width than these figures suggest.
+
+### Calibration on new queries
+
+*Reproduce with `graph_calibration.py --dataset music100`.*
+
+How well a recall target calibrated on 1,000 queries holds on 9,000 others, on Music-100 at target 0.95,
+each recall with its standard error over the queries (`graph_calibration_music100.txt`):
+
+| Search | Width calibrated | On the 1,000 calibration queries | On 9,000 others |
+| --- | ---: | --- | --- |
+| IVF | nprobe 25 | 0.950 ± 0.004 | 0.947 ± 0.001 |
+| Graph on the CPU | ef 57 | 0.950 ± 0.006 | 0.957 ± 0.002 |
+| Graph on the GPU | itopk 63 | 0.951 ± 0.006 | 0.951 ± 0.002 |
+
+- **The target holds on average,** within a few thousandths either way: the calibration sample itself
+  estimates recall to about ±0.004 for the IVF and ±0.006 for the graph, whose recall varies more from query
+  to query, and siann takes the smallest width at which the sample reaches the target.
+- **Each build's graph differs a little** (mlxvs's build is not deterministic), and with it the width
+  calibrated, so where recall lands within that spread varies from one build to the next.
+- **A margin makes the target a floor rather than an average,** at the cost of a wider search: for the graph
+  on the CPU, the target plus 0.005 calibrates to ef 62 (0.960 on the others) and plus 0.01 to ef 70 (0.964),
+  against ef 57. siann leaves the margin to the target, so that `recall=0.96` buys it.
+
 ## Inner product
 
 *Reproduce with `backends.py --dataset glove-raw|music100 --metrics ip`, `blas_l2.py --metric ip`,
@@ -980,8 +1104,9 @@ Exact search, siann's queries per second as a multiple of FAISS's flat index, by
 | L1 | 1.87 | 2.17 | 2.53 | 2.67 | 1.93 | 1.94 | 1.65 | 2.07 |
 | L-infinity | 20 | 29 | 30 | 34 | 15 | 17 | 14 | 18 |
 
-Approximate search by L2: `siann.Index(recall=0.95)` calibrated on 1,000 separate queries reaches recall
-0.961 at nprobe 9. FAISS's IVF-Flat, on the same number of lists, reaches 0.972 at nprobe 10, and its HNSW
+Approximate search by L2, through siann's IVF: `siann.Index(recall=0.95, kind="ivf")` calibrated on 1,000
+separate queries reaches recall 0.961 at nprobe 9. (With its graph, on real datasets, see [The graph through
+siann.Index](#the-graph-through-siannindex).) FAISS's IVF-Flat, on the same number of lists, reaches 0.972 at nprobe 10, and its HNSW
 (M 32) 0.968 at efSearch 12, the first settings at or above siann's recall. siann's queries per second as a
 multiple of each:
 

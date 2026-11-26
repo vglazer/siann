@@ -236,11 +236,15 @@ class Index:
     or "ip" (inner product).
 
     Without ``recall``, search is exact: the results are the true k nearest neighbors. With a target such as
-    ``recall=0.95``, siann builds an IVF (``kind="auto"``), calibrates how many lists each query probes
-    (nprobe) so that a sample of the index's own vectors reaches that recall@10, times it against exact
-    search on that sample, and keeps whichever is faster; ``kind="exact"`` or ``"ivf"`` overrides the
-    choice, ``nlist`` the number of lists and ``storage`` ("float32", "float16", "uint8") the lists'
-    type, and ``search(..., nprobe=)`` the calibrated nprobe. The target holds for queries like the
+    ``recall=0.95``, siann builds an IVF and a graph (``kind="auto"``; the graph by mlxvs where it is
+    installed, by siann elsewhere, for any metric), calibrates how many lists each query probes (nprobe) and
+    how wide a graph search runs so that a sample of the index's own vectors reaches that recall@10, and times
+    every path, exact search included, on the CPU and the GPU, at batch sizes from 1 to 4,096, to route each
+    search to the fastest; a graph that cannot reach the target is dropped, and where exact search is the
+    fastest at every size it is kept alone. ``kind="exact"``, ``"ivf"`` (no graph) or ``"graph"`` (every
+    batch through the graph) overrides the choice, ``nlist`` the number of lists and ``storage`` ("float32",
+    "float16", "uint8") the lists' type, and ``search(..., nprobe=)`` sends a search through the IVF at that
+    nprobe. The target holds for queries like the
     calibration sample: pass ``calibration_queries`` (representative queries, up to 1,000 used) when the
     queries differ from the base vectors, as they often do. ``device`` is "auto" (where a GPU is
     available, each search goes to the GPU or the CPU by its batch size, from ``profile``'s threshold for the

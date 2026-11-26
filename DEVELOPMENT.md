@@ -74,7 +74,7 @@ siann` raises an ImportError saying so (`siann._build`, checked before the Rust 
 `pip install --no-binary siann siann` builds siann for that machine from the source distribution.
 
 and a source distribution, and smoke-tests each (`scripts/smoke_test.py`: exact search by every metric
-against NumPy, an IVF reaching its recall target, a save and load) on its own platform on Python 3.12
+against NumPy, an IVF and a graph reaching their recall targets, a save and load) on its own platform on Python 3.12
 and 3.14. The wheels are abi3, built against Python's stable interface, so one wheel per platform serves
 every Python from 3.12 on. The workflow then publishes to PyPI through trusted publishing: PyPI accepts
 packages from this workflow without a stored token.

@@ -20,14 +20,14 @@ wanted. siann takes the recall target and measures the rest:
 
 | Choice | Made from |
 | --- | --- |
-| Exact search or an IVF | both timed on a sample of queries |
-| How many lists a query scans (nprobe) | the fewest that reach the target on a sample of queries |
-| CPU or GPU, and which scan, by batch size | for an IVF, each scan timed on 1 to 4,096 queries when the index is built; for exact search, a profile |
+| How many lists a query scans (nprobe), how wide a graph search runs | the least that reaches the target on a sample of queries |
+| Exact search, the IVF or the graph, on the CPU or the GPU, and which scan, by batch size | every path timed on 1 to 4,096 queries when the index is built: a table of the fastest at each size |
 | How the lists are stored | the data: bytes where lossless, float16 for GPU batches |
+| Who builds the graph | mlxvs where it is installed (for L2, cosine and inner product), siann's own builder elsewhere |
 
 The choices interact, which is why they are measured together rather than set from rules of thumb: where
 the CPU and the GPU cross depends on how many lists a query scans, and that depends on the data and the
-target ([TUNING](TUNING.md#approximate-search-where-each-batch-runs) has the crossovers measured).
+target, and a graph can win in a band of batch sizes and lose above and below it ([TUNING](TUNING.md#approximate-search-where-each-batch-runs) has the crossovers measured).
 [Approximate search through siann.Index](BENCHMARKS.md#approximate-search-through-siannindex) measures what
 the choices gain.
 
@@ -54,24 +54,23 @@ flowchart TB
     build(["siann.Index(xb, metric, recall=?)"]) --> target{"recall<br/>target?"}
     target -- no --> exact["exact search"]
     target -- yes --> ivf["IVF: siann's k-means lists,<br/>nprobe calibrated to the target"]
-    ivf --> faster{"faster than exact search<br/>on the calibration sample?"}
-    faster -- no --> exact
-    faster -- yes --> approx["approximate search"]
+    ivf --> graph["graph: 32 links per vector,<br/>search widths calibrated to the target"]
+    graph --> table["every path timed at 1 to 4,096 queries:<br/>a table of the fastest at each batch size"]
+    table --> everywhere{"exact search the fastest<br/>at every size?"}
+    everywhere -- yes --> exact
+    everywhere -- no --> approx["the table routes each search"]
     exact --> ebatch{"GPU, and a batch<br/>above the profile's threshold?"}
     ebatch -- yes --> ge["GPU kernels<br/>L2, cosine, inner product: matrix multiply + two-stage top-k<br/>L1, L-infinity: tiled kernel + top-k"]
     ebatch -- no --> metric{"metric?"}
     metric -- "L2, cosine, inner product" --> cb["NumPy BLAS + Rust top-k"]
     metric -- "L1, L-infinity" --> cr["Rust blocked kernel"]
-    approx --> abatch{"batch size, against thresholds<br/>the index measured when built"}
-    abatch -- "small" --> sp["Rust IVF: one query split over 4 threads,<br/>or one thread per query"]
-    abatch -- "medium" --> gq["GPU IVF, query-major scan"]
-    abatch -- "large" --> gl["GPU IVF, list-major scan"]
+    approx --> paths["the table's path for the batch size:<br/>the graph on the CPU (Rust) or the GPU (mlxvs),<br/>the IVF's CPU or GPU scans, or exact search"]
 ```
 
 ### From a recall target to an index
 
-`siann.Index(xb, metric, recall=0.95)` turns a recall target into an IVF and its settings, in about 5-9
-seconds for a million vectors:
+`siann.Index(xb, metric, recall=0.95)` turns a recall target into an IVF, a graph and their settings, in
+about 10-20 seconds for a million vectors on an M3 Max and 50-70 on 4 Linux CPUs:
 
 1. **The lists:** about 4 sqrt(n) of them (4,000 for a million vectors), from siann's k-means, stored as
    bytes where every coordinate is an integer from 0 to 255 (lossless), and otherwise as float16 on the GPU
@@ -81,17 +80,29 @@ seconds for a million vectors:
    sample is the index's own vectors (each one's own match left out) unless representative queries are
    given (`calibration_queries=`). Recall counts a neighbor as found when it is no farther than the true
    10th, so that ties broken differently are not misses.
-3. **IVF or exact:** the IVF at the calibrated nprobe is timed against exact search on the same sample, and
-   the index keeps whichever is faster.
-4. **Routing:** the index times its CPU scans (one query split over 4 threads, one thread per query with
-   its coarse step in Rust or through BLAS, and list-major) and its GPU scans (query-major and list-major)
-   on 1 to 4,096 of the calibration queries, each path by itself after a warm-up pass on the GPU, and
-   keeps a measured route where it beats the default by the timings' spread
-   ([TUNING](TUNING.md#approximate-search-where-each-batch-runs)).
+3. **The graph:** a CAGRA graph over the same vectors, 32 links per vector ([Graph](#graph-approximate-search)),
+   and the widths of its searches, on the CPU and on the GPU, calibrated to the target on the same sample
+   as nprobe.
+4. **Routing:** every path is timed at batch sizes doubling from 1 to 4,096 queries: exact search on the CPU
+   and on the GPU, the IVF's CPU scans (one query split over 4 threads; one thread per query, its coarse
+   step in Rust or through BLAS; list-major) and GPU scans (query-major, list-major), and the graph on each
+   device. Each path is timed by itself on distinct queries and rated by its mean call, the GPU's buffer
+   cache emptied before each GPU path and a rate far below its neighbors' timed again. The result is a
+   table: at each size measured, the paths fastest first, the default first unless another is 10% faster
+   (about the timings' spread). A search takes the entry of the largest size measured at or below its
+   batch, and in it the first path it may use: on the device asked for, approximate where `nprobe=` is
+   given ([TUNING](TUNING.md#approximate-search-where-each-batch-runs)).
+5. **IVF or exact:** where exact search is the fastest at every size measured, the index keeps exact search
+   alone; otherwise exact search stays one of the routes, used at the sizes where it wins.
 
 Exact search routes by a *profile*: for each metric, the batch size from which the GPU is faster; siann's
 own, or one `siann.tune` measures on your data and machine ([TUNING](TUNING.md#exact-search-gpu-or-cpu)).
 Every choice can be overridden (the README's [Python](README.md#python) section lists how).
+
+Recall on new queries lands within a few thousandths of the target, on either side: the calibration sample
+estimates recall to about 0.004 for the IVF and 0.006 for the graph, and on Music-100, for a target of
+0.95, the IVF reached 0.947 on 9,000 other queries, the graph 0.951 on the GPU and 0.957 on the CPU
+([Calibration on new queries](BENCHMARKS.md#calibration-on-new-queries)).
 
 ### Threads
 
@@ -301,6 +312,58 @@ They cost where the scan is not memory-bound: a single query on one thread reads
 memory system's limit, so widening float16 is pure extra work, while the list-major scans already read
 each list once for many queries.
 
+### Graph: approximate search
+
+A graph index links each vector to some of its near neighbors and searches by walking the links from a few
+entry vectors, keeping the best candidates found, so a query touches far fewer vectors than an IVF scans.
+siann's graphs are CAGRA graphs (the graph index of NVIDIA's cuVS): 32 links per vector, each list chosen
+from 64 near neighbors.
+
+**Building.** Where [mlxvs](https://github.com/mikepapadim/mlxvs) is installed (`pip install siann[graph]`,
+Apple silicon) and the metric is L2, cosine or inner product, mlxvs builds the graph on the GPU. Everywhere
+else siann's own builder does, on the CPU or the GPU, for any of siann's metrics:
+
+1. **Each vector's 64 nearest**, by the index's own IVF searching the base vectors themselves with 16 lists
+   probed, on the scan a sample of 4,096 vectors times fastest (on SIFT1M, the CPU's query-major scan on an
+   M3 Max, faster there than the GPU, and on 4 Linux CPUs). The result is rough: on SIFT1M it holds 78% of
+   each vector's true 64 nearest.
+2. **CAGRA's optimization**, in Rust: each candidate link u→v gets a count of its detours, the other
+   candidates w of u ranked before v whose own lists rank v before v's rank in u's
+   (max(rank(u, w), rank(w, v)) < rank(u, v): v is reachable through w). The 32 links with the fewest
+   detours are kept, ties by rank; then the second half of each list is given over to reverse links, the
+   vectors that kept this one, those that ranked it highest first, so that every vector can be reached.
+   Ranks decide, not distances, so the same code builds a graph for any metric.
+
+Pruning recovers most of what the rough first step misses: on SIFT1M a first step holding 78% of the true
+neighbors gives a graph searched as fast at recall 0.95 as one from 96% (64 lists probed; a width of 40
+against 35), built in under half the time, and siann's graphs need the same search width as mlxvs's and a
+narrower one than cuVS's for the same recall
+([Building graphs](BENCHMARKS.md#building-graphs)).
+
+**Searching on the CPU.** A best-first search (siann's Rust, any machine) keeps the `ef` nearest found so
+far, as HNSW searches its bottom layer, starting from 256 entry vectors spread through the collection (the
+one nearest the mean, and the rest evenly through the rows), since nothing guarantees that a CAGRA graph's
+clusters are linked to each other. It reads each candidate's row, one value per cache line, before computing
+the distances of a vector's neighbors, four rows at a time, a safe stand-in for prefetching; a query's visited
+vectors are marked in a per-thread array of epochs, so nothing is cleared between queries. A single query
+runs on the calling thread; small batches on a thread pool sized to the batch. `ef` is calibrated to the
+target like nprobe.
+
+**Searching on the GPU** goes through mlxvs's CAGRA search, whichever builder made the graph, at an
+`itopk_size` calibrated to the target; mlxvs has L2, cosine and inner product, so a graph for L1 or
+L-infinity is searched on the CPU.
+
+**Where a graph fails.** Data made of tight clusters far apart from each other leaves each cluster linked
+only to itself, and a search reaches only the clusters its entry vectors fall in: on the quickstart
+notebook's 1,000 such clusters, the widest search reaches recall 0.29. The build measures this, and an index
+whose graph cannot reach the target declines it (the plan's "no graph index" line) and searches with its IVF,
+whose coarse step goes to the right clusters whatever their distance; `kind="graph"` raises instead.
+
+The graph and the IVF find different neighbors, each calibrated to the target on its own, so an index's
+results can depend on the batch size it routes; `index.plan` says so. A saved index keeps its graph, and any
+machine searches it on the CPU. Adding vectors extends the graph through mlxvs where it is installed;
+elsewhere, and after removals or re-clustering, the graph is rebuilt.
+
 ## The kernels in detail
 
 ### On the GPU
@@ -409,24 +472,22 @@ The baseline is always the strongest option for the case: FAISS's on the CPU, it
 included, and mlxvs's on the GPU. How much each leads by is in the README's
 [How it compares](README.md#how-it-compares); the reasons are these.
 
-- **FAISS's HNSW for single queries and small batches on SIFT-like data.** HNSW, a graph index, touches 7-9
-  times fewer vectors per query than an IVF on SIFT ([Work per query](BENCHMARKS.md#work-per-query)), and
-  compressing its vectors speeds it up as much as it speeds up the IVF. On GloVe-like data a graph must
-  walk much further for the same recall and its scattered reads cancel the difference, while an IVF's dense
-  scans do not care, so siann leads there at every batch size; with 4 threads per query it leads on SIFT
-  too, from recall 0.97.
+- **FAISS's HNSW for single queries and small batches,** by a little: siann's own graph on the CPU runs
+  within 4-10% of it on SIFT and Music-100 (single queries and batches of 100), Music-100's single queries,
+  answered by the IVF, at 0.72 times, and on 4 Linux CPUs siann leads at single SIFT queries and trails at
+  some sizes on both ([The graph through siann.Index](BENCHMARKS.md#the-graph-through-siannindex)). On GloVe-like data a graph must walk much further
+  for the same recall, and siann's IVF leads at every batch size.
+- **High-dimensional single queries.** At 1,536 dimensions FAISS's HNSW answers single queries 2.8 times as
+  fast as siann, which sends them to the graph on the GPU, the path its build measured fastest there: a GPU
+  call's fixed cost is most of a single query's time. From 100 queries siann's GPU graph leads 3.9-9.2 times.
 - **FAISS's HNSW on vectors of very uneven length.** On raw GloVe (lengths 0.04 to 18.7) no IVF reaches high
   recall, and FAISS's HNSW with inner product is the approximate method; siann's exact search on the GPU,
   4-18 times FAISS's exact search, is the choice where recall must be 1.0
   ([Inner product](BENCHMARKS.md#inner-product)).
-- **mlxvs's CAGRA in GPU batches on SIFT-like data and inner product.** CAGRA, from NVIDIA's cuVS, is a graph
-  index built for the GPU, and like HNSW touches far fewer vectors per query than an IVF. On GloVe-like data
-  the two are level, and CAGRA reaches recall 0.882 at most in the settings measured. mlxvs has no L1 or
-  L-infinity, and on single queries siann's CPU path is 2.7-5.2 times faster than mlxvs's GPU
-  ([Against mlxvs](BENCHMARKS.md#against-mlxvs-on-the-gpu)).
-- **High-dimensional embeddings.** At 1,536 dimensions the matrix multiply, the same in every library,
-  dominates exact search, so siann's lead shrinks, and CAGRA's fewer vectors per query count for more
-  ([High-dimensional text embeddings](BENCHMARKS.md#high-dimensional-text-embeddings)).
+- **mlxvs's CAGRA searching alone, in GPU batches,** by 5-14%: siann searches the same graphs through
+  mlxvs and then ranks the results itself. At batches of 100 the build's timing has sent SIFT and Music-100
+  to the CPU graph where CAGRA on the GPU was 1.17-1.28 times faster. mlxvs has no L1 or L-infinity, and on
+  single queries siann's CPU graph is 10-14 times faster than mlxvs's GPU search.
 
 ## Code layout
 
@@ -437,6 +498,7 @@ flowchart TB
     subgraph api["siann.Index"]
         idx["_index.py: the API, the plan, exact routing"]
         ivfp["_ivf.py: the IVF, calibration, measured routing"]
+        graphp["_graph.py, _graph_build.py: the graph"]
         prof["_profile.py: profiles, siann.tune"]
     end
 
@@ -446,12 +508,15 @@ flowchart TB
     end
 
     subgraph cpu["CPU"]
-        rust["siann._cpu, Rust through PyO3<br/>FlatIndex: exact L1, L2, L-infinity<br/>IvfIndex: float32, float16, uint8 lists; split queries<br/>L2TopK: ranks BLAS products"]
+        rust["siann._cpu, Rust through PyO3<br/>FlatIndex: exact L1, L2, L-infinity<br/>IvfIndex: float32, float16, uint8 lists; split queries<br/>GraphIndex: graph search; optimize_graph: graph build<br/>L2TopK: ranks BLAS products"]
         blas["NumPy matrix multiply<br/>Accelerate BLAS: exact L2"]
     end
 
     user --> idx
     idx --> ivfp
+    ivfp --> graphp
+    graphp --> rust
+    graphp -- "GPU search" --> mlxvs(["mlxvs (optional)"])
     idx --> prof
     idx --> kern
     idx --> rust
@@ -466,6 +531,7 @@ flowchart TB
 | --- | --- |
 | `python/siann/_index.py` | `siann.Index`: building, searching, the plan, exact routing |
 | `python/siann/_ivf.py` | The IVF behind `Index(recall=)`: calibration, the timed choice against exact search, measured routing |
+| `python/siann/_graph.py`, `_graph_build.py` | The graph index: built by mlxvs or by siann's own builder, searched on the CPU or through mlxvs on the GPU |
 | `python/siann/_profile.py` | `siann.Profile`, `siann.tune`, the default profile |
 | `python/siann/_memory.py` | The GPU memory budget, MLX's cache cap and whether an index fits on the GPU |
 | `python/siann/_build.py` | Checks run before the Rust extension loads: the processor's features, OpenBLAS's threads |
@@ -475,8 +541,8 @@ flowchart TB
 | `python/siann/ivf_gpu.py` | The GPU IVF: query-major and list-major scans, float16 and uint8 lists |
 | `python/siann/blas_l2.py` | Exact L2 and inner product on the CPU through NumPy's BLAS and `L2TopK`, with the default tile sizes |
 | `python/siann/torch_kernels.py`, `ivf_torch.py` | The same kernels on PyTorch MPS |
-| `crates/siann/` | The engine, a Rust crate with no Python types: the metrics (`metric.rs`), list storage (`elem.rs`), the blocked layout, distance loops and top-k (`kernels.rs`), exact search (`flat.rs`), the IVF (`ivf.rs`), ranking BLAS products (`products.rs`), and scoring, ranking, merging and bookkeeping (`ops.rs`); tested by `cargo test` (`tests.rs`) |
-| `crates/siann-py/` | The Python bindings, `siann._cpu`: `FlatIndex`, `IvfIndex`, `L2TopK` and the functions, over the engine |
+| `crates/siann/` | The engine, a Rust crate with no Python types: the metrics (`metric.rs`), list storage (`elem.rs`), the blocked layout, distance loops and top-k (`kernels.rs`), exact search (`flat.rs`), the IVF (`ivf.rs`), the graph's search (`graph.rs`) and build (`graph_build.rs`), ranking BLAS products (`products.rs`), and scoring, ranking, merging and bookkeeping (`ops.rs`); tested by `cargo test` (`tests.rs`) |
+| `crates/siann-py/` | The Python bindings, `siann._cpu`: `FlatIndex`, `IvfIndex`, `GraphIndex`, `L2TopK` and the functions, over the engine |
 | `benchmarks/check_kernels.py` | Every kernel and index against NumPy's exact search |
 | `benchmarks/` | The benchmarks against FAISS and mlxvs, their raw output in `results/` |
 
