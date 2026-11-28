@@ -132,10 +132,10 @@ pub struct Options {
 }
 
 /// The centroids clustered into groups, for a two-level coarse step: a query is compared with the
-/// groups' centres, then only with the centroids of its `gprobe` nearest groups.
+/// groups' centers, then only with the centroids of its `gprobe` nearest groups.
 struct Groups {
-    /// The groups' centres, in blocks.
-    centres: Vec<[f32; L]>,
+    /// The groups' centers, in blocks.
+    centers: Vec<[f32; L]>,
     count: usize,
     /// Each group's centroids, in blocks, and their ids.
     blocks: Vec<Vec<[f32; L]>>,
@@ -352,10 +352,10 @@ impl Ivf {
         )
     }
 
-    /// Clusters the centroids into groups for a two-level coarse step: `centres` (rows of `d`), the
-    /// groups' centres, and `assign` (one per centroid), each centroid's group.
-    pub fn set_coarse_groups(&mut self, centres: &[f32], assign: &[i64]) -> Result<()> {
-        let count = centres.len() / self.d;
+    /// Clusters the centroids into groups for a two-level coarse step: `centers` (rows of `d`), the
+    /// groups' centers, and `assign` (one per centroid), each centroid's group.
+    pub fn set_coarse_groups(&mut self, centers: &[f32], assign: &[i64]) -> Result<()> {
+        let count = centers.len() / self.d;
         if assign.len() != self.nlist || assign.iter().any(|&g| g < 0 || g as usize >= count) {
             return Err("assign must give each centroid a group in range".into());
         }
@@ -378,7 +378,7 @@ impl Ivf {
             })
             .collect();
         self.groups = Some(Groups {
-            centres: to_blocks(centres.chunks_exact(d), d),
+            centers: to_blocks(centers.chunks_exact(d), d),
             count,
             blocks,
             ids,
@@ -398,7 +398,7 @@ impl Ivf {
         if let (Some(g), true) = (&self.groups, gprobe > 0) {
             // Two levels: the nearest gprobe groups, then their centroids only.
             let mut near: Vec<(f32, u32)> = g
-                .centres
+                .centers
                 .chunks_exact(d)
                 .enumerate()
                 .flat_map(|(b, blk)| {

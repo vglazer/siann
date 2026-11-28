@@ -8,12 +8,12 @@ the SIFT index (4,000 lists, uint8 lists, two-level coarse step) and searches ba
 import argparse
 import time
 
+from siann._cpu import IvfIndex
+from siann.ivf_gpu import GpuIVF
+
 import faiss
 import numpy as np
 from datasets import load
-
-from siann._cpu import IvfIndex
-from siann.ivf_gpu import GpuIVF
 
 p = argparse.ArgumentParser()
 p.add_argument("--nlist", type=int, default=4000)

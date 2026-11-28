@@ -8,14 +8,14 @@ siann's k-means runs with two seeds to show how much recall moves with the start
 import argparse
 import time
 
+from siann._cpu import FlatIndex
+from siann.ivf_gpu import GpuIVF
+from siann.kmeans import kmeans
+
 import faiss
 import numpy as np
 from backends import agreement
 from datasets import load
-
-from siann._cpu import FlatIndex
-from siann.ivf_gpu import GpuIVF
-from siann.kmeans import kmeans
 
 K = 10
 METRIC = {"sift": "l2", "glove": "l2", "music100": "ip", "dbpedia": "l2"}

@@ -25,13 +25,13 @@ import subprocess
 import sys
 import tempfile
 
+from siann._cpu import FlatIndex
+from siann.ivf_build import Lists
+
 import numpy as np
 from backends import agreement
 from datasets import load
 from timing import throughput
-
-from siann._cpu import FlatIndex
-from siann.ivf_build import Lists
 
 K = 10
 BATCHES = (1, 10, 100, 1000, 10_000)

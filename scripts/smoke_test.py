@@ -9,9 +9,9 @@ folder, so that the installed package is the one imported.
 import tempfile
 from pathlib import Path
 
-import numpy as np
-
 import siann
+
+import numpy as np
 
 
 def brute_force(x: np.ndarray, q: np.ndarray, metric: str, k: int) -> np.ndarray:

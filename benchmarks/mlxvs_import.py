@@ -13,16 +13,16 @@ import os
 import tempfile
 import time
 
+import siann
+from siann import _index
+from siann._cpu import FlatIndex
+from siann._ivf import default_storage
+
 import mlx.core as mx
 import mlxvs
 import numpy as np
 from backends import agreement
 from datasets import load
-
-import siann
-from siann import _index
-from siann._cpu import FlatIndex
-from siann._ivf import default_storage
 
 K = 10
 MLXVS_MAX_PROBES = 256                  # mlxvs's IVF-Flat search refuses more ("k must be in [1, 256]")

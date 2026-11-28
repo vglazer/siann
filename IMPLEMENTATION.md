@@ -316,8 +316,10 @@ each list once for many queries.
 
 A graph index links each vector to some of its near neighbors and searches by walking the links from a few
 entry vectors, keeping the best candidates found, so a query touches far fewer vectors than an IVF scans.
-siann's graphs are CAGRA graphs (the graph index of NVIDIA's cuVS): 32 links per vector, each list chosen
-from 64 near neighbors.
+siann's graphs are CAGRA graphs (the graph index of NVIDIA's cuVS, which siann does not use): 32 links per
+vector, each list chosen from 64 near neighbors. siann builds and searches them itself; mlxvs, cuVS's methods
+on the Mac, is optional, and where it is installed siann uses it for two things it does faster on the GPU:
+building the graph and searching GPU batches.
 
 **Building.** Where [mlxvs](https://github.com/mikepapadim/mlxvs) is installed (`pip install siann[graph]`,
 Apple silicon) and the metric is L2, cosine or inner product, mlxvs builds the graph on the GPU. Everywhere
@@ -335,9 +337,9 @@ else siann's own builder does, on the CPU or the GPU, for any of siann's metrics
    Ranks decide, not distances, so the same code builds a graph for any metric.
 
 Pruning recovers most of what the rough first step misses: on SIFT1M a first step holding 78% of the true
-neighbors gives a graph searched as fast at recall 0.95 as one from 96% (64 lists probed; a width of 40
-against 35), built in under half the time, and siann's graphs need the same search width as mlxvs's and a
-narrower one than cuVS's for the same recall
+neighbors gives a graph searched within 9% of the speed at recall 0.95 of one from 96% (64 lists probed; a
+width of 40 against 35.5), built in half the time. siann's graphs need a search 3-9% wider than mlxvs's for the same
+recall, and a narrower one than cuVS's; mlxvs builds them 2.4-3.3 times faster on the GPU
 ([Building graphs](BENCHMARKS.md#building-graphs)).
 
 **Searching on the CPU.** A best-first search (siann's Rust, any machine) keeps the `ef` nearest found so

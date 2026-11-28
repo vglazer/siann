@@ -8,11 +8,11 @@ results (the fraction of FAISS's k neighbors that MLX also returns).
 import argparse
 import time
 
+from siann.exact import mlx_knn
+
 import faiss
 import mlx.core as mx
 import numpy as np
-
-from siann.exact import mlx_knn
 
 FAISS_METRIC = {"l1": faiss.METRIC_L1, "l2": faiss.METRIC_L2, "linf": faiss.METRIC_Linf,
                 "ip": faiss.METRIC_INNER_PRODUCT}

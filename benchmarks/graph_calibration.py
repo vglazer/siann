@@ -12,10 +12,10 @@ half (raising the width until both halves reach the target), and calibrating to 
 """
 import argparse
 
+import siann
+
 import numpy as np
 from datasets import load
-
-import siann
 
 METRIC = {"sift": "l2", "glove": "cosine", "music100": "ip", "dbpedia": "cosine"}
 K = 10

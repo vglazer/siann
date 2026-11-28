@@ -18,16 +18,16 @@ vectors to one built on the training set.
 import argparse
 import time
 
-import faiss
-import numpy as np
-from backends import agreement
-from datasets import load
-
 import siann
 from siann._ivf import default_nlist
 from siann.ivf_build import build_lists, lists_from_assign, nearest
 from siann.ivf_gpu import GpuIVF
 from siann.kmeans import kmeans
+
+import faiss
+import numpy as np
+from backends import agreement
+from datasets import load
 
 K = 10
 STEPS = (0.0, 0.5, 1.0)

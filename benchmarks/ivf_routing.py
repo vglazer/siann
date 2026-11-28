@@ -8,9 +8,9 @@ its own when it is built.
 """
 import argparse
 
-from datasets import load
-
 import siann
+
+from datasets import load
 
 PLAN = (("sift", "l2"), ("glove", "cosine"), ("music100", "ip"))
 

@@ -14,15 +14,15 @@ smallest itopk_size that reaches siann's recall.
 import argparse
 import time
 
+import siann
+from siann._cpu import FlatIndex
+
 import faiss
 import mlx.core as mx
 import mlxvs
 import numpy as np
 from backends import agreement
 from datasets import load
-
-import siann
-from siann._cpu import FlatIndex
 
 K = 10
 WIDEST = 1024           # the largest efSearch or itopk_size tried

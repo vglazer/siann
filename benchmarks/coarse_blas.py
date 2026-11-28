@@ -23,10 +23,10 @@ if "--threads" in sys.argv:                 # before NumPy or rayon start their 
 
 import time
 
+import siann
+
 import numpy as np
 from datasets import load
-
-import siann
 
 CASES = [("sift", "l2"), ("glove", "cosine"), ("music100", "ip"), ("sift", "l1")]
 BATCHES = (1, 2, 4, 10, 32, 100, 1000)

@@ -15,12 +15,12 @@ import itertools
 import time
 from pathlib import Path
 
-import numpy as np
-from datasets import load
-
 import siann
 from siann._cpu import GraphIndex
 from siann._graph_build import KNN_K, KNN_NPROBE, build_links, knn_graph
+
+import numpy as np
+from datasets import load
 
 METRIC = {"sift": "l2", "glove": "l2", "music100": "ip", "dbpedia": "l2"}   # glove, dbpedia: normalized, so L2
 EFS = (16, 24, 32, 48, 64, 96, 128, 192, 256)
@@ -65,6 +65,8 @@ def main() -> None:
     p.add_argument("--queries", type=int, default=2000)
     p.add_argument("--knn-nprobe", type=int, default=None, help="the rough graph's probes (siann's default if not given)")
     p.add_argument("--only-siann", action="store_true", help="siann's graph alone (no mlxvs or cuVS rows)")
+    p.add_argument("--builder", choices=("both", "siann", "mlxvs"), default="both",
+                   help="the graph(s) to build, first thing in the process")
     p.add_argument("--metric", choices=("l1", "l2", "linf", "ip"), help="another metric (siann's graph alone)")
     p.add_argument("--ivf", action="store_true", help="also siann's IVF on the CPU, at a range of nprobe")
     a = p.parse_args()
@@ -79,32 +81,35 @@ def main() -> None:
     stored = xb.astype(np.uint8) if a.dataset == "sift" else None
     print(f"{a.dataset}: {n:,} x {xb.shape[1]}, {metric}; graphs of 32 links per vector searched by siann's CPU "
           f"search on {len(q):,} test queries", flush=True)
+    # the graphs first, before anything else has run in the process
+    graphs = {}
+    kw = {"nprobe": a.knn_nprobe} if a.knn_nprobe else {}
+    if a.builder in ("both", "siann"):
+        t = time.perf_counter()
+        links, times = build_links(xb, metric, **kw)
+        graphs["siann"] = (links, time.perf_counter() - t,
+                           (f"IVF {times['IVF']:.1f} s, search {times['search']:.1f} s on {times['path']}, "
+                            f"optimize {times['optimize']:.1f} s"))
+    if a.builder in ("both", "mlxvs"):
+        try:
+            if a.only_siann:
+                raise RuntimeError("--only-siann")
+            from siann._graph import Graph
+            g = Graph(xb, metric, "uint8" if stored is not None else "float32", gpu="mlx")   # mlxvs builds on MLX
+            if g.builder == "siann":
+                raise RuntimeError("mlxvs is not installed")
+            graphs["mlxvs"] = (g.links(), g.build_seconds, "mlxvs's default build")
+        except Exception as e:  # noqa: BLE001 (mlxvs missing: its row skipped)
+            print(f"  (mlxvs skipped: {type(e).__name__}: {e})", flush=True)
     truth = siann.Index(xb, metric).search(q, K).indices
 
-    # the rough graph's quality on a sample: the share of each vector's true 64 nearest it holds
-    t = time.perf_counter()
-    kw = {"nprobe": a.knn_nprobe} if a.knn_nprobe else {}
-    knn, times = knn_graph(xb, metric, **kw)
-    sample = np.random.default_rng(0).choice(n, 1000, replace=False)
-    true64 = siann.Index(xb, metric).search(xb[sample], KNN_K + 1).indices[:, 1:]
-    print(f"  rough graph ({KNN_K} per vector by siann's IVF, nprobe {kw.get('nprobe', KNN_NPROBE)}): {time.perf_counter() - t:.1f} s "
-          f"(IVF {times['IVF']:.1f} s, search {times['search']:.1f} s on {times['path']}); holds {recall(knn[sample], true64):.3f} of "
-          f"each vector's true {KNN_K} nearest", flush=True)
-
-    graphs = {}
-    t = time.perf_counter()
-    links, times = build_links(xb, metric, **kw)
-    graphs["siann"] = (links, time.perf_counter() - t,
-                       f"IVF {times['IVF']:.1f} s, search {times['search']:.1f} s, optimize {times['optimize']:.1f} s")
-    try:
-        if a.only_siann:
-            raise RuntimeError("--only-siann")
-        from siann._graph import Graph
-        g = Graph(xb, metric, "uint8" if stored is not None else "float32")
-        graphs["mlxvs"] = (g.links(), g.build_seconds, "mlxvs's default build")
-    except Exception as e:  # noqa: BLE001 (mlxvs missing: its row skipped)
-        print(f"  (mlxvs skipped: {type(e).__name__}: {e})", flush=True)
-    if a.dataset == "sift" and n == 1_000_000 and CUVS_LINKS.exists() and not a.only_siann:
+    if a.builder in ("both", "siann"):           # the rough graph's quality: the share of each vector's true 64 nearest
+        knn, times = knn_graph(xb, metric, **kw)
+        sample = np.random.default_rng(0).choice(n, 1000, replace=False)
+        true64 = siann.Index(xb, metric).search(xb[sample], KNN_K + 1).indices[:, 1:]
+        print(f"  rough graph ({KNN_K} per vector by siann's IVF, nprobe {kw.get('nprobe', KNN_NPROBE)}): holds "
+              f"{recall(knn[sample], true64):.3f} of each vector's true {KNN_K} nearest", flush=True)
+    if a.dataset == "sift" and n == 1_000_000 and CUVS_LINKS.exists() and not a.only_siann and a.builder == "both":
         graphs["cuVS"] = (np.load(CUVS_LINKS), 7.0, "built on a Kaggle T4 (results/cuvs_cagra_t4.txt)")
 
     print(f"\n  {'graph':6s} {'built':>8s}   recall@10 / queries per second at ef " + " ".join(f"{e:>5}" for e in EFS),

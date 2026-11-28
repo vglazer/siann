@@ -3,12 +3,12 @@ vectors, ids kept, removed vectors never returned, an IVF's recall kept through 
 the changes saved and loaded."""
 import json
 
-import numpy as np
-import pytest
-
 import siann
 from siann import _index
 from siann._ivf import default_nlist
+
+import numpy as np
+import pytest
 
 gpu_only = pytest.mark.skipif(not siann.gpu_available(), reason="no GPU available")
 DEVICES = ["cpu"] + (["gpu"] if siann.gpu_available() else [])

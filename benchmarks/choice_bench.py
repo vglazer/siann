@@ -40,10 +40,10 @@ import json
 import time
 from pathlib import Path
 
+import siann
+
 import numpy as np
 from datasets import load
-
-import siann
 
 METRIC = {"sift": "l2", "glove": "cosine", "music100": "ip", "dbpedia": "cosine"}
 K = 10

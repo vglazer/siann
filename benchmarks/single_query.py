@@ -20,14 +20,14 @@ throughput: queries per second on a loaded machine are better served one per thr
 import argparse
 import time
 
+from siann._cpu import FlatIndex, IvfIndex
+from siann.ivf_gpu import GpuIVF
+
 import faiss
 import numpy as np
 from backends import agreement
 from datasets import load
 from exact import FAISS_METRIC
-
-from siann._cpu import FlatIndex, IvfIndex
-from siann.ivf_gpu import GpuIVF
 
 K = 10
 

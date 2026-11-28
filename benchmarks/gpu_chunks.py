@@ -8,12 +8,12 @@ queries, then base vectors).
 import argparse
 import time
 
+import siann
+from siann import _ivf, _memory
+
 import mlx.core as mx
 import numpy as np
 from datasets import load
-
-import siann
-from siann import _ivf, _memory
 
 MB = 1 << 20
 

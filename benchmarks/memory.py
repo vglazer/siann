@@ -50,10 +50,10 @@ def sampled_peak(fn, extra=None):
 
 def case(path: str, device: str, batch: int, merge: bool, backend: str = "mlx") -> dict:
     """One measurement, in this process (run as a child)."""
+    import siann
+
     import psutil
     from datasets import load
-
-    import siann
     index = siann.Index.load(path, device=device if device == "cpu" else "auto", gpu=backend)
     xb, xq = load("sift", 10_000)
     q = np.ascontiguousarray(np.concatenate([xq, xb[:max(0, batch - len(xq))]])[:batch])
@@ -96,9 +96,9 @@ def main() -> None:
     if a.child:
         print(json.dumps(case(**json.loads(a.child))))
         return
-    from datasets import load
-
     import siann
+
+    from datasets import load
     xb, xq = load("sift", 1000)
     work = tempfile.mkdtemp()
     batches = [int(b) for b in a.batches.split(",")]

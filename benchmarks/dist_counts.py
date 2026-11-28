@@ -3,7 +3,7 @@
 In batches of about 100, both are limited by memory traffic, so the work is the number of vectors a
 query touches. For the IVF that is the centroids compared in the coarse step plus the vectors in the
 probed lists, counted exactly from each query's probes; with --two-level, the coarse step compares
-the groups' centres and the centroids of the probed groups instead (groups of about 64 centroids, a
+the groups' centers and the centroids of the probed groups instead (groups of about 64 centroids, a
 quarter of them probed). For HNSW it is FAISS's own count (`faiss.cvar.hnsw_stats.ndis`). Bytes per
 query are the memory a query reads that no other query shares: the vectors of its probed lists, or
 HNSW's visited vectors, times their storage (uint8 where the data allows, as for SIFT, else float32;
@@ -14,13 +14,13 @@ as distances but not as bytes. Recall at 10 against exact search, counting ties 
 """
 import argparse
 
+from siann._cpu import FlatIndex, IvfIndex
+from siann.ivf_gpu import GpuIVF
+
 import faiss
 import numpy as np
 from backends import agreement
 from datasets import load
-
-from siann._cpu import FlatIndex, IvfIndex
-from siann.ivf_gpu import GpuIVF
 
 K = 10
 

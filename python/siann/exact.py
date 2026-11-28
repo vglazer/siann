@@ -16,7 +16,7 @@ def knn(q: mx.array, x: mx.array, norms: mx.array | None, k: int, metric: str) -
 
 
 def mlx_knn(xb: mx.array, xq: np.ndarray, k: int, metric: str, tile: int = 256) -> np.ndarray:
-    """Exact k nearest neighbours on the GPU, a tile of queries at a time, each tile evaluated before
+    """Exact k nearest neighbors on the GPU, a tile of queries at a time, each tile evaluated before
     the next so that only one tile's work is held in memory."""
     norms = mx.sum(xb * xb, axis=1) if metric == "l2" else None
     out = []

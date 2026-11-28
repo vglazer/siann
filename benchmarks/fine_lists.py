@@ -14,6 +14,9 @@ search, counting ties as correct.
 """
 import argparse
 
+from siann._cpu import FlatIndex, IvfIndex
+from siann.ivf_gpu import GpuIVF
+
 import faiss
 import mlx.core as mx
 import numpy as np
@@ -21,9 +24,6 @@ from backends import agreement
 from datasets import load
 from single_query import pad8
 from timing import throughput
-
-from siann._cpu import FlatIndex, IvfIndex
-from siann.ivf_gpu import GpuIVF
 
 K = 10
 NPROBES = {4000: (16, 32, 64, 128), 8000: (32, 64, 128, 256), 16000: (32, 64, 128, 256, 512)}

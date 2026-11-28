@@ -15,11 +15,11 @@ import os
 import struct
 import tempfile
 
-import numpy as np
-from mlxvs_import import write_siann_file
-
 import siann
 from siann._cpu import FlatIndex, recall_of, scores
+
+import numpy as np
+from mlxvs_import import write_siann_file
 
 K = 10
 GROUP = 32                    # cuVS's interleaved groups of vectors (kIndexGroupSize)

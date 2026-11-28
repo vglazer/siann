@@ -17,13 +17,13 @@ FAISS's IndexFlatIP.
 import argparse
 import time
 
+from siann._cpu import L2TopK
+from siann.blas_l2 import default_tiles, siann_l2
+
 import faiss
 import numpy as np
 from backends import agreement
 from datasets import load
-
-from siann._cpu import L2TopK
-from siann.blas_l2 import default_tiles, siann_l2
 
 K = 10
 

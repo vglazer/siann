@@ -15,13 +15,13 @@ reads without changing its lists (recall at 10 shown, counting ties as correct).
 import argparse
 import time
 
+from siann._cpu import FlatIndex, IvfIndex
+from siann.ivf_gpu import GpuIVF
+
 import faiss
 import numpy as np
 from backends import agreement
 from datasets import load
-
-from siann._cpu import FlatIndex, IvfIndex
-from siann.ivf_gpu import GpuIVF
 
 K = 10
 NPROBE = {4000: 64, 16000: 128}   # recall about 0.97 on SIFT

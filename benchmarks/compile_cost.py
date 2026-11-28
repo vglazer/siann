@@ -7,11 +7,11 @@ Random vectors, 100,000 x 128, k = 10; each batch size is new to the process whe
 """
 import time
 
-import numpy as np
-
 import siann
 from siann.ivf_build import build_lists
 from siann.ivf_gpu import GpuIVF
+
+import numpy as np
 
 BATCHES = (7, 8, 9, 50, 51, 300, 301, 1000, 1001)
 

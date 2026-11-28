@@ -1,9 +1,9 @@
 """Profiles: routing by batch size, saving and loading, siann.tune and siann.use_profile."""
-import numpy as np
-import pytest
-
 import siann
 from siann._profile import threshold_with_margin
+
+import numpy as np
+import pytest
 
 gpu_only = pytest.mark.skipif(not siann.gpu_available(), reason="no GPU available")
 XB = np.random.default_rng(0).standard_normal((2000, 16), dtype=np.float32)

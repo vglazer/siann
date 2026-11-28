@@ -6,13 +6,13 @@ PyTorch cannot share a process on macOS, so this runs on its own.
 """
 import argparse
 
+from siann._cpu import FlatIndex
+from siann.ivf_torch import TorchIVF
+
 import numpy as np
 from backends import agreement
 from datasets import load
 from timing import throughput
-
-from siann._cpu import FlatIndex
-from siann.ivf_torch import TorchIVF
 
 
 def main() -> None:

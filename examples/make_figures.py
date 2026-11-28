@@ -5,10 +5,10 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+import siann
+
 import matplotlib.pyplot as plt
 import numpy as np
-
-import siann
 
 OUT = Path(__file__).resolve().parents[1] / "assets"
 

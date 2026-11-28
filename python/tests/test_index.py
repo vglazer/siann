@@ -1,9 +1,9 @@
 """siann.Index against NumPy's exact search, on every metric and every available device."""
-import numpy as np
-import pytest
-
 import siann
 from siann._index import _gpu_available
+
+import numpy as np
+import pytest
 
 DEVICES = ["cpu"] + (["gpu"] if _gpu_available() else [])
 gpu_only = pytest.mark.skipif(not _gpu_available(), reason="no GPU available")

@@ -1,11 +1,11 @@
 """siann's k-means and the IVF's shared lists: the same lists for every backend."""
-import numpy as np
-import pytest
-
 import siann
 from siann._cpu import IvfIndex
 from siann.ivf_build import assign_metric, build_lists, nearest
 from siann.kmeans import kmeans
+
+import numpy as np
+import pytest
 
 RNG = np.random.default_rng(5)
 X = RNG.standard_normal((4000, 24), dtype=np.float32)

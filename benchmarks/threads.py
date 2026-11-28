@@ -7,9 +7,9 @@ of the dataset's queries), single queries and batches of 10.
 import threading
 import time
 
-from datasets import load
-
 import siann
+
+from datasets import load
 
 
 def main() -> None:

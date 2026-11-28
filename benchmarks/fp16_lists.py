@@ -17,15 +17,15 @@ warm-up (single queries: one pass).
 import argparse
 import copy
 
+from siann._cpu import FlatIndex, IvfIndex
+from siann.ivf_gpu import GpuIVF
+
 import faiss
 import mlx.core as mx
 import numpy as np
 from backends import agreement
 from datasets import load
 from timing import throughput
-
-from siann._cpu import FlatIndex, IvfIndex
-from siann.ivf_gpu import GpuIVF
 
 K = 10
 

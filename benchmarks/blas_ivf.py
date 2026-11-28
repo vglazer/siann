@@ -12,14 +12,14 @@ import argparse
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+from siann._cpu import FlatIndex, IvfIndex, L2TopK
+from siann.blas_l2 import default_tiles, siann_l2
+from siann.ivf_gpu import GpuIVF
+
 import numpy as np
 from backends import agreement
 from datasets import load
 from timing import throughput
-
-from siann._cpu import FlatIndex, IvfIndex, L2TopK
-from siann.blas_l2 import default_tiles, siann_l2
-from siann.ivf_gpu import GpuIVF
 
 K = 10
 

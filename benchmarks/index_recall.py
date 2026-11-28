@@ -9,11 +9,11 @@ its speed by batch size on the paths it routes to.
 import argparse
 import time
 
+import siann
+
 import numpy as np
 from backends import agreement
 from datasets import load
-
-import siann
 
 METRIC = {"sift": "l2", "glove": "cosine", "music100": "ip", "dbpedia": "cosine"}
 K = 10

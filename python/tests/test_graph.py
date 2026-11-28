@@ -1,11 +1,11 @@
 """A graph index alongside the IVF (CAGRA through mlxvs): built and calibrated where mlxvs is installed, routed
 to the batch sizes where it is faster, kept through changes, saved and loaded, and refused or skipped, with a
 reason, where it cannot be used. Skipped where mlxvs or an Apple GPU is missing (as in CI)."""
-import numpy as np
-import pytest
-
 import siann
 from siann import _graph, _index
+
+import numpy as np
+import pytest
 
 has_mlxvs = _graph.mlxvs_version() is not None
 needs_mlxvs = pytest.mark.skipif(not has_mlxvs, reason="mlxvs (siann[graph]) with an Apple GPU not available")

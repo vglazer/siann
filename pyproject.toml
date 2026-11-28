@@ -58,6 +58,8 @@ extend-select = ["I"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["siann"]
+# siann before NumPy and the rest: siann sets OPENBLAS_THREAD_TIMEOUT before OpenBLAS loads (TUNING)
+section-order = ["future", "standard-library", "first-party", "third-party", "local-folder"]
 
 [tool.pytest.ini_options]
 testpaths = ["python/tests"]

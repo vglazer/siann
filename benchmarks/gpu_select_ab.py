@@ -15,13 +15,13 @@ of 10,000 (list-major scan), median of three after a warm-up (single queries: on
 """
 import argparse
 
+from siann._cpu import FlatIndex
+from siann.ivf_gpu import GpuIVF
+
 import numpy as np
 from backends import agreement
 from datasets import load
 from timing import throughput
-
-from siann._cpu import FlatIndex
-from siann.ivf_gpu import GpuIVF
 
 K = 10
 

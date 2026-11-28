@@ -14,9 +14,9 @@ import numpy as np
 
 
 def mlx_steps(n: int, d: int, tile: int, repeats: int) -> dict[str, float]:
-    import mlx.core as mx
-
     from siann.knn_kernels import select_k
+
+    import mlx.core as mx
     rng = np.random.default_rng(0)
     xb = mx.array(rng.standard_normal((n, d), dtype=np.float32))
     q = mx.array(rng.standard_normal((tile, d), dtype=np.float32))
@@ -38,9 +38,9 @@ def mlx_steps(n: int, d: int, tile: int, repeats: int) -> dict[str, float]:
 
 
 def torch_steps(n: int, d: int, tile: int, repeats: int) -> dict[str, float]:
-    import torch
-
     from siann.torch_kernels import select_k
+
+    import torch
     rng = np.random.default_rng(0)
     xb = torch.from_numpy(rng.standard_normal((n, d), dtype=np.float32)).to("mps")
     q = torch.from_numpy(rng.standard_normal((tile, d), dtype=np.float32)).to("mps")

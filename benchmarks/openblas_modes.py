@@ -8,19 +8,21 @@ search on the CPU (BLAS for inner product), in queries per second, on distinct q
     python openblas_modes.py --mode spin
 """
 import argparse
+import glob
+import os
 import sys
+import time
 
 if "--mode" in sys.argv and sys.argv[sys.argv.index("--mode") + 1] == "clean":
     import siann  # first: before NumPy, so that OpenBLAS's threads sleep
 
-import glob
-import os
-import time
-
+# isort: off
+# NumPy before siann in every other mode: the import order is what this script measures
 import numpy as np
 from datasets import load
 
 import siann
+# isort: on
 
 
 def one_blas_thread() -> str:

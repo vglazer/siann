@@ -9,11 +9,11 @@ import hashlib
 import os
 import time
 
-import numpy as np
-from datasets import load
-
 from siann._cpu import optimize_graph
 from siann._graph_build import knn_graph
+
+import numpy as np
+from datasets import load
 
 KNN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "sift_knn64.npy")
 

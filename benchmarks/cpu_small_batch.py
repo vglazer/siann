@@ -13,10 +13,10 @@ import argparse
 import os
 import time
 
+from siann._cpu import FlatIndex
+
 import numpy as np
 from datasets import load
-
-from siann._cpu import FlatIndex
 
 BATCHES = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024)
 K = 10

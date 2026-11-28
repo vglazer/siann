@@ -3,11 +3,11 @@ installed or finds no Apple GPU (as in CI); the GPU tests run locally before eac
 import subprocess
 import sys
 
-import numpy as np
-import pytest
-
 import siann
 from siann import _index
+
+import numpy as np
+import pytest
 
 torch_only = pytest.mark.skipif(not _index._torch_gpu(), reason="PyTorch with an Apple GPU (MPS) not available")
 both = pytest.mark.skipif(not (_index._torch_gpu() and _index._mlx_gpu()), reason="needs MLX and PyTorch on MPS")

@@ -1,8 +1,8 @@
 """siann.Index with a recall target: the IVF, its calibration, its routes, and its overrides."""
+import siann
+
 import numpy as np
 import pytest
-
-import siann
 
 gpu_only = pytest.mark.skipif(not siann.gpu_available(), reason="no GPU available")
 

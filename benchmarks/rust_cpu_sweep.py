@@ -11,11 +11,11 @@ import subprocess
 import time
 from pathlib import Path
 
-import faiss
-import numpy as np
-
 import siann._cpu as siann_cpu
 from siann._cpu import FlatIndex
+
+import faiss
+import numpy as np
 
 
 def instruction_counts() -> dict[str, int]:

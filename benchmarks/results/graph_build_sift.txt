@@ -1,12 +1,12 @@
 sift: 1,000,000 x 128, l2; graphs of 32 links per vector searched by siann's CPU search on 2,000 test queries
-  rough graph (64 per vector by siann's IVF, nprobe 16): 10.5 s (IVF 1.7 s, search 7.7 s on cpu-query); holds 0.781 of each vector's true 64 nearest
+  rough graph (64 per vector by siann's IVF, nprobe 16): holds 0.781 of each vector's true 64 nearest
 
   graph     built   recall@10 / queries per second at ef    16    24    32    48    64    96   128   192   256
-  siann     11.2s   0.858/515k  0.910/393k  0.937/350k  0.963/256k  0.978/216k  0.989/165k  0.993/133k  0.996/87k  0.998/74k   (IVF 1.7 s, search 6.4 s, optimize 2.4 s)
-  mlxvs     18.1s   0.858/560k  0.909/452k  0.937/367k  0.964/262k  0.978/217k  0.990/156k  0.994/122k  0.996/89k  0.998/68k   (mlxvs's default build)
-  cuVS       7.0s   0.827/467k  0.886/365k  0.919/373k  0.953/281k  0.970/218k  0.985/153k  0.991/125k  0.995/90k  0.997/74k   (built on a Kaggle T4 (results/cuvs_cagra_t4.txt))
+  siann     10.9s   0.858/571k  0.910/461k  0.937/376k  0.963/286k  0.978/216k  0.989/155k  0.993/130k  0.996/95k  0.998/76k   (IVF 1.7 s, search 6.1 s on cpu-query-blas, optimize 2.3 s)
+  mlxvs      4.5s   0.866/495k  0.918/448k  0.942/400k  0.970/263k  0.981/212k  0.991/158k  0.995/133k  0.998/93k  0.999/60k   (mlxvs's default build)
+  cuVS       7.0s   0.827/591k  0.886/427k  0.919/358k  0.953/281k  0.970/232k  0.985/156k  0.991/135k  0.995/93k  0.997/77k   (built on a Kaggle T4 (results/cuvs_cagra_t4.txt))
 
   at recall 0.95 (ef, or nprobe for the IVF):
-    siann  ef  39.8, 300,670 queries/s
-    mlxvs  ef  39.7, 312,055 queries/s
-    cuVS   ef  46.5, 288,331 queries/s
+    siann  ef  39.8, 329,177 queries/s
+    mlxvs  ef  36.6, 354,236 queries/s
+    cuVS   ef  46.5, 287,027 queries/s

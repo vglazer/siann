@@ -2,11 +2,11 @@
 re-measured on another machine, and refusals."""
 import json
 
-import numpy as np
-import pytest
-
 import siann
 from siann import _index
+
+import numpy as np
+import pytest
 
 gpu_only = pytest.mark.skipif(not siann.gpu_available(), reason="no GPU available")
 

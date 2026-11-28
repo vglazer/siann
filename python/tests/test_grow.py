@@ -1,11 +1,11 @@
 """Growing an index from empty or from small: searches of an empty index, the choice between an IVF and exact
 search made at merges as the index grows, index.calibrate, removing every vector, and all of it saved and
 loaded."""
-import numpy as np
-import pytest
-
 import siann
 from siann import _index
+
+import numpy as np
+import pytest
 
 DEVICES = ["cpu"] + (["gpu"] if siann.gpu_available() else [])
 

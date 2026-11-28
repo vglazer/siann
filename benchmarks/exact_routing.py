@@ -8,10 +8,10 @@ the datasets, so that the CPU takes only batch sizes where it was faster on ever
 """
 import argparse
 
+import siann
+
 import numpy as np
 from datasets import load
-
-import siann
 
 PLAN = (("sift", 0, ("l2", "l1", "linf")), ("glove", 0, ("cosine", "ip")), ("dbpedia", 100_000, ("cosine", "l2")))
 

@@ -1,7 +1,7 @@
 """GPU kernels for exact k-nearest neighbors through mx.fast.metal_kernel.
 
 Selection is two-stage. Each of T threads per query keeps the best k of a strided slice of the
-row in registers (neighbouring threads read neighbouring elements); a small argpartition over the
+row in registers (neighboring threads read neighboring elements); a small argpartition over the
 T * k survivors then gives the final k.
 
 L1 and L-infinity (the largest coordinate difference) share their kernels: each distance is built up

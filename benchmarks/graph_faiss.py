@@ -18,6 +18,8 @@ import os
 import tempfile
 import time
 
+from siann._cpu import FlatIndex
+
 import faiss
 import hnswlib
 import mlxvs
@@ -25,8 +27,6 @@ import numpy as np
 from backends import agreement
 from datasets import load
 from graph_cpu import single
-
-from siann._cpu import FlatIndex
 
 K = 10
 METRIC = {"sift": "l2", "glove": "l2", "music100": "ip", "dbpedia": "l2"}   # glove, dbpedia normalized

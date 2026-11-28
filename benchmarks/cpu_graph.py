@@ -21,11 +21,11 @@ import argparse
 import os
 import time
 
-import faiss
-import numpy as np
-
 import siann
 from siann._cpu import FlatIndex, GraphIndex, recall_of, scores
+
+import faiss
+import numpy as np
 
 K = 10
 METRIC = {"sift": "l2", "music100": "ip"}

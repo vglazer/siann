@@ -118,9 +118,9 @@ def torch_builtin(xb, xq: np.ndarray, k: int, metric: str) -> np.ndarray:
 
 def torch_custom(xb, xq: np.ndarray, k: int, metric: str) -> np.ndarray:
     """siann's custom kernels (knn_kernels.py), ported to MPS in torch_kernels.py."""
-    import torch
-
     from siann.torch_kernels import knn_tiled, l2_knn
+
+    import torch
     out = []
     with torch.no_grad():
         norms = (xb * xb).sum(1) if metric == "l2" else None

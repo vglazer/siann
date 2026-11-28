@@ -7,6 +7,7 @@ import nbformat.sign
 from nbclient import NotebookClient
 
 W = "https://en.wikipedia.org/wiki/"
+GH = "https://github.com/vglazer/siann/blob/main/"
 
 
 def md(text: str):
@@ -18,59 +19,66 @@ def code(text: str):
 
 
 cells = [
-    md("""
+    # 1. Setup
+    md(f"""
 # siann quickstart
 
-siann is nearest-neighbor search that decides how to search, on Apple silicon. Tell it what you need, exact
-neighbors or a recall target, and it chooses the method (exact search, or an IVF calibrated to the target)
-and the device for each batch size (the CPU or the Apple GPU), from measurements on your data and machine,
-and says why in `index.plan`. The choice holds as the data changes: an index can start empty, grow and
-shrink, and be searched while it changes.
+siann is nearest-neighbor search that decides how to search. Ask for exact neighbors or a recall target, and
+it picks the method (exact search, an IVF or a graph) and, for each batch size, the device (the CPU, or the
+Apple GPU), from measurements on your data and machine; `index.plan` says why.
 
-It goes from the metrics and exact search through approximate search to changing, saving and loading an
-index, one feature per section.
+The sections:
+
+1. Setup: the metrics, and the data
+2. Exact search
+3. Approximate search: a recall target
+4. Graphs
+5. Where searches run: the CPU or the GPU, by batch size
+6. Changing an index
+7. Saving and loading
+8. More options
+
+Every number here is from the machine that ran this notebook; [BENCHMARKS]({GH}BENCHMARKS.md) has
+measurements on real datasets.
 """),
     code("""
 import time
 
+import siann  # before NumPy: on Linux and Windows siann sets NumPy's BLAS up first
+
 import matplotlib.pyplot as plt
 import numpy as np
 
-import siann
-
+NAMES = {"l2": "L2", "l1": "L1", "linf": "L-infinity", "cosine": "cosine", "ip": "inner product"}
 siann.__version__
 """),
     md(f"""
-## The metrics, in two dimensions
+## 1. Setup
 
-siann searches by five measures of nearness. In two dimensions they are easy to see: below, 600 points,
-one query (the orange dot), and each metric's 25 nearest points to it (blue), with the boundary that encloses them.
-The L2, L1 and L-infinity panels are zoomed in on the query; the cosine and inner product panels show the
-whole cloud, since their regions run out from the origin.
+**The metrics.** siann searches by five measures of nearness. Below, in two dimensions: 600 points, one
+query (orange) and each metric's 25 nearest points to it (blue), inside the boundary that encloses them.
 
-- [**L2**]({W}Euclidean_distance) (Euclidean) is straight-line distance; its ball is a circle. The usual
-  choice for vectors whose coordinates are comparable measurements.
-- [**L1**]({W}Taxicab_geometry) (Manhattan) adds up the coordinate differences; its ball is a diamond. One
-  large difference counts less than under L2, which squares it, so L1 is more robust to a few outlying
-  coordinates.
-- [**L-infinity**]({W}Chebyshev_distance) (Chebyshev) is the largest single coordinate difference; its ball
-  is a square. A neighbor within distance r differs by at most r in every coordinate: a worst-case bound.
-- [**Cosine**]({W}Cosine_similarity) compares directions only, so its neighbors fill a wedge from the origin,
-  whatever their length. The usual choice for text and image embeddings.
-- [**Inner product**]({W}Dot_product) favors vectors that point the query's way *and* are long: its
-  neighbors lie beyond a line perpendicular to the query. For embeddings trained to be compared this way.
+- [**L2**]({W}Euclidean_distance) (Euclidean): straight-line distance, a circle. The usual choice for
+  coordinates that are comparable measurements.
+- [**L1**]({W}Taxicab_geometry) (Manhattan): the sum of the coordinate differences, a diamond; less swayed
+  by one outlying coordinate than L2.
+- [**L-infinity**]({W}Chebyshev_distance) (Chebyshev): the largest coordinate difference, a square; a
+  worst-case bound on every coordinate.
+- [**Cosine**]({W}Cosine_similarity): direction only, a wedge from the origin. The usual choice for text
+  and image embeddings.
+- [**Inner product**]({W}Dot_product): direction *and* length, everything beyond a line; for embeddings
+  trained to be compared this way.
 """),
     code("""
 rng = np.random.default_rng(1)
 pts = rng.standard_normal((600, 2), dtype=np.float32)
 q = np.array([[0.9, 0.5]], dtype=np.float32)
-k = 25
 
 fig, axes = plt.subplots(2, 3, figsize=(13, 8.6))
 axes = axes.ravel()
 axes[-1].axis("off")
 for ax, metric in zip(axes, siann.METRICS):
-    res = siann.Index(pts, metric, device="cpu").search(q, k)
+    res = siann.Index(pts, metric, device="cpu").search(q, 25)
     near, kth = res.indices[0], res.scores[0, -1]
     ax.scatter(*pts.T, s=6, c="0.75")
     ax.scatter(*pts[near].T, s=14, c="tab:blue")
@@ -90,7 +98,7 @@ for ax, metric in zip(axes, siann.METRICS):
         u = q[0] / np.linalg.norm(q[0])
         base, along = u * kth / np.linalg.norm(q[0]), np.array([-u[1], u[0]])
         ax.plot(*np.array([base - 5 * along, base + 5 * along]).T, c="tab:blue", lw=1)
-    ax.set_title({"l2": "L2", "l1": "L1", "linf": "L-infinity", "cosine": "cosine", "ip": "inner product"}[metric])
+    ax.set_title(NAMES[metric])
     # the balls are small: zoom on the query; cosine and inner product regions run out from the origin
     span = 2.2 * kth if metric in ("l2", "l1", "linf") else 3.2
     cx, cy = (q[0] if metric in ("l2", "l1", "linf") else (0, 0))
@@ -99,10 +107,8 @@ for ax, metric in zip(axes, siann.METRICS):
 fig.tight_layout()
 """),
     md("""
-## Some vectors
-
-Real embeddings cluster, so instead of uniform noise the rest of the notebook uses 200,000 points in 128
-dimensions drawn around 1,000 random centers, and up to 10,000 queries drawn the same way.
+**The data.** Real embeddings cluster, so the rest of the notebook uses 200,000 vectors in 128 dimensions
+drawn around 1,000 random centers, and 10,000 queries drawn the same way.
 """),
     code("""
 centers = rng.standard_normal((1000, 128), dtype=np.float32)
@@ -116,203 +122,91 @@ def sample(n):
 xb, xq = sample(200_000), sample(10_000)
 xb.shape, xq.shape
 """),
-    md("""
-## Exact search
 
-`siann.Index(xb, metric)` builds an index, and `index.search(xq, k)` returns each query's `k` nearest base
-vectors, best first: `indices` (int64) and `scores`. Without a recall target the search is exact, so these
-are the true nearest neighbors.
+    # 2. Exact search
+    md("""
+## 2. Exact search
+
+`siann.Index(xb, metric)` builds an index; `index.search(xq, k)` returns each query's `k` nearest, best
+first, as `indices` (int64) and `scores`. Without a recall target the search is exact. `index.plan` says
+what siann chose and why.
 """),
     code("""
 index = siann.Index(xb, metric="cosine")
 res = index.search(xq[:1000], k=5)
-res.indices[:3], res.scores[:3]
-"""),
-    md("""
-`index.plan` says what was chosen and why: here, how a search is routed to the GPU or the CPU by its batch
-size, under which profile, and how each device computes it.
-"""),
-    code("""
+print(res.indices[:2], res.scores[:2], sep="\\n")
 print(index.plan)
 """),
     md("""
-## Scores
+**Scores** are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, smallest
+first; the similarity for cosine and inner product, largest first. Below they are checked against NumPy.
 
-Scores are each metric's natural value: the distance for L2 (not squared), L1 and L-infinity, smallest
-first, and the similarity for cosine and inner product, largest first. They are exact: here they are
-recomputed with NumPy for an L2 search. The metrics also disagree about who is nearest, even on the same
-data: the share of each L2 top 10 that another metric's top 10 shares is below.
+**Ground truth.** Approximate search is judged by its *recall*: the share of the true nearest neighbors it
+finds. Exact search gives those true neighbors, here the 10 nearest of all 10,000 queries.
 """),
     code("""
-l2 = siann.Index(xb, "l2").search(xq[:1000], k=10)
-print("L2 scores exact:", np.allclose(l2.scores, np.linalg.norm(xb[l2.indices] - xq[:1000, None, :], axis=2), rtol=1e-4))
-for metric in ("l1", "linf", "cosine", "ip"):
-    other = siann.Index(xb, metric).search(xq[:1000], k=10).indices
-    shared = np.mean([len(set(a) & set(b)) / 10 for a, b in zip(l2.indices, other)])
-    print(f"{metric:7s} shares {shared:.0%} of L2's top 10")
-"""),
-    md("""
-## The GPU and the CPU, by batch size
-
-`device="cpu"` or `device="gpu"` pins an index to one device, and the same argument to `search` overrides it
-for one call; each device makes its own copy of the vectors the first time a search needs it. Both return
-the same neighbors. Which is faster depends on the batch and the metric: a GPU call has a fixed cost that a
-large batch spreads thin, and L2, cosine and inner product are matrix multiplies on either device, where
-L1 and L-infinity have no matrix-multiply form, so the GPU's lead is largest there.
-
-Below, queries per second on this machine at batch sizes from 1 to 10,000, k = 10. Each point is the
-second of two identical calls: the first builds the device's copy and, on the GPU, compiles the kernels for
-that batch size.
-"""),
-    code("""
-devices = ["cpu", "gpu"] if siann.gpu_available() else ["cpu"]
-batches = [1, 10, 100, 1000, 10_000]
-rate = {}
-for metric in siann.METRICS:
-    idx = siann.Index(xb, metric)
-    for device in devices:
-        for b in batches:
-            idx.search(xq[:b], 10, device=device)
-            start = time.perf_counter()
-            idx.search(xq[:b], 10, device=device)
-            rate[metric, device, b] = b / (time.perf_counter() - start)
-
-fig, axes = plt.subplots(1, 5, figsize=(17, 3.4), sharey=True)
-for ax, metric in zip(axes, siann.METRICS):
-    for device in devices:
-        ax.plot(batches, [rate[metric, device, b] for b in batches], marker="o", label=device.upper())
-    ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlabel("queries per batch")
-    ax.set_title({"l2": "L2", "l1": "L1", "linf": "L-infinity", "cosine": "cosine", "ip": "inner product"}[metric])
-axes[0].set_ylabel("queries per second"); axes[0].legend()
-fig.tight_layout()
-"""),
-    code("""
-for metric in siann.METRICS:
-    print(f"{metric:7s} " + "  ".join(
-        f"batch {b:>6,}: {rate[metric, 'gpu', b] / rate[metric, 'cpu', b]:5.1f}x" for b in batches)
-          if "gpu" in devices else metric)
-"""),
-    md("""
-The table gives the GPU's speed over the CPU's at each batch size; below 1, the CPU is faster. Where the
-two cross depends on the metric, the hardware and the size of the collection: the CPU's cost grows with the
-number of vectors, the GPU's cost per call does not.
-"""),
-    md("""
-## Tuning siann to your data and machine
-
-`siann.Index` sends each search to the GPU or the CPU by its batch size, from a *profile*'s threshold for
-the metric. siann's default profile was tuned on an Apple M3 Max with collections of about a million
-vectors. For other hardware or other sizes, `siann.tune` measures both devices on your own vectors and
-returns a profile for them; here, for two metrics on this notebook's 200,000 vectors (about half a minute):
-"""),
-    code("""
-print(siann.DEFAULT_PROFILE)
-profile = siann.tune(xb, metrics=("l2", "cosine"), budget=30)
-print(profile)
-"""),
-    md("""
-A profile is used only where you pass it, so results never depend on a file you forgot about: give it to
-one index with `profile=`, or to every index in the process with `siann.use_profile(profile)`. It saves to
-JSON with `profile.save(path)`, and `siann.Profile.load(path)` reads it back. The plan names the profile
-and its threshold, and `index.route(batch)` says where a batch of that size goes:
-"""),
-    code("""
-tuned = siann.Index(xb, "l2", profile=profile)
-print(tuned.plan)
-{b: tuned.route(b) for b in (1, 8, 64, 1000)}
-"""),
-    md("""
-## Exact search as ground truth
-
-An approximate index is judged by its recall: the share of the true nearest neighbors it finds. That needs
-the true neighbors first, for many queries, which exact search on the GPU provides quickly:
-"""),
-    code("""
-truth_index = siann.Index(xb, "l2")
-truth_index.search(xq, 10)                         # builds the copy, compiles for this batch
+exact = siann.Index(xb, "l2")
+exact.search(xq, 10)                                   # the first call copies the vectors, compiles kernels
 start = time.perf_counter()
-truth = truth_index.search(xq, 10).indices
-print(f"true 10 nearest neighbors of {len(xq):,} queries among {len(xb):,}: "
-      f"{time.perf_counter() - start:.2f} s on the {truth_index.plan.device.upper()}")
+res = exact.search(xq, 10)
+truth = res.indices
+print(f"true 10 nearest of {len(xq):,} queries among {len(xb):,}: {time.perf_counter() - start:.2f} s")
+print("scores exact:", np.allclose(res.scores[:100], np.linalg.norm(xb[truth[:100]] - xq[:100, None], axis=2), rtol=1e-4))
 
 
 def recall(found, truth):
     return np.mean([len(set(a) & set(b)) / truth.shape[1] for a, b in zip(found, truth)])
-
-
-recall(truth, truth)
 """),
+
+    # 3. Approximate search
     md(f"""
-## Approximate search
+## 3. Approximate search
 
-Exact search compares each query with every vector. Approximate search compares it with only some of them,
-trading a little accuracy for a lot of speed.
+Approximate search compares each query with only some of the vectors, trading a little recall for a lot of
+speed. siann has two methods for it; this section uses the first.
 
-**IVF.** siann does this with an [inverted file]({W}Inverted_index) (IVF). When the index is built, the
-vectors are grouped into *lists* by [k-means clustering]({W}K-means_clustering): each list holds the vectors
-nearest one cluster centre, its *centroid*. A search compares the query with the centroids, picks the lists
-of the nearest few, and scans only their vectors. Most of a query's true neighbors are in those lists; a few
-sit just across a list's boundary, in a list that was not scanned, and are missed.
+**The IVF** ([inverted file]({W}Inverted_index)) groups the vectors into *lists* by
+[k-means]({W}K-means_clustering), one per cluster center (*centroid*). A search scans only the lists whose
+centroids are nearest the query: *nprobe* of them. More lists find more true neighbors and take longer.
 
-**nprobe** is how many lists a search scans. Scanning more lists finds more of the true neighbors and takes
-longer; scanning all of them is exact search.
-
-**Recall** measures what is missed. Recall@10 is the share of each query's true 10 nearest neighbors that the
-search returns, averaged over the queries: at 0.95, 95 of every 100 true neighbors are found. It is how
-approximate search is judged: a faster search at lower recall is not a better one, so methods are compared
-at the same recall, as in siann's benchmarks.
-
-With a recall target, siann builds an IVF and a graph (next section), finds the smallest nprobe and graph
-search width that reach the target on a sample of queries (*calibration*), and times every path, exact search
-included, on the CPU and the GPU, on the sample, to route each batch size to the fastest; the plan reports
-every choice. The sample is 1,000 of the index's
-own vectors unless you pass queries as `calibration_queries` (more at the end of this section); here, 1,000
-of the queries are passed.
+**A recall target** (`recall=0.95`: 95 of every 100 true neighbors found, on average) sets nprobe: siann
+picks the smallest nprobe that reaches the target on a sample of queries (*calibration*). Here the sample is
+1,000 of the queries (`calibration_queries=`); the target then holds on the other 9,000.
 """),
     code("""
 approx = siann.Index(xb, "l2", recall=0.95, calibration_queries=xq[:1000])
+rest, rest_truth = xq[1000:], truth[1000:]
 print(approx.plan)
+print(f"recall@10 on the other {len(rest):,} queries: {recall(approx.search(rest, 10).indices, rest_truth):.3f}")
 """),
     md("""
-The target holds on queries it was not calibrated on: here, the other 9,000, against their true neighbors
-from above. This synthetic data clusters cleanly, so a couple of lists per query suffice; on SIFT1M the same
-target takes about 40 of its 4,000 lists.
-"""),
-    code("""
-rest = xq[1000:]
-found = approx.search(rest, 10).indices
-print(f"recall@10 on the other {len(rest):,} queries: {recall(found, truth[1000:]):.3f}")
-"""),
-    md("""
-Approximate search pays most where exact search costs most: in large batches. Where each batch runs, on the
-CPU or the GPU and with which scan, the index measured when it was built (the plan's "routing" line).
+Approximate search pays most where exact search costs most: in large batches. Queries per second at each
+batch size:
 """),
     code("""
 def rate(fn, b):
-    q = rest[:b]
-    fn(q)                                              # warm-up: copies, kernels for this shape
+    fn(rest[:b])                                       # warm-up: copies, kernels for this shape
     calls = max(1, 2000 // b) if b < 1000 else 3
     start = time.perf_counter()
     for c in range(calls):
-        fn(rest[c:c + 1] if b == 1 else q)
+        fn(rest[c * b:(c + 1) * b] if b < 1000 else rest[:b])
     return calls * b / (time.perf_counter() - start)
 
 
 sizes = [1, 10, 100, 1000, 9000]
-exact_rate = [rate(lambda q: truth_index.search(q, 10), b) for b in sizes]
+exact_rate = [rate(lambda q: exact.search(q, 10), b) for b in sizes]
 approx_rate = [rate(lambda q: approx.search(q, 10), b) for b in sizes]
 fig, ax = plt.subplots(figsize=(6, 3.6))
 ax.plot(sizes, exact_rate, marker="o", label="exact")
-ax.plot(sizes, approx_rate, marker="o", label=f"IVF, recall 0.95 (nprobe {approx.nprobe})")
+ax.plot(sizes, approx_rate, marker="o", label="recall 0.95")
 ax.set_xscale("log"); ax.set_yscale("log")
 ax.set_xlabel("queries per batch"); ax.set_ylabel("queries per second"); ax.legend()
 fig.tight_layout()
 """),
     md("""
-nprobe trades recall for speed. Below, recall against queries per second for a batch of 9,000 queries at
-nprobe from 1 to 128 (`search(..., nprobe=)` overrides the calibrated value). Each step doubles the lists
-scanned: recall climbs towards 1.0 and speed falls towards exact search's (in red, the dashed line its
-speed). The calibrated nprobe is ringed: the fewest lists that reach the target.
+**The trade-off.** `search(..., nprobe=)` overrides the calibrated nprobe for one search. Below, recall
+against speed for 9,000 queries as nprobe doubles from 1 to 128: recall climbs towards 1 and speed falls
+towards exact search's (red). The calibrated nprobe, ringed, is the fewest lists that reach the target.
 """),
     code("""
 curve = []
@@ -320,64 +214,50 @@ for p in (1, 2, 4, 8, 16, 32, 64, 128):
     approx.search(rest, 10, nprobe=p)
     start = time.perf_counter()
     found = approx.search(rest, 10, nprobe=p).indices
-    curve.append((recall(found, truth[1000:]), len(rest) / (time.perf_counter() - start), p))
+    curve.append((recall(found, rest_truth), len(rest) / (time.perf_counter() - start), p))
 fig, ax = plt.subplots(figsize=(7, 4.2))
-ax.plot([r for r, _, _ in curve], [q for _, q, _ in curve], marker="o", c="tab:blue", label="IVF, by nprobe")
-for r, q, p in curve:
-    ax.annotate(f"nprobe {p}", (r, q), textcoords="offset points", xytext=(-8, 2), ha="right", fontsize=8,
+ax.plot([r for r, _, _ in curve], [s for _, s, _ in curve], marker="o", c="tab:blue", label="IVF, by nprobe")
+for r, s, p in curve:
+    ax.annotate(f"nprobe {p}", (r, s), textcoords="offset points", xytext=(-8, 2), ha="right", fontsize=8,
                 color="tab:blue")
 calibrated = [c for c in curve if c[2] == approx.nprobe]
 if calibrated:
     ax.scatter([calibrated[0][0]], [calibrated[0][1]], s=260, facecolors="none", edgecolors="tab:orange",
                linewidths=2.5, zorder=3, label=f"calibrated to recall 0.95 (nprobe {approx.nprobe})")
 ax.axhline(exact_rate[-1], color="tab:red", linestyle="--", linewidth=1)
-ax.scatter([1.0], [exact_rate[-1]], marker="s", s=90, c="tab:red", zorder=3, label="exact search (recall 1.0)")
-ax.set_yscale("log"); ax.set_xlabel("recall@10 (share of the true 10 nearest found)")
-ax.set_ylabel("queries per second, batch of 9,000")
+ax.scatter([1.0], [exact_rate[-1]], marker="s", s=90, c="tab:red", zorder=3, label="exact search")
+ax.set_yscale("log"); ax.set_xlabel("recall@10"); ax.set_ylabel("queries per second, batch of 9,000")
 ax.legend(loc="center left"); fig.tight_layout()
 """),
-    md("""
-**Calibrating on your queries (optional).** Without `calibration_queries`, siann calibrates on a sample of
-the index's own vectors, and the target holds for queries like them. Here the queries are drawn like the
-base vectors, so the two agree:
+    md(f"""
+**Which queries to calibrate on.** Without `calibration_queries=`, siann calibrates on 1,000 of the index's
+own vectors, and the target holds for queries like them. Real queries often differ: on SIFT1M, calibrating on
+its own vectors misses the target, and on Music-100 it scans five times the lists needed. Pass a sample of
+real queries, or call `index.calibrate(queries)` later
+([TUNING]({GH}TUNING.md#calibration-meeting-the-recall-target-on-your-queries)).
 """),
-    code("""
-own = siann.Index(xb, "l2", recall=0.95)
-print(f"calibrated on its own vectors: nprobe {own.nprobe}, recall {recall(own.search(rest, 10).indices, truth[1000:]):.3f}")
-print(f"calibrated on 1,000 queries:   nprobe {approx.nprobe}, recall {recall(approx.search(rest, 10).indices, truth[1000:]):.3f}")
-"""),
+
+    # 4. Graphs
     md("""
-On real data the queries often differ from the base vectors, in either direction: on SIFT1M, calibrating
-on its own vectors misses the target, and on Music-100 it scans five times the lists needed. Calibrating on
-a sample of real queries fixes both, and times the routing on them too
-([TUNING](https://github.com/vglazer/siann/blob/main/TUNING.md#calibration-meeting-the-recall-target-on-your-queries)
-has the numbers).
-"""),
-    md("""
-## Graph search
+## 4. Graphs
 
 **A graph index** links each vector to some of its near neighbors (here 32) and searches by walking the
-links from a few entry vectors, keeping the best candidates found: a query touches far fewer vectors than an
-IVF scans. siann's graphs are CAGRA graphs, the graph index of NVIDIA's cuVS. Where
-[mlxvs](https://github.com/mikepapadim/mlxvs) is installed (`pip install siann[graph]`, Apple silicon), it
-builds them on the GPU and searches GPU batches; elsewhere siann builds them itself, on any machine, and
-searches them on the CPU.
+links from a few entry vectors: a query touches far fewer vectors than an IVF scans. siann's graphs are
+CAGRA graphs, and siann builds them itself on any machine, for every metric. With a recall target, siann
+builds a graph alongside the IVF, calibrates its search width to the target, and uses it for the batch sizes
+where it is faster.
 
-A graph links each vector to its near neighbors, so data made of tight clusters far apart from each other,
-as these 1,000 are, leaves each cluster linked only to itself, and a search reaches only the clusters it
-starts in. siann measures that when it builds the graph, and the index above has declined it: its plan says
-why, and it searches with its IVF.
+A graph fails on data made of tight clusters far apart, like this notebook's: each cluster links only to
+itself, and a search reaches only the clusters it starts in. siann measures that when it builds the graph,
+and the index above declined it; its plan says why:
 """),
     code("""
-for line in str(approx.plan).splitlines():
-    if "graph" in line or "queries per search" in line:
-        print(line.strip())
+print("\\n".join(line.strip() for line in str(approx.plan).splitlines() if "graph" in line))
 """),
     md("""
-On data without such gaps a graph serves well. siann's own builder works for every metric, so L1 and
-L-infinity get graphs too, which CAGRA itself does not offer. `kind="graph"` sends every batch through the
-graph; `nprobe=` on a search sends it through the IVF instead: here the graph and the IVF of one L1 index
-over 100,000 Gaussian vectors in 16 dimensions, on batches of 100.
+On data without such gaps a graph serves well. Below, an L1 index over 100,000 Gaussian vectors in 16
+dimensions: `kind="graph"` sends every batch through the graph, and `nprobe=` sends one search through the
+IVF instead, here on batches of 100.
 """),
     code("""
 g_xb = rng.standard_normal((100_000, 16), dtype=np.float32)
@@ -400,23 +280,150 @@ print(f"graph: recall@10 {recall(l1.search(g_rest, 10).indices, l1_truth):.3f}, 
 print(f"IVF (nprobe {l1.nprobe}): recall@10 {recall(l1.search(g_rest, 10, nprobe=l1.nprobe).indices, l1_truth):.3f}, "
       f"{rate_on(lambda q: l1.search(q, 10, nprobe=l1.nprobe), g_rest):,.0f} queries per second")
 """),
-    md("""
-Both meet the target. On random vectors, with no structure for either method to exploit, they run at about
-the same speed (32 to 64 dimensions measured the same); on real data the graph pulls ahead, by L1 on SIFT1M
-6.2 times the IVF at recall 0.95
-([BENCHMARKS](https://github.com/vglazer/siann/blob/main/BENCHMARKS.md#graphs-for-l1-and-l-infinity)),
-which is why siann times both and routes each batch to the faster.
+    md(f"""
+Both meet the target. Random vectors give neither method structure to exploit, so they run at about the same
+speed; on real data the graph pulls ahead: by L1 on SIFT1M, 6.2 times the IVF at recall 0.95
+([BENCHMARKS]({GH}BENCHMARKS.md#graphs-for-l1-and-l-infinity)). The two find different neighbors, each
+calibrated to the target on its own, so results can depend on the batch size's route; the plan says so.
 
-The graph and the IVF find different neighbors, each calibrated to the target on its own, so an index's
-results can depend on the batch size it routes; the plan says so. A saved index keeps its graph.
+[mlxvs](https://github.com/mikepapadim/mlxvs) is optional: installed (`pip install siann[graph]`, Apple
+silicon), it builds L2, cosine and inner-product graphs faster on the GPU and searches GPU batches through
+them.
+"""),
+
+    # 5. Where searches run
+    md("""
+## 5. Where searches run: the CPU or the GPU, by batch size
+
+A GPU call has a fixed cost that a large batch spreads thin, so the CPU wins small batches and the GPU large
+ones; where they cross depends on the metric, the method, the data and the machine. When an index is built,
+siann times every path (each method on each device) at batch sizes from 1 to 4,096, and each search takes the
+fastest for its size. The plan's routing line gives the result:
+"""),
+    code("""
+print(next(line.strip() for line in str(approx.plan).splitlines() if line.lstrip().startswith("routing")))
 """),
     md("""
-## Saving and loading an index
+`device="cpu"` or `device="gpu"` overrides it, for an index or for one search; both return the same
+neighbors. Below, exact search on each device by batch size, for every metric. L1 and L-infinity have no
+matrix-multiply form, so the GPU's lead is largest there.
+"""),
+    code("""
+devices = ["cpu", "gpu"] if siann.gpu_available() else ["cpu"]
+batches = [1, 10, 100, 1000, 10_000]
+speed = {}
+for metric in siann.METRICS:
+    idx = siann.Index(xb, metric)
+    for device in devices:
+        for b in batches:
+            idx.search(xq[:b], 10, device=device)      # the first call copies the vectors, compiles kernels
+            start = time.perf_counter()
+            idx.search(xq[:b], 10, device=device)
+            speed[metric, device, b] = b / (time.perf_counter() - start)
 
-`index.save(path)` writes everything the index built: the vectors, the IVF's lists, the calibration and
-its sample, the routes and the profile. `siann.Index.load(path)` reads it back without rebuilding, and
-returns the same neighbors. On another machine it keeps the calibration, which depends only on the data,
-and re-measures the routes, which depend on the machine; the plan says which it did.
+fig, axes = plt.subplots(1, 5, figsize=(17, 3.4), sharey=True)
+for ax, metric in zip(axes, siann.METRICS):
+    for device in devices:
+        ax.plot(batches, [speed[metric, device, b] for b in batches], marker="o", label=device.upper())
+    ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlabel("queries per batch"); ax.set_title(NAMES[metric])
+axes[0].set_ylabel("queries per second"); axes[0].legend()
+fig.tight_layout()
+"""),
+    md("""
+**Exact search's routing** comes from a *profile*: a threshold batch size per metric, above which a search
+goes to the GPU. The default profile was tuned on an Apple M3 Max with about a million vectors;
+`siann.tune` measures your own vectors on your machine (here two metrics, about half a minute). A profile
+applies only where you pass it: `profile=` for one index, `siann.use_profile(profile)` for the process;
+`profile.save(path)` and `siann.Profile.load(path)` keep it. `index.route(batch)` says where a batch goes.
+"""),
+    code("""
+profile = siann.tune(xb, metrics=("l2", "cosine"), budget=30)
+print(siann.DEFAULT_PROFILE, profile, sep="\\n")
+tuned = siann.Index(xb, "l2", profile=profile)
+{b: tuned.route(b) for b in (1, 8, 64, 1000)}
+"""),
+
+    # 6. Changing an index
+    md("""
+## 6. Changing an index
+
+`index.add(x)` adds vectors and returns their ids (row numbers, unless `add(x, ids=...)` names them).
+Added vectors are searched exactly until 10,000 of them (or 1% of the index) have gathered; then they are
+merged in, and an approximate index recalibrates so that the target keeps holding. Here, an index of the
+first 150,000 vectors gets the other 50,000; their ids are their rows in `xb`, so the truth above applies.
+"""),
+    code("""
+growing = siann.Index(xb[:150_000], "l2", recall=0.95, calibration_queries=xq[:1000])
+for s in range(150_000, 200_000, 10_000):
+    ids = growing.add(xb[s:s + 10_000])
+print(f"ids of the last batch: {ids[0]:,} to {ids[-1]:,}; the index holds {growing.n:,}")
+print(f"recall@10 on the other {len(rest):,} queries: {recall(growing.search(rest, 10).indices, rest_truth):.3f}")
+"""),
+    md("""
+**Re-clustering.** Added vectors go to the list of their nearest centroid, and the centroids stay. Vectors
+from regions the centroids never saw crowd into a few lists, which slows searches, so once the largest list
+has doubled against the mean (or the index has doubled), siann clusters again, and the plan says why. Here,
+30,000 vectors from 20 new centers; `index.recluster()` does the same when you choose.
+
+**Removing** by id: removed vectors are never returned. Vectors added with your own ids are found by them.
+"""),
+    code("""
+elsewhere = ((3 + rng.standard_normal((20, 128), dtype=np.float32))[rng.integers(0, 20, 30_000)]
+             + 0.3 * rng.standard_normal((30_000, 128), dtype=np.float32))
+for s in range(0, 30_000, 10_000):
+    growing.add(elsewhere[s:s + 10_000])
+print("\\n".join(line.strip() for line in str(growing.plan).splitlines() if "merged" in line or "clustered" in line))
+
+near = growing.search(xq[:1], 3).indices[0]
+growing.remove(near)
+print(f"removed {near}; the nearest now: {growing.search(xq[:1], 3).indices[0]}")
+mine = growing.add(xq[:2], ids=[10**9, 10**9 + 1])
+print(f"added with ids {mine}: the nearest to the first query is {growing.search(xq[:1], 1).indices[0, 0]:,}")
+"""),
+    md("""
+**Threads.** An index can be searched from several threads at once, and changed while it is searched: each
+search sees the index as it was when it began. Here, four threads search while the main thread adds:
+"""),
+    code("""
+from concurrent.futures import ThreadPoolExecutor
+
+
+def search_many(t):
+    return [growing.search(xq[i:i + 1], 10).indices for i in range(t * 100, t * 100 + 100)]
+
+
+with ThreadPoolExecutor(4) as pool:
+    searches = [pool.submit(search_many, t) for t in range(4)]
+    for s in range(0, 5_000, 500):
+        growing.add(elsewhere[s:s + 500] + 0.1)
+    answered = sum(len(f.result()) for f in searches)
+print(f"{answered} searches answered while 5,000 vectors were added; the index holds {growing.n:,}")
+"""),
+    md("""
+**Starting empty.** An index can start from an array of shape (0, d) and grow by `add`. With a recall target,
+siann chooses between an IVF and exact search at the first merge, and again each time an index that kept
+exact search has doubled. It calibrates on its own vectors until `index.calibrate(queries)` gives it real
+ones, which later merges keep using.
+"""),
+    code("""
+empty = siann.Index(np.empty((0, 128), np.float32), "l2", recall=0.95)
+for s in range(0, len(xb), 10_000):
+    empty.add(xb[s:s + 10_000])
+print(f"grew to {empty.n:,} vectors: {empty.kind}, nprobe {empty.nprobe}, "
+      f"recall@10 {recall(empty.search(rest, 10).indices, rest_truth):.3f}")
+empty.calibrate(xq[:1000])
+print(f"calibrated on 1,000 real queries: nprobe {empty.nprobe}, "
+      f"recall@10 {recall(empty.search(rest, 10).indices, rest_truth):.3f}")
+"""),
+
+    # 7. Saving and loading
+    md("""
+## 7. Saving and loading
+
+`index.save(path)` writes everything the index built (vectors, lists, graph, calibration, routes, profile),
+merging pending additions first and keeping the ids. `siann.Index.load(path)` reads it back without
+rebuilding and returns the same neighbors. On another machine it keeps the calibration, which depends only on
+the data, and re-measures the routes, which depend on the machine; the plan says which it did.
 """),
     code("""
 import os
@@ -427,148 +434,37 @@ start = time.perf_counter()
 approx.save(path)
 loaded = siann.Index.load(path)
 print(f"saved and loaded in {time.perf_counter() - start:.2f} s ({os.path.getsize(path) / 1e6:.0f} MB)")
-print(loaded.plan)
-assert (loaded.search(rest, 10).indices == approx.search(rest, 10).indices).all()
+print("same neighbors:", (loaded.search(rest, 10).indices == approx.search(rest, 10).indices).all())
 """),
-    md("""
-## Changing an index
 
-`index.add(x)` adds vectors and returns their ids; `index.remove(ids)` removes vectors by id. Searches return
-ids: a vector's row number unless `add(x, ids=...)` names it. Added vectors are searched exactly until
-10,000 of them (or 1% of the index) have gathered; then they are merged into the index, and an approximate
-index recalibrates nprobe, so that the recall target keeps holding. Here, an index built on the first
-150,000 vectors gets the other 50,000 in batches of 10,000. Their ids continue from 150,000, which are
-their row numbers in `xb`, so the true neighbors from above still apply.
-"""),
-    code("""
-growing = siann.Index(xb[:150_000], "l2", recall=0.95, calibration_queries=xq[:1000])
-for s in range(150_000, 200_000, 10_000):
-    ids = growing.add(xb[s:s + 10_000])
-print(f"ids of the last batch: {ids[0]:,} to {ids[-1]:,}; the index holds {growing.n:,}")
-found = growing.search(rest, 10).indices
-print(f"recall@10 on the other {len(rest):,} queries: {recall(found, truth[1000:]):.3f}")
-print(growing.plan)
-"""),
+    # 8. More options
     md("""
-Adding to an approximate index puts each vector in the list of its nearest centroid, and the centroids stay
-as they were. That keeps recall, but vectors from regions the centroids never saw crowd into a few lists,
-which slows searches. When the largest list has doubled against the mean since the index was clustered, or
-the index has doubled in size, siann clusters it again (in the `add` that crosses the line), and the plan
-says why. Here, 30,000 vectors from 20 new centres:
-"""),
-    code("""
-new_centers = 3 + rng.standard_normal((20, 128), dtype=np.float32)
-elsewhere = (new_centers[rng.integers(0, 20, 30_000)]
-             + 0.3 * rng.standard_normal((30_000, 128), dtype=np.float32))
-start = time.perf_counter()
-for s in range(0, 30_000, 10_000):
-    growing.add(elsewhere[s:s + 10_000])
-print(f"added in {time.perf_counter() - start:.1f} s")
-print("\\n".join(line for line in str(growing.plan).splitlines() if "merged" in line or "clustered" in line))
-"""),
-    md("""
-Removed vectors are never returned, and the results stay exact. Vectors added with ids of your own are found
-by them:
-"""),
-    code("""
-near = growing.search(xq[:1], 3).indices[0]
-growing.remove(near)
-print(f"removed {near}; the nearest now: {growing.search(xq[:1], 3).indices[0]}")
-mine = growing.add(xq[:2], ids=[10**9, 10**9 + 1])
-print(f"added with ids {mine}: the nearest to the first query is {growing.search(xq[:1], 1).indices[0, 0]:,}")
-"""),
-    md("""
-`index.recluster()` clusters the index again when you choose, and `index.save()` merges and compacts first
-and keeps the ids.
-"""),
-    md("""
-An index can be searched from several threads at once, and changed while it is searched: each search sees
-the index as it was when the search began. Here, four threads search while the main thread adds vectors:
-"""),
-    code("""
-from concurrent.futures import ThreadPoolExecutor
+## 8. More options
 
-
-def search_many(t):
-    return [growing.search(xq[i:i + 1], 10).indices for i in range(t * 100, t * 100 + 100)]
-
-with ThreadPoolExecutor(4) as pool:
-    searches = [pool.submit(search_many, t) for t in range(4)]
-    for s in range(0, 5_000, 500):
-        growing.add(elsewhere[s:s + 500] + 0.1)
-    answered = sum(len(f.result()) for f in searches)
-print(f"{answered} searches answered while 5,000 vectors were added; the index holds {growing.n:,}")
-"""),
-    md("""
-### Starting empty
-
-An index can start with no vectors, from an array of shape (0, d), and grow by `add`. With a recall target,
-siann chooses between an IVF and exact search at the first merge, when there is something to measure, and
-chooses again each time an index that kept exact search has doubled. Without `calibration_queries=`, it
-calibrates on the index's own vectors; `index.calibrate(queries)` recalibrates on real queries once you
-have them, and later merges keep using them.
-"""),
-    code("""
-empty = siann.Index(np.empty((0, 128), np.float32), "l2", recall=0.95)
-print(f"empty: {empty.search(xq[:1], 3).indices[0]}")
-start = time.perf_counter()
-for s in range(0, len(xb), 10_000):
-    empty.add(xb[s:s + 10_000])
-print(f"grew to {empty.n:,} vectors in {time.perf_counter() - start:.1f} s: {empty.kind}, nprobe {empty.nprobe}")
-print(f"recall@10 on the other {len(rest):,} queries: {recall(empty.search(rest, 10).indices, truth[1000:]):.3f}")
-empty.calibrate(xq[:1000])
-print(f"calibrated on 1,000 real queries: nprobe {empty.nprobe}, "
-      f"recall@10 {recall(empty.search(rest, 10).indices, truth[1000:]):.3f}")
-print("\\n".join(line for line in str(empty.plan).splitlines() if "grown" in line or "calibrated" in line))
-"""),
-    md("""
-## The GPU backend: MLX or PyTorch
-
-siann's GPU kernels run on MLX or on PyTorch's MPS backend: the same Metal code, the same neighbors.
-`gpu="auto"` takes MLX where it finds a GPU; `gpu="torch"` runs every GPU step through PyTorch, building
-included, without importing MLX, for programs that already use PyTorch (`pip install siann[torch]`). The
-next cell runs it where PyTorch finds an Apple GPU, against exact search on the CPU.
-"""),
-    code("""
-try:
-    on_torch = siann.Index(xb, "l2", gpu="torch")
-except RuntimeError as e:
-    print(e)
-else:
-    gpu_found = on_torch.search(xq[:100], 10, device="gpu")
-    cpu_found = on_torch.search(xq[:100], 10, device="cpu")
-    print(f"the same neighbors on PyTorch's GPU and the CPU: {(gpu_found.indices == cpu_found.indices).mean():.4f}")
-    print(next(line for line in str(on_torch.plan).splitlines() if "GPU backend" in line))
-"""),
-    md("""
-## Memory
-
-On Apple silicon the GPU's memory is the machine's. siann splits each GPU search so that a call works within
-a budget (4 GB, or a quarter of what the GPU can use on smaller machines), which never changes its results,
-and keeps an index too large for the GPU on the CPU. The plan says which:
-"""),
-    code("""
-print(next(line for line in str(index.plan).splitlines() if line.lstrip().startswith(("memory:", "GPU found, but", "no GPU"))))
-"""),
-    md("""
-## When fewer than k exist
-
-Asking for more neighbors than there are vectors returns all of them, then `-1` in the missing slots, with
-the metric's worst score (infinity for a distance, minus infinity for a similarity). A neighbor is never
-made up.
-"""),
-    code("""
-small = siann.Index(xb[:3], "l2")
-small.search(xq[:1], k=5)
-"""),
-    md("""
-## What siann refuses
-
-siann searches dense vectors, so a sparse matrix is refused with an explanation rather than converted
-silently.
+- **PyTorch instead of MLX.** siann's GPU kernels run on MLX or on PyTorch's MPS backend: the same Metal
+  code, the same neighbors. `gpu="torch"` runs every GPU step through PyTorch, without importing MLX, for
+  programs that already use it (`pip install siann[torch]`).
+- **Memory.** On Apple silicon the GPU's memory is the machine's. siann splits each GPU search to stay within
+  a budget (4 GB, or a quarter of what the GPU can use on smaller machines), which never changes the results,
+  and keeps an index too large for the GPU on the CPU. The plan's memory line says which.
+- **Fewer than k.** Asking for more neighbors than there are vectors returns all of them, then `-1` with the
+  metric's worst score (infinity for a distance, minus infinity for a similarity). A neighbor is never made up.
+- **Refusals.** siann searches dense vectors: a sparse matrix is refused with an explanation, not converted.
 """),
     code("""
 import scipy.sparse
+
+try:
+    on_torch = siann.Index(xb, "l2", gpu="torch")
+    found = on_torch.search(xq[:100], 10, device="gpu").indices
+    print("PyTorch's GPU and the CPU agree:", (found == on_torch.search(xq[:100], 10, device="cpu").indices).all())
+except RuntimeError as e:
+    print(e)
+
+print(next(line.strip() for line in str(index.plan).splitlines()
+           if line.lstrip().startswith(("memory:", "GPU found, but", "no GPU"))))
+
+print(siann.Index(xb[:3], "l2").search(xq[:1], k=5))
 
 try:
     siann.Index(scipy.sparse.random(100, 20, density=0.1, format="csr"), "ip")

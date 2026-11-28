@@ -1,10 +1,10 @@
 """GPU memory: an index too large for the GPU stays on the CPU (and says so), searches split to stay within the
 budget return exactly what one call returns, and MLX's cache cap leaves a lower cap of the program's own."""
-import numpy as np
-import pytest
-
 import siann
 from siann import _index, _ivf, _memory
+
+import numpy as np
+import pytest
 
 gpu_only = pytest.mark.skipif(not siann.gpu_available(), reason="no GPU available")
 

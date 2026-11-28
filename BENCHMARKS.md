@@ -450,7 +450,7 @@ list's cost the slope (`coarse_sift_l2.txt`):
 Fewer lists do not help: at matched recall, 1,000 lists (nprobe 8: 0.822 in 89 microseconds) are level
 with 4,000 (nprobe 16: 0.828 in 94), and 4,000 win from recall 0.92.
 
-**A two-level coarse step** compares a query with the centres of groups of centroids (64 for 4,000 lists),
+**A two-level coarse step** compares a query with the centers of groups of centroids (64 for 4,000 lists),
 then only with the centroids of its 16 nearest groups. 4,000 lists, uint8 on SIFT and float32 on GloVe,
 median microseconds per call, exact coarse step against two-level (`coarse_step.py --nlists ""
 --gprobes 8,16`; `coarse_two_level_routes_*.txt`):
@@ -871,7 +871,7 @@ through mlxvs on the GPU.
 
 ### Building graphs
 
-*Reproduce with `graph_build.py --dataset sift|music100|glove`; on a machine without a GPU,
+*Reproduce with `graph_build.py --dataset sift|music100|glove` (and `--dataset sift --builder siann --knn-nprobe 64`); on a machine without a GPU,
 `graph_build.py --dataset sift --only-siann`; cuVS's graph with `benchmarks/colab/cuvs_cagra.ipynb`.*
 
 Three builders' graphs over the same vectors, each searched by siann's CPU search on 2,000 queries, against
@@ -880,21 +880,22 @@ on all 16 threads of an M3 Max (`graph_build_*.txt`, `cuvs_cagra_t4.txt`):
 
 | Dataset | Graph | Built in | Width for 0.95 | Queries per second at 0.95 |
 | --- | --- | ---: | ---: | ---: |
-| SIFT1M | siann's | 11.2 s | 39.8 | 300,670 |
-| | mlxvs's | 18.1 s | 39.7 | 312,055 |
-| | cuVS's (a T4) | 7.0 s | 46.5 | 288,331 |
-| Music-100 | siann's | 12.0 s | 58.6 | 183,456 |
-| | mlxvs's | 23.5 s | 61.7 | 169,765 |
+| SIFT1M | siann's | 10.9 s | 39.8 | 329,177 |
+| | mlxvs's | 4.5 s | 36.6 | 354,236 |
+| | cuVS's (a T4) | 7.0 s | 46.5 | 287,027 |
+| Music-100 | siann's | 16.3 s | 58.6 | 185,786 |
+| | mlxvs's | 5.0 s | 57.0 | 183,296 |
 | GloVe-100 | siann's | 16.8 s | recall 0.896 at 256 | |
-| | mlxvs's | 30.7 s | recall 0.899 at 256 | |
+| | mlxvs's | 6.5 s | recall 0.886 at 256 | |
 
-- **siann's graphs are as good as mlxvs's:** the same width for the same recall within 6%, the same speed
-  within 10%, and on SIFT a narrower width than cuVS's own graph needs. Build times vary between runs, mlxvs's
-  most: 4.5-5.1 s for SIFT1M and Music-100 when built first in a process (`graph_index_*.txt`), 18-31 s here,
-  after siann's build has kept the machine busy.
+- **mlxvs builds 2.4-3.3 times faster on the GPU; the graphs are close.** For recall 0.95 siann's needs a
+  search 9% wider than mlxvs's on SIFT1M (7% fewer queries per second) and 3% wider on Music-100 (as fast),
+  and a narrower one than cuVS's own graph on SIFT1M; on GloVe siann's reaches a little higher. siann's build spends most of its time finding
+  each vector's 64 nearest (6.1 s of SIFT1M's 10.9 s, 11-12 s of Music-100's and GloVe's).
 - **The first step can be rough:** each vector's 64 nearest found with 16 lists probed holds 78% of the true
   ones on SIFT1M (83% on Music-100, 64% on GloVe), and the pruned graph reaches 0.95 at a width of 40, against
-  35 from 64 lists probed (96%), at the same speed, built in 11.2 s against 38.8 s.
+  35.5 from 64 lists probed (96%), whose graph is 9% faster there but takes twice as long to build: 21.2 s
+  against 10.9 s (`graph_build_sift_nprobe64.txt`).
 - **On a machine without a GPU,** 4 Linux CPUs, SIFT1M's graph took 49.9 s (k-means 20 s, the nearest
   neighbors 23 s, the pruning 6.7 s) and needs the same width, 39.4 (`graph_build_sift_linux_cpu.txt`).
   Inside `siann.Index` the IVF already exists, so the graph adds about 30 s there.

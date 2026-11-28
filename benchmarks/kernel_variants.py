@@ -4,9 +4,9 @@ The fused L1 (and L-infinity) kernel computes each query's distances and selecti
 distance matrix: it reads the whole base once per query and is limited by memory speed, at a third of
 the tiled kernel's speed (DEVELOPMENT.md, "What does not pay").
 """
-import mlx.core as mx
-
 from siann.knn_kernels import _INSERT, _KEEP_BEST, _WRITE, COMBINE, _finish
+
+import mlx.core as mx
 
 _FUSED_SELECT = """
     uint t = thread_position_in_grid.x;

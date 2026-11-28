@@ -9,11 +9,11 @@ both.
 import argparse
 import time
 
+import siann
+
 import numpy as np
 from backends import agreement
 from datasets import load
-
-import siann
 
 BATCHES = (1, 100, 1000)
 

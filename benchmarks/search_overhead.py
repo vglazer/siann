@@ -10,11 +10,11 @@ Index.search (its checks, the snapshot, picking the path). Each part the median 
 import argparse
 import time
 
-import numpy as np
-from datasets import load
-
 import siann
 from siann._cpu import rank
+
+import numpy as np
+from datasets import load
 
 METRIC = {"sift": "l2", "music100": "ip", "glove": "cosine"}
 K = 10

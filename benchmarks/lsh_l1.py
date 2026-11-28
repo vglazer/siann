@@ -11,11 +11,11 @@ import itertools
 import time
 from pathlib import Path
 
+from siann.knn_kernels import dist, knn_tiled
+
 import h5py
 import mlx.core as mx
 import numpy as np
-
-from siann.knn_kernels import dist, knn_tiled
 
 K, QUERIES = 10, 500
 f = h5py.File(Path(__file__).resolve().parent.parent / "data" / "sift-128-euclidean.hdf5", "r")
@@ -29,7 +29,7 @@ truth = np.concatenate([np.array(knn_tiled(mx.array(xq[i:i + 256]), xb_mx, K, "l
 t_exact = time.perf_counter() - start
 r10 = float(np.median([np.abs(xb[t[-1]] - q).sum() for t, q in zip(truth, xq)]))
 print(f"SIFT1M: {n:,} vectors, {d} dimensions; {QUERIES} queries; exact L1 on the GPU {t_exact:.2f} s "
-      f"({QUERIES / t_exact:,.0f} queries/s); median L1 distance to the 10th neighbour {r10:,.0f}", flush=True)
+      f"({QUERIES / t_exact:,.0f} queries/s); median L1 distance to the 10th neighbor {r10:,.0f}", flush=True)
 
 rng = np.random.default_rng(0)
 mults = rng.integers(1, 2**61, size=64, dtype=np.int64) | 1

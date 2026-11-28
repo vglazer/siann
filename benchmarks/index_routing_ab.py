@@ -10,10 +10,10 @@ below 1,000 queries and its list-major scan from 1,000.
 import argparse
 import time
 
+import siann
+
 import numpy as np
 from datasets import load
-
-import siann
 
 METRIC = {"sift": "l2", "glove": "cosine", "music100": "ip"}
 K = 10

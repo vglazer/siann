@@ -10,14 +10,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import siann.torch_kernels as tk
+from siann.ivf_torch import TorchIVF
+from siann.knn_kernels import dist, ip_knn, knn_tiled, l2_knn, select_k
+
 import mlx.core as mx
 import numpy as np
 import torch
 from kernel_variants import knn_fused
-
-import siann.torch_kernels as tk
-from siann.ivf_torch import TorchIVF
-from siann.knn_kernels import dist, ip_knn, knn_tiled, l2_knn, select_k
 
 try:
     from siann._cpu import FlatIndex, IvfIndex, widen_f16

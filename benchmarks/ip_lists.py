@@ -14,13 +14,13 @@ queries, query-major scan; one batch of --queries, list-major scan), median of t
 """
 import argparse
 
+from siann._cpu import FlatIndex
+from siann.ivf_gpu import GpuIVF
+
 import numpy as np
 from backends import agreement
 from datasets import load
 from timing import throughput
-
-from siann._cpu import FlatIndex
-from siann.ivf_gpu import GpuIVF
 
 K = 10
 

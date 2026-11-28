@@ -1,7 +1,7 @@
 """The processor check that runs before the Rust extension loads (siann._build)."""
-import pytest
-
 from siann import _build
+
+import pytest
 
 V3 = ("AVX2", "FMA3")
 
@@ -36,9 +36,9 @@ def test_openblas_timeout_set_unless_given():
 
 
 def test_plan_says_when_openblas_spins(monkeypatch):
-    import numpy as np
-
     import siann
+
+    import numpy as np
     x = np.random.default_rng(0).standard_normal((2_000, 8), dtype=np.float32)
     monkeypatch.setattr(_build, "openblas_spins", lambda: True)
     assert "OPENBLAS_THREAD_TIMEOUT" in str(siann.Index(x, "l2", device="cpu").plan)

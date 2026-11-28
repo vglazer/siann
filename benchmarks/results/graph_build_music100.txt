@@ -1,10 +1,10 @@
 music100: 1,000,000 x 100, ip; graphs of 32 links per vector searched by siann's CPU search on 2,000 test queries
-  rough graph (64 per vector by siann's IVF, nprobe 16): 10.1 s (IVF 1.6 s, search 7.4 s on gpu-query); holds 0.828 of each vector's true 64 nearest
+  rough graph (64 per vector by siann's IVF, nprobe 16): holds 0.828 of each vector's true 64 nearest
 
   graph     built   recall@10 / queries per second at ef    16    24    32    48    64    96   128   192   256
-  siann     12.0s   0.870/374k  0.899/309k  0.918/246k  0.942/208k  0.954/172k  0.971/125k  0.977/105k  0.987/74k  0.990/60k   (IVF 1.6 s, search 7.4 s, optimize 2.6 s)
-  mlxvs     23.5s   0.866/356k  0.897/308k  0.915/275k  0.938/200k  0.952/165k  0.970/130k  0.978/107k  0.987/76k  0.991/61k   (mlxvs's default build)
+  siann     16.3s   0.870/370k  0.899/313k  0.918/249k  0.942/202k  0.954/178k  0.971/124k  0.977/106k  0.987/74k  0.990/60k   (IVF 1.6 s, search 11.7 s on cpu-query, optimize 2.4 s)
+  mlxvs      5.0s   0.867/332k  0.903/286k  0.918/247k  0.942/203k  0.956/170k  0.970/129k  0.979/102k  0.988/78k  0.991/61k   (mlxvs's default build)
 
   at recall 0.95 (ef, or nprobe for the IVF):
-    siann  ef  58.6, 183,456 queries/s
-    mlxvs  ef  61.7, 169,765 queries/s
+    siann  ef  58.6, 185,786 queries/s
+    mlxvs  ef  57.0, 183,296 queries/s

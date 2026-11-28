@@ -215,15 +215,15 @@ impl IvfIndex {
         Ok(out.into_pyarray(py))
     }
 
-    /// Clusters the centroids into groups for a two-level coarse step: `centres` (ngroups, d), the
-    /// groups' centres (C-contiguous float32), and `assign` (nlist,), each centroid's group.
+    /// Clusters the centroids into groups for a two-level coarse step: `centers` (ngroups, d), the
+    /// groups' centers (C-contiguous float32), and `assign` (nlist,), each centroid's group.
     fn set_coarse_groups(
         &mut self,
         py: Python<'_>,
-        centres: &Bound<'_, PyAny>,
+        centers: &Bound<'_, PyAny>,
         assign: PyReadonlyArray1<'_, i64>,
     ) -> PyResult<()> {
-        let c = read(py, centres, self.0.d)?;
+        let c = read(py, centers, self.0.d)?;
         let a = vector(&assign, "assign must be contiguous")?;
         self.0.set_coarse_groups(&c, a).map_err(value_error)
     }

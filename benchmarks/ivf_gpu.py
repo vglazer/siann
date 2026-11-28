@@ -9,12 +9,12 @@ recall and queries per second at a range of nprobe.
 import argparse
 import time
 
+from siann.exact import knn as nearest
+from siann.ivf_gpu import METRICS, GpuIVF
+
 import mlx.core as mx
 import numpy as np
 from datasets import load
-
-from siann.exact import knn as nearest
-from siann.ivf_gpu import METRICS, GpuIVF
 
 
 def check() -> bool:

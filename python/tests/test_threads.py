@@ -3,11 +3,11 @@ the states the index passed through (never a mix of two), with merges and compac
 import threading
 import time
 
-import numpy as np
-import pytest
-
 import siann
 from siann import _index
+
+import numpy as np
+import pytest
 
 DEVICES = ["cpu"] + (["gpu"] if siann.gpu_available() else [])
 

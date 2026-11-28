@@ -10,7 +10,7 @@ a cheaper coarse step pay at matched recall?
    FAISS's HNSW (single_query.py: on SIFT, 29 microseconds at recall 0.84 with uint8 vectors, 53 with
    float32).
 3. A two-level coarse step (`set_coarse_groups`, `search(..., gprobe=g)`): the centroids clustered by
-   k-means into groups (--two-level lists:groups); a query is compared with the groups' centres, then
+   k-means into groups (--two-level lists:groups); a query is compared with the groups' centers, then
    only with the centroids of its g nearest groups. Latency against recall for 4,000 and 8,000 lists,
    and the median time of a call of --batch queries (one thread per query, the CPU's small-batch path).
 
@@ -22,14 +22,14 @@ counts ties as correct (backends.agreement). L2.
 """
 import argparse
 
+from siann._cpu import FlatIndex, IvfIndex
+from siann.ivf_gpu import GpuIVF
+
 import faiss
 import numpy as np
 from backends import agreement
 from datasets import load
 from single_query import latency
-
-from siann._cpu import FlatIndex, IvfIndex
-from siann.ivf_gpu import GpuIVF
 
 K = 10
 

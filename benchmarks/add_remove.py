@@ -9,11 +9,11 @@ vectors masked, and the compaction; then a buffer's exact search on the CPU and 
 import argparse
 import time
 
-import numpy as np
-from datasets import load
-
 import siann
 from siann import _index
+
+import numpy as np
+from datasets import load
 
 BATCHES = (1, 100, 1000)
 

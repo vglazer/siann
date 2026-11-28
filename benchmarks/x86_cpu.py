@@ -13,9 +13,9 @@ import os
 import platform
 import time
 
-import numpy as np
-
 import siann
+
+import numpy as np
 
 BATCHES = (1, 10, 100, 1000)
 K = 10
