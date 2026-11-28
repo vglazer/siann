@@ -218,12 +218,49 @@ def check(interpret: bool) -> None:
         assert same
 
 
+COMPILE_SHAPES = (1, 7, 64, 100, 257, 1000)   # batch sizes, each new to the jitted function
+COMPILE_BUDGET = 25.0                          # seconds for the whole measurement; past it, the rest is skipped
+
+
+def compile_times(x, q, k, searches) -> None:
+    """What a new batch size costs: JAX compiles a jitted function once per input shape, so the first call at
+    each new size compiles and the second only runs. For L2 by matrix multiply and the Pallas L1 kernel, each batch
+    size in COMPILE_SHAPES called twice, unpadded: the first call's time less the second's is the compile. The
+    answer decides how coarsely a JAX backend must pad batches to fixed sizes."""
+    l2 = next(fn for (metric, how), fn in searches.items() if metric == "l2" and "top_k" in how)
+    xp = pad_base(x, 512)
+    calls = {"L2, matmul + top_k": l2, "L1, Pallas 8 x 512": lambda qq: pallas_l1(xp, qq, k, 8, 512)}
+    print(f"\n  compile cost of a new batch size (s: first call, compile included / second call; "
+          f"{COMPILE_BUDGET:.0f} s in all)", flush=True)
+    end = time.perf_counter() + COMPILE_BUDGET
+    for name, fn in calls.items():
+        print(f"    {name:22s}", end="", flush=True)
+        for b in COMPILE_SHAPES:
+            if time.perf_counter() > end or DEADLINE.over(f"compile cost from batch {b}"):
+                print("  (out of time)", end="")
+                break
+            try:
+                t = time.perf_counter()
+                fn(q[:b]).block_until_ready()
+                first = time.perf_counter() - t
+                t = time.perf_counter()
+                fn(q[:b]).block_until_ready()
+                second = time.perf_counter() - t
+                print(f"  {b}: {first:.2f}/{second:.3f}", end="", flush=True)
+            except Exception as e:  # noqa: BLE001 (report and go on)
+                print(f"  {b}: failed ({type(e).__name__}: {str(e)[:120]}); the row's other sizes skipped", end="",
+                      flush=True)
+                break
+        print(flush=True)
+    print(flush=True)
+
+
 def bench(n: int, d: int, batches, l1_batch: int, check_queries: int, full: bool = False) -> None:
     k = 10
     dev = jax.devices()[0]
     rng = np.random.default_rng(0)
     xb = rng.standard_normal((n, d), dtype=np.float32)
-    xq = rng.standard_normal((max(batches), d), dtype=np.float32)
+    xq = rng.standard_normal((max(*batches, *COMPILE_SHAPES), d), dtype=np.float32)
     print(f"JAX {jax.__version__} on {dev.device_kind} ({dev.platform}): {n:,} Gaussian vectors, {d} dimensions, "
           f"k = {k}", flush=True)
     t = time.perf_counter()
@@ -262,6 +299,7 @@ def bench(n: int, d: int, batches, l1_batch: int, check_queries: int, full: bool
         return f"{'?' if used is None else f'{used:,.0f}'} / {'?' if peak is None else f'{peak:,.0f}'}"
 
     searches = builtin_searches(x, k, full)
+    compile_times(x, q, k, searches)
     blocks = PALLAS_BLOCKS_FULL if full else PALLAS_BLOCKS
     rows = len(searches) + 1 + len(blocks)
     print(f"  queries per second; then the device's memory after the row, MB: in use / peak so far; then recall@10 "
