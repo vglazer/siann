@@ -1,6 +1,6 @@
 [package]
 name = "siann-py"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 publish = false
 description = "siann's CPU paths in Rust (exact search, IVF, the BLAS top-k), built into the siann Python package as siann._cpu"
